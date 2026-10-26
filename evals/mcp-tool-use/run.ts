@@ -356,6 +356,8 @@ const claudeQueryOptions = (model: Model) =>
     resume: false,
     cwd: null,
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
+    // As T3 does for a session holding `device`: the eval offers the device tools.
+    deviceToolsAvailable: t3SourceTools.some((tool) => tool.name in DeviceToolkit.tools),
   });
 
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
