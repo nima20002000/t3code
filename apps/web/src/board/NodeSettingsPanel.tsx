@@ -1,6 +1,6 @@
-import { SettingsIcon, XIcon } from "lucide-react";
+import { Maximize2Icon, SettingsIcon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { AgentDialog } from "./AddAgentDialog";
@@ -24,6 +24,7 @@ import {
   Button,
   ChatView,
   Input,
+  buildThreadRouteParams,
   useConnectedEnvironmentIds,
   useEnvironmentIdentities,
   useRightPanelStore,
@@ -82,6 +83,7 @@ export function NodeSettingsPanel(props: {
   const [name, setName] = useState(node.name);
   const [editingName, setEditingName] = useState(false);
   const [configuring, setConfiguring] = useState(false);
+  const navigate = useNavigate();
 
   // The panel is too narrow for t3's right panel; start each node's chat with it closed.
   // oxlint-disable-next-line t3code/react-effect-budget -- Synchronize the external right-panel store with the active thread.
@@ -140,6 +142,19 @@ export function NodeSettingsPanel(props: {
             </button>
           )}
           <div className="flex-1" />
+          {node.threadId === "" ? null : (
+            <IconButton
+              label="Open full screen"
+              onClick={() =>
+                void navigate({
+                  to: "/$environmentId/$threadId",
+                  params: buildThreadRouteParams(scopeThreadRef(node.environmentId, node.threadId)),
+                })
+              }
+            >
+              <Maximize2Icon size={15} />
+            </IconButton>
+          )}
           <IconButton label={`${node.name} settings`} onClick={() => setConfiguring(true)}>
             <SettingsIcon size={15} />
           </IconButton>
