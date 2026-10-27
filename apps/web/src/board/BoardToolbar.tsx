@@ -22,8 +22,12 @@ import {
 } from "./boardStore";
 import { RunControl } from "./RunControl";
 import { ActivitiesButton } from "./toolbar/ActivitiesButton";
+import { ApprovalsButton } from "./toolbar/ApprovalsButton";
+import { BrowsersButton } from "./toolbar/BrowsersButton";
+import { FilesButton } from "./toolbar/FilesButton";
 import { IconButton } from "./toolbar/IconButton";
 import { RunsSelector } from "./toolbar/RunsSelector";
+import { ScheduleButton } from "./toolbar/ScheduleButton";
 import { WorkflowMenu } from "./toolbar/WorkflowMenu";
 import { WorkflowName, type WorkflowNameHandle } from "./toolbar/WorkflowName";
 import { WorkflowSettings } from "./toolbar/WorkflowSettings";
@@ -111,6 +115,10 @@ export function BoardToolbar(props: {
           </IconButton>
           <WorkflowSettings />
           {/* t3-backed buttons: approvals, files, browsers, schedule */}
+          <ApprovalsButton nodes={workflow.nodes} />
+          <FilesButton nodes={workflow.nodes} />
+          <BrowsersButton nodes={workflow.nodes} />
+          <ScheduleButton nodes={workflow.nodes} />
           <ActivitiesButton log={workflow.log} />
           <IconButton
             label="Kanban"
