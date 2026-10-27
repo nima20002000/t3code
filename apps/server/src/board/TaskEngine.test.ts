@@ -171,6 +171,66 @@ it.effect("failFast stops siblings when a child fails", () =>
   }),
 );
 
+it.effect("joins the latest child results if a return commits during the join", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const store = yield* BoardStore.BoardStore;
+    const holdRead = yield* Ref.make(false);
+    const reading = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const observedStore = BoardStore.BoardStore.of({
+      ...store,
+      getWorkflow: (id) =>
+        Effect.gen(function* () {
+          const workflow = yield* store.getWorkflow(id);
+          if (yield* Ref.getAndSet(holdRead, false)) {
+            yield* Deferred.succeed(reading, undefined);
+            yield* Deferred.await(release);
+          }
+          return workflow;
+        }),
+    });
+    const layer = TaskEngine.layer.pipe(
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
+      Layer.provide(Layer.succeed(BoardStore.BoardStore, observedStore)),
+    );
+    yield* store.transaction(store.putWorkflow(setupWorkflow()));
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      yield* engine.start("workflow", { id: "run:join-race", nodeId: "root", task: "Delegate" });
+      yield* harness.reply(yield* Queue.take(harness.sends), request);
+      const first = yield* Queue.take(harness.sends);
+      const second = yield* Queue.take(harness.sends);
+      yield* harness.reply(first, returned("first result"));
+      yield* waitForRun(
+        store,
+        (run) => run.requests.filter((entry) => entry.status === "returned").length === 1,
+      );
+      yield* Ref.set(holdRead, true);
+      const workflow = (yield* store.getWorkflow("workflow"))!;
+      yield* store.transaction(
+        store.appendEvent({
+          kind: "run.upserted",
+          workflowId: workflow.id,
+          run: workflow.runs[0]!,
+        }),
+      );
+      yield* Deferred.await(reading);
+      yield* harness.reply(second, returned("second result"));
+      yield* waitForRun(
+        store,
+        (run) => run.requests.filter((entry) => entry.status === "returned").length === 2,
+      );
+      yield* Deferred.succeed(release, undefined);
+      const joined = yield* Queue.take(harness.sends);
+      assert.include(joined.text, "first result");
+      assert.include(joined.text, "second result");
+      yield* harness.reply(joined, finish);
+      yield* waitForRun(store, (run) => run.status === "finished");
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)))),
+);
+
 it.effect("stops all active tasks and interrupts their threads", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness;

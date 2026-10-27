@@ -539,7 +539,13 @@ const make = Effect.gen(function* () {
           yield* store.events(sequence).pipe(Stream.runHead);
           continue;
         }
-        const entries = run.requests.filter(
+        const joinedWorkflow = yield* store.getWorkflow(task.workflowId);
+        const joinedRun = joinedWorkflow?.runs.find((entry) => entry.id === task.runId);
+        if (!joinedRun) {
+          yield* failTask(task.id, "The workflow run is no longer available.");
+          return;
+        }
+        const entries = joinedRun.requests.filter(
           (entry) => task.waitOn.includes(entry.id) || checkpoint.denied.includes(entry.id),
         );
         const text = entries

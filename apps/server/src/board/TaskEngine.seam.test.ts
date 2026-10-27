@@ -9,7 +9,9 @@ import {
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
   CommandId,
+  ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
+  ThreadId,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -18,9 +20,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
@@ -245,6 +249,48 @@ it.live("runs a board request and interrupts through the real server and orchest
         200,
       );
       yield* Effect.promise(() => FakeTransport.held.promise);
+      assert.strictEqual(
+        (yield* post("/api/board/workflows/workflow/runs", {
+          id: "queued",
+          nodeId: "root",
+          task: "Queued task",
+        })).status,
+        200,
+      );
+      const threadId = ThreadId.make("board-seam-root");
+      const queuedEvent = yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
+        threadId,
+        afterSequence: 0,
+      }).pipe(
+        Stream.filter(
+          (item) =>
+            item.kind === "event" &&
+            item.event.type === "message.updated" &&
+            item.event.payload.text.includes("Queued task"),
+        ),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      assert.isTrue(queuedEvent.kind === "event" && queuedEvent.event.type === "message.updated");
+      if (queuedEvent.kind !== "event" || queuedEvent.event.type !== "message.updated")
+        return yield* Effect.die("Expected queued message");
+      const queuedRunId = queuedEvent.event.payload.runId;
+      assert.isNotNull(queuedRunId);
+      const beforeCancel = yield* client[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
+        threadId,
+      });
+      assert.strictEqual(beforeCancel.runs.find((run) => run.id === queuedRunId)?.status, "queued");
+      assert.strictEqual(
+        (yield* post("/api/board/workflows/workflow/runs/queued/stop", {})).status,
+        200,
+      );
+      const afterCancel = yield* client[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
+        threadId,
+      });
+      assert.strictEqual(
+        afterCancel.runs.find((run) => run.id === queuedRunId)?.status,
+        "cancelled",
+      );
       assert.strictEqual(
         (yield* post("/api/board/workflows/workflow/runs/held/stop", {})).status,
         200,

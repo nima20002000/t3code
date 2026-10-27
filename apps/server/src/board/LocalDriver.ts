@@ -1,7 +1,9 @@
 import { NodeDriverError, type NodeDriver } from "@t3tools/board-core";
+import { CommandId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -128,6 +130,28 @@ const make = Effect.gen(function* () {
     return message === undefined ? null : { id: message.id, text: message.text };
   });
   const interrupt: NodeDriver["interrupt"] = Effect.fn("LocalDriver.interrupt")(function* (input) {
+    if (input.runId !== undefined) {
+      const records = yield* threads
+        .getProjectThreadRecords(input.thread, ["runs"])
+        .pipe(Effect.mapError(error("interrupt")));
+      const run = records.runs.find((candidate) => candidate.id === input.runId);
+      if (run?.status === "queued") {
+        const cancelled = yield* threads
+          .dispatch({
+            type: "queued-run.cancel",
+            commandId: CommandId.make(`${input.commandId}:cancel-queued`),
+            threadId: input.thread.threadId,
+            runId: input.runId,
+          })
+          .pipe(Effect.result);
+        if (Result.isSuccess(cancelled)) return;
+        const refreshed = yield* threads
+          .getProjectThreadRecords(input.thread, ["runs"])
+          .pipe(Effect.mapError(error("interrupt")));
+        if (refreshed.runs.find((candidate) => candidate.id === input.runId)?.status === "queued")
+          return yield* error("interrupt")(cancelled.failure);
+      }
+    }
     yield* threads
       .interruptThread({
         projectId: input.thread.projectId,
