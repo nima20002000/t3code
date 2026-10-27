@@ -1,4 +1,3 @@
-import { CheckIcon } from "lucide-react";
 import { type CSSProperties, type MouseEvent, type ReactNode } from "react";
 
 import { useHoverControls } from "./useHoverControls";
@@ -101,11 +100,6 @@ export function AgentNodeView({
           {machine}
         </span>
       </div>
-      {state === "completed" ? (
-        <span className="n-agent-done" aria-hidden="true">
-          <CheckIcon size={12} />
-        </span>
-      ) : null}
       <div className="n-agent-actions" role="group" aria-label={`${name} actions`}>
         {actions.map((action) => (
           <button

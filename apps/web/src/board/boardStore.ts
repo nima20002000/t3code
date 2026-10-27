@@ -46,6 +46,7 @@ export type {
 } from "@t3tools/board-core/boardModel";
 import {
   appAtomRegistry,
+  environmentSession,
   randomUUID,
   readEnvironmentScope,
   readThreadShells,
@@ -61,14 +62,19 @@ interface BoardState {
   readonly historyVersion: number;
 }
 
-export const boardStateAtom = Atom.make<BoardState>({
-  snapshot: null,
-  currentId: "",
-  status: "loading",
-  error: null,
-  importError: null,
-  historyVersion: 0,
-}).pipe(Atom.withLabel("board-hub-state"));
+// Kept across hot reloads so a reloaded module keeps the atom the mounted page reads.
+const hotData: { boardStateAtom?: Atom.Writable<BoardState> } = import.meta.hot?.data ?? {};
+export const boardStateAtom: Atom.Writable<BoardState> =
+  hotData.boardStateAtom ??
+  Atom.make<BoardState>({
+    snapshot: null,
+    currentId: "",
+    status: "loading",
+    error: null,
+    importError: null,
+    historyVersion: 0,
+  }).pipe(Atom.withLabel("board-hub-state"));
+hotData.boardStateAtom = boardStateAtom;
 const histories = new Map<string, History>();
 const getState = () => appAtomRegistry.get(boardStateAtom);
 const setState = (patch: Partial<BoardState>) =>
@@ -124,31 +130,53 @@ export function useBoardConnection() {
           controller.signal,
         );
         const hubId = readBoardHubEnvironmentId();
-        const canMutate = hubId !== null && readEnvironmentScope(hubId, "orchestration:operate");
-        try {
-          if (canMutate) await importToHub(snapshot, controller.signal);
-          if (!controller.signal.aborted) setState({ importError: null });
-        } catch (error) {
-          if (controller.signal.aborted) return;
-          setState({ importError: error instanceof Error ? error.message : String(error) });
-        }
-        snapshot = await runBoardApi(
-          (client) => client.getSnapshot({ headers: {} }),
-          controller.signal,
-        );
-        if (canMutate && !snapshot.workflows.length) {
-          await runBoardApi(
-            (client) =>
-              client.createWorkflow({
-                headers: {},
-                payload: { id: randomUUID(), name: "Workflow" },
-              }),
-            controller.signal,
-          );
-          snapshot = await runBoardApi(
+        const canMutate = () =>
+          hubId !== null && readEnvironmentScope(hubId, "orchestration:operate");
+        // Imports local workflows and creates the default one; runs once the scope allows writes.
+        const prepare = async (current: BoardSnapshot) => {
+          try {
+            await importToHub(current, controller.signal);
+            if (!controller.signal.aborted) setState({ importError: null });
+          } catch (error) {
+            if (controller.signal.aborted) return current;
+            setState({ importError: error instanceof Error ? error.message : String(error) });
+          }
+          let next = await runBoardApi(
             (client) => client.getSnapshot({ headers: {} }),
             controller.signal,
           );
+          if (!next.workflows.length) {
+            await runBoardApi(
+              (client) =>
+                client.createWorkflow({
+                  headers: {},
+                  payload: { id: randomUUID(), name: "Workflow" },
+                }),
+              controller.signal,
+            );
+            next = await runBoardApi(
+              (client) => client.getSnapshot({ headers: {} }),
+              controller.signal,
+            );
+          }
+          return next;
+        };
+        if (canMutate()) snapshot = await prepare(snapshot);
+        else if (hubId !== null) {
+          // Writes are impossible until the session scope loads; prepare then, and the stream delivers the result.
+          const unsubscribe = appAtomRegistry.subscribe(
+            environmentSession.sessionStateAtom(hubId),
+            () => {
+              if (!canMutate()) return;
+              unsubscribe();
+              void prepare(getSnapshot() ?? snapshot).catch((error: unknown) => {
+                if (!controller.signal.aborted) {
+                  setState({ importError: error instanceof Error ? error.message : String(error) });
+                }
+              });
+            },
+          );
+          controller.signal.addEventListener("abort", unsubscribe, { once: true });
         }
         if (controller.signal.aborted) return;
         setSnapshot(snapshot);

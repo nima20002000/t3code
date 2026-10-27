@@ -68,7 +68,7 @@ export {
 } from "../state/environments";
 export { environmentSummaries } from "../state/presentation";
 export { EMPTY_SERVER_PROVIDERS } from "../state/server";
-export { readPreparedConnection, readEnvironmentScope } from "../state/session";
+export { environmentSession, readPreparedConnection, readEnvironmentScope } from "../state/session";
 export { environmentThreadDetails, threadEnvironment } from "../state/threads";
 export { useOrchestrationCommand } from "../state/use-orchestration-command";
 export { buildThreadRouteParams } from "../threadRoutes";

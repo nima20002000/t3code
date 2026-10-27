@@ -14,7 +14,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ActivityIcon, MessageSquareIcon, SettingsIcon } from "lucide-react";
+import { ActivityIcon, MessageSquareIcon, SettingsIcon, XIcon } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { EdgeRunView, NodeRunView } from "@t3tools/board-core/runView";
 
@@ -47,6 +47,7 @@ import {
 } from "./foreman/AgentNodeView";
 import { SignalEdgeShape, type EdgePulse } from "./foreman/SignalEdgeShape";
 import { AGENT_NODE_SIZE, useFloatingCurve } from "./foreman/signalEdge";
+import { useHoverControls } from "./foreman/useHoverControls";
 import "./foreman/foreman.css";
 import { BoardTitle, BoardToolbar } from "./BoardToolbar";
 import type { WorkflowNameHandle } from "./toolbar/WorkflowName";
@@ -343,19 +344,49 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
   );
 }
 
-function SignalEdge({ id, source, target }: EdgeProps) {
+function SignalEdge({ id, source, target, selected }: EdgeProps) {
   const curve = useFloatingCurve(source, target);
   const view = useContext(RunViewsContext).edges.get(id);
   const pulses = useEdgePulses(view);
-  return curve ? (
-    <SignalEdgeShape
-      id={id}
-      curve={curve}
-      signal={view?.signal}
-      pending={view?.pending ?? 0}
-      pulses={pulses}
-    />
-  ) : null;
+  const hover = useHoverControls();
+  if (!curve) return null;
+  const visible = hover.hovered || Boolean(selected);
+  const { x, y } = curve.mid;
+  return (
+    <g onPointerEnter={hover.onPointerEnter} onPointerLeave={hover.onPointerLeave}>
+      <SignalEdgeShape
+        id={id}
+        curve={curve}
+        signal={view?.signal}
+        pending={view?.pending ?? 0}
+        pulses={pulses}
+      />
+      {visible ? (
+        <rect className="board-edge-hover-bridge" x={x - 18} y={y - 36} width={36} height={48} />
+      ) : null}
+      <foreignObject
+        data-visible={visible}
+        className="board-edge-remove nodrag nopan"
+        x={x - 18}
+        y={y - 36}
+        width={36}
+        height={36}
+      >
+        <Button
+          size="icon-sm"
+          variant="outline"
+          aria-label="Disconnect"
+          title="Disconnect"
+          onClick={(event) => {
+            event.stopPropagation();
+            removeEdge(source, target);
+          }}
+        >
+          <XIcon size={14} />
+        </Button>
+      </foreignObject>
+    </g>
+  );
 }
 
 const NODE_TYPES = { agent: AgentCard };
@@ -503,14 +534,6 @@ function BoardCanvasPage() {
     addEdge(connection.source, connection.target);
   };
 
-  const deleteSelectedEdges = () => {
-    for (const id of selectedEdgeIds) {
-      const edge = edges.find((candidate) => `${candidate.a}:${candidate.b}` === id);
-      if (edge) removeEdge(edge.a, edge.b);
-    }
-    setSelectedEdgeIds(new Set());
-  };
-
   return (
     <SidebarInset className="h-dvh">
       <WorkspacePageHeader electron={isElectron} className="board-header border-b border-border">
@@ -529,8 +552,6 @@ function BoardCanvasPage() {
               setAddingThread(false);
             }}
             onAddThread={() => setAddingThread((value) => !value)}
-            selectedEdgeCount={selectedEdgeIds.size}
-            onDeleteSelectedEdges={deleteSelectedEdges}
           />
         </div>
         {kanban ? (

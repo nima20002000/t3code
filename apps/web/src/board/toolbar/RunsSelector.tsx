@@ -1,4 +1,4 @@
-import { CheckIcon, ChevronDownIcon } from "lucide-react";
+import { CheckIcon, ListIcon } from "lucide-react";
 
 import type { RunRecord } from "../boardStore";
 import { formatRunTime, RUN_STATUS_LABELS } from "./runPresentation";
@@ -13,11 +13,11 @@ export function RunsSelector(props: {
   return (
     <Popover>
       <PopoverTrigger
-        render={<Button size="sm" variant="ghost" className="runs-selector-trigger" />}
+        render={<Button size="icon-sm" variant="ghost" className="runs-selector-trigger" />}
         aria-label="Runs"
         title="Runs"
       >
-        Runs <ChevronDownIcon />
+        <ListIcon />
       </PopoverTrigger>
       <PopoverPopup width="lg" align="end" padding="none">
         <div role="menu" aria-label="Runs" className="runs-selector-menu">

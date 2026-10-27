@@ -2,14 +2,18 @@ import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
   CheckIcon,
+  ChevronsLeftIcon,
+  ChevronsRightIcon,
+  CloudOffIcon,
   KanbanIcon,
   LinkIcon,
+  Loader2Icon,
   PlusIcon,
   Redo2Icon,
   RotateCcwIcon,
   Undo2Icon,
 } from "lucide-react";
-import type { RefObject } from "react";
+import { useState, type RefObject } from "react";
 
 import {
   discardChanges,
@@ -35,6 +39,16 @@ import { WorkflowName, type WorkflowNameHandle } from "./toolbar/WorkflowName";
 import { WorkflowSettings } from "./toolbar/WorkflowSettings";
 import "./toolbar/boardToolbar.css";
 import { Button } from "./upstream";
+
+const COLLAPSED_KEY = "board:controls-collapsed";
+
+function readCollapsed() {
+  try {
+    return localStorage.getItem(COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 function BackButton() {
   const router = useRouter();
@@ -80,13 +94,46 @@ export function BoardToolbar(props: {
   readonly onToggleKanban: () => void;
   readonly onAddAgent: () => void;
   readonly onAddThread: () => void;
-  readonly selectedEdgeCount: number;
-  readonly onDeleteSelectedEdges: () => void;
 }) {
   const workflow = useCurrentWorkflow();
   const { status, error } = useBoardState();
   const pending = useBoardPending();
   const { canUndo, canRedo, dirty } = useBoardHistory();
+
+  const savedLabel =
+    status !== "connected"
+      ? "Offline"
+      : pending
+        ? "Saving"
+        : "Saved: the board saves automatically";
+  const SavedIcon = status !== "connected" ? CloudOffIcon : pending ? Loader2Icon : CheckIcon;
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const toggleCollapsed = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    try {
+      localStorage.setItem(COLLAPSED_KEY, next ? "1" : "0");
+    } catch {}
+  };
+  const collapseButton = (
+    <IconButton
+      label={collapsed ? "Expand controls" : "Collapse controls"}
+      onClick={toggleCollapsed}
+    >
+      {collapsed ? <ChevronsLeftIcon /> : <ChevronsRightIcon />}
+    </IconButton>
+  );
+
+  if (collapsed) {
+    return (
+      <div className="board-control-cluster">
+        <div className="board-bar" role="toolbar" aria-label="Board controls">
+          <RunControl />
+          {collapseButton}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="board-control-cluster">
@@ -112,9 +159,13 @@ export function BoardToolbar(props: {
         >
           <RotateCcwIcon />
         </IconButton>
-        <span className="board-saved" title={error ?? "The board saves automatically"}>
-          <CheckIcon aria-hidden="true" />
-          {status !== "connected" ? "Offline" : pending ? "Saving…" : "Saved"}
+        <span
+          className="board-saved"
+          role="status"
+          aria-label={savedLabel}
+          title={error ?? savedLabel}
+        >
+          <SavedIcon aria-hidden="true" />
         </span>
       </div>
       <div className="board-bar" role="toolbar" aria-label="Board controls">
@@ -128,10 +179,9 @@ export function BoardToolbar(props: {
         <WorkflowMenu
           onRename={() => window.setTimeout(() => props.nameRef.current?.begin(), 150)}
         />
-        <Button size="sm" variant="ghost" onClick={props.onAddAgent}>
+        <IconButton label="Add agent" onClick={props.onAddAgent}>
           <PlusIcon />
-          Add agent
-        </Button>
+        </IconButton>
         <IconButton label="Add existing thread" onClick={props.onAddThread}>
           <LinkIcon />
         </IconButton>
@@ -151,12 +201,8 @@ export function BoardToolbar(props: {
         >
           <KanbanIcon />
         </IconButton>
-        {props.selectedEdgeCount > 0 ? (
-          <Button size="sm" variant="ghost" onClick={props.onDeleteSelectedEdges}>
-            Delete selected edge
-          </Button>
-        ) : null}
         <RunControl />
+        {collapseButton}
       </div>
     </div>
   );
