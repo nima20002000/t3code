@@ -22,8 +22,8 @@ if (($#)); then
   printf 'Usage: %s [--ci|--tests]\n' "$0" >&2
   exit 2
 fi
-if [[ "$(git branch --show-current)" != board/mvp ]]; then
-  printf 'Switch to board/mvp before syncing.\n' >&2
+if [[ "$(git branch --show-current)" != board/main ]]; then
+  printf 'Switch to board/main before syncing.\n' >&2
   exit 1
 fi
 if [[ -n "$(git status --porcelain)" ]]; then

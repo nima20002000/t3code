@@ -37,7 +37,7 @@ folders; do not patch upstream internals to make the board work.
 
 ## Sync and test policy
 
-Run `scripts/fork-sync.sh` from a clean `board/mvp` checkout. It fetches upstream,
+Run `scripts/fork-sync.sh` from a clean `board/main` checkout. It fetches upstream,
 selects and merges the highest stable `vX.Y.Z` upstream tag, reports conflicted
 files for comparison with the touch points above, and runs all board-owned tests.
 After resolving a conflicted merge, commit it and run `scripts/fork-sync.sh --tests`.

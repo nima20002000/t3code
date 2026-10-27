@@ -1,6 +1,6 @@
 # Fork-only: builds the Linux desktop AppImage from a board/** branch and
 # uploads it as a workflow artifact. Run it manually from the Actions tab or
-# with `gh workflow run board-desktop.yml --ref board/mvp`.
+# with `gh workflow run board-desktop.yml --ref board/main`.
 name: Board Desktop Build
 
 on:
