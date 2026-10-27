@@ -1,15 +1,33 @@
-/* The card morphPanel moves between the chat panel's floating and full-window rects. */
+/* The empty panel frame morphPanel moves between the chat panel's floating and full-window rects. */
 .board-panel-morph {
   position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+}
+
+.board-panel-morph > div {
+  position: absolute;
   top: 0;
   left: 0;
-  z-index: 60;
+  transform-origin: 0 0;
+  background: var(--border);
+}
+
+.board-panel-morph > [data-part="fill"] {
   width: 100vw;
   height: 100vh;
-  transform-origin: 0 0;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  /* A step above the page so the card reads against the board in both themes. */
-  background: color-mix(in srgb, var(--foreground) 7%, var(--background));
-  pointer-events: none;
+  background: var(--background);
+}
+
+.board-panel-morph > [data-part="top"],
+.board-panel-morph > [data-part="bottom"] {
+  width: 100vw;
+  height: 1px;
+}
+
+.board-panel-morph > [data-part="left"],
+.board-panel-morph > [data-part="right"] {
+  width: 1px;
+  height: 100vh;
 }

@@ -24,6 +24,8 @@ function savePanelPosition(key: string, position: PanelPosition) {
 const floatingRects = new WeakMap<Element, DOMRect>();
 let morphing = false;
 const FADE_MS = 70;
+const MOVE_MS = 240;
+const REVEAL_MS = 110;
 const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
 
 /**
@@ -41,16 +43,30 @@ export async function morphPanel(panel: HTMLElement | null, maximize: boolean, u
     return;
   }
   morphing = true;
-  const place = (rect: DOMRect) =>
-    `translate(${rect.x}px, ${rect.y}px) scale(${rect.width / window_.width}, ${rect.height / window_.height})`;
+  const { width: W, height: H } = window_;
+  // The fill scales freely; each 1px edge scales along its length only, so the border stays crisp.
+  const parts = {
+    fill: (r: DOMRect) => `translate(${r.x}px, ${r.y}px) scale(${r.width / W}, ${r.height / H})`,
+    top: (r: DOMRect) => `translate(${r.x}px, ${r.y}px) scale(${r.width / W}, 1)`,
+    bottom: (r: DOMRect) => `translate(${r.x}px, ${r.bottom - 1}px) scale(${r.width / W}, 1)`,
+    left: (r: DOMRect) => `translate(${r.x}px, ${r.y}px) scale(1, ${r.height / H})`,
+    right: (r: DOMRect) => `translate(${r.right - 1}px, ${r.y}px) scale(1, ${r.height / H})`,
+  };
   const card = document.createElement("div");
   card.className = "board-panel-morph";
+  const from = panel.getBoundingClientRect();
+  const moves = Object.entries(parts).map(([part, place]) => {
+    const element = document.createElement("div");
+    element.dataset.part = part;
+    card.append(element);
+    return element.animate([{ transform: place(from) }, { transform: place(target) }], {
+      duration: MOVE_MS,
+      easing: "cubic-bezier(0.2, 0, 0, 1)",
+      fill: "forwards",
+    });
+  });
   document.body.append(card);
   try {
-    const move = card.animate(
-      [{ transform: place(panel.getBoundingClientRect()) }, { transform: place(target) }],
-      { duration: 240, easing: "cubic-bezier(0.2, 0, 0, 1)", fill: "forwards" },
-    );
     card.animate([{ opacity: 0 }, { opacity: 1 }], { duration: FADE_MS, fill: "forwards" });
     const hide = panel.animate([{ opacity: 1 }, { opacity: 0 }], {
       duration: FADE_MS,
@@ -58,10 +74,13 @@ export async function morphPanel(panel: HTMLElement | null, maximize: boolean, u
     });
     await hide.finished;
     flushSync(update);
-    await move.finished;
     await nextFrame();
+    // The eased move is visually landed well before it ends; crossfade in over its tail.
+    const left = MOVE_MS - Number(moves[0]?.currentTime ?? MOVE_MS) - REVEAL_MS;
+    if (left > 0) await new Promise((resolve) => setTimeout(resolve, left));
     hide.cancel();
-    await card.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, fill: "forwards" })
+    panel.animate([{ opacity: 0 }, { opacity: 1 }], { duration: REVEAL_MS });
+    await card.animate([{ opacity: 1 }, { opacity: 0 }], { duration: REVEAL_MS, fill: "forwards" })
       .finished;
   } finally {
     card.remove();
