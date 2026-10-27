@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { FolderIcon, MoreHorizontalIcon, PlusIcon, SettingsIcon, WorkflowIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
 
 import {
   createWorkflowIn,
@@ -15,24 +15,7 @@ import {
 } from "./boardStore";
 import { ConfirmDialog, NameDialog, WorkspaceSettingsDialog } from "./WorkspaceDialogs";
 import { IconButton } from "./toolbar/IconButton";
-import {
-  Menu,
-  MenuItem,
-  MenuPopup,
-  MenuSeparator,
-  MenuTrigger,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
-  useSidebar,
-} from "./upstream";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "./upstream";
 
 type Dialog =
   | { readonly kind: "new-workspace" }
@@ -43,61 +26,160 @@ type Dialog =
   | { readonly kind: "rename-workflow"; readonly id: string; readonly name: string }
   | { readonly kind: "delete-workflow"; readonly id: string; readonly name: string };
 
-/** Workspaces as groups with their workflows beneath; replaces the thread list on /board. */
-export function BoardSidebarContent() {
+const FOLDED = 48;
+const MIN_OPEN = 180;
+const MAX_OPEN = 420;
+const WIDTH_KEY = "board:sidebar-width";
+const OPEN_WIDTH_KEY = "board:sidebar-open-width";
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(value, max));
+/** Labels fade out over the last stretch before the icon rail, so text never just gets cut. */
+const fadeFor = (width: number) => clamp((width - FOLDED - 16) / 96, 0, 1);
+
+function readWidth(key: string, fallback: number) {
+  try {
+    const value = Number(localStorage.getItem(key));
+    return Number.isFinite(value) && value >= FOLDED ? clamp(value, FOLDED, MAX_OPEN) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function saveWidth(key: string, width: number) {
+  try {
+    localStorage.setItem(key, String(width));
+  } catch {
+    // Storage can be unavailable; the sidebar just opens at its default width next time.
+  }
+}
+
+function Row(props: {
+  readonly icon: ReactNode;
+  readonly label: string;
+  readonly active?: boolean;
+  readonly indent?: boolean;
+  readonly onClick: () => void;
+  readonly actions?: ReactNode;
+}) {
+  return (
+    <div
+      className={`group/row flex h-8 items-center rounded-md ${props.indent ? "ml-[calc(var(--board-fade)*1rem)]" : ""} ${props.active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"}`}
+    >
+      <button
+        type="button"
+        aria-label={props.label}
+        className="flex h-full min-w-0 flex-1 items-center gap-2 px-2 text-left text-sm"
+        onClick={props.onClick}
+      >
+        <span className="flex size-4 shrink-0 items-center justify-center">{props.icon}</span>
+        <span className="truncate opacity-(--board-fade)">{props.label}</span>
+      </button>
+      {props.actions ? (
+        <div className="flex shrink-0 items-center opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 @max-[11rem]:hidden">
+          {props.actions}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The board's own sidebar (t3's thread sidebar is replaced on /board): workspaces with their
+ * workflows. Its edge follows the pointer down to an icon rail; labels fade with the width.
+ */
+export function BoardSidebarPanel() {
   const { snapshot, currentId } = useBoardState();
   const workspaces = useBoardWorkspaces();
   const workflows = snapshot?.workflows ?? [];
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const close = () => setDialog(null);
   const navigate = useNavigate();
-  const { open, setOpen } = useSidebar();
+  const [width, setWidth] = useState(() => readWidth(WIDTH_KEY, 240));
+  const [dragging, setDragging] = useState(false);
+  const panel = useRef<HTMLElement>(null);
+  const moved = useRef(false);
+  const folded = width <= FOLDED;
   const settingsWorkspace =
     dialog?.kind === "workspace-settings"
       ? workspaces.find((workspace) => workspace.id === dialog.id)
       : undefined;
 
+  const settle = (next: number) => {
+    setWidth(next);
+    saveWidth(WIDTH_KEY, next);
+    if (next > FOLDED) saveWidth(OPEN_WIDTH_KEY, next);
+  };
+  const unfold = () => settle(readWidth(OPEN_WIDTH_KEY, 240));
+
+  // During a drag the width is written straight to the element; React only hears the final width.
+  const startDrag = (event: PointerEvent<HTMLDivElement>) => {
+    const element = panel.current;
+    if (event.button !== 0 || !element) return;
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const startWidth = element.getBoundingClientRect().width;
+    let current = startWidth;
+    moved.current = false;
+    const move = (moveEvent: globalThis.PointerEvent) => {
+      if (!moved.current) {
+        if (Math.abs(moveEvent.clientX - startX) < 3) return;
+        moved.current = true;
+        setDragging(true);
+      }
+      current = clamp(startWidth + moveEvent.clientX - startX, FOLDED, MAX_OPEN);
+      element.style.width = `${current}px`;
+      element.style.setProperty("--board-fade", String(fadeFor(current)));
+      element.dataset.folded = String(current <= FOLDED + 8);
+    };
+    const end = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", end);
+      handle.removeEventListener("pointercancel", end);
+      if (!moved.current) return;
+      element.style.removeProperty("width");
+      element.style.removeProperty("--board-fade");
+      delete element.dataset.folded;
+      setDragging(false);
+      settle(current < (MIN_OPEN + FOLDED) / 2 ? FOLDED : Math.max(current, MIN_OPEN));
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  };
+
   return (
-    <>
-      <SidebarHeader>
-        {open ? (
-          <div className="flex items-center justify-between gap-2">
-            <span className="flex items-center gap-2 text-sm font-medium">
-              <WorkflowIcon className="size-4" />
-              Board
-            </span>
+    <aside
+      ref={panel}
+      aria-label="Board"
+      data-folded={folded}
+      className={`@container relative hidden h-dvh shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground md:flex ${dragging ? "" : "transition-[width] duration-200 ease-out"}`}
+      style={{ width, "--board-fade": fadeFor(width) } as CSSProperties}
+    >
+      <div className="drag-region flex h-12 shrink-0 items-center gap-1 px-2">
+        <Row
+          icon={<WorkflowIcon className="size-4" />}
+          label="Board"
+          onClick={() => (folded ? unfold() : undefined)}
+          actions={
             <IconButton label="New workspace" onClick={() => setDialog({ kind: "new-workspace" })}>
               <PlusIcon />
             </IconButton>
-          </div>
-        ) : (
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton tooltip="Expand sidebar" onClick={() => setOpen(true)}>
-                <WorkflowIcon />
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        )}
-      </SidebarHeader>
-      <SidebarContent>
+          }
+        />
+      </div>
+      <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-x-hidden overflow-y-auto px-2">
         {workspaces.length === 0 ? (
-          <p className="px-4 py-2 text-xs text-muted-foreground">No workspaces yet.</p>
+          <p className="truncate px-2 py-2 text-xs text-muted-foreground opacity-(--board-fade)">
+            No workspaces yet.
+          </p>
         ) : null}
         {workspaces.map((workspace) => (
-          <SidebarGroup key={workspace.id}>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                {open ? null : (
-                  <SidebarMenuButton tooltip={workspace.name} onClick={() => setOpen(true)}>
-                    <FolderIcon />
-                  </SidebarMenuButton>
-                )}
-                <div className="flex items-center gap-1 group-data-[collapsible=icon]:hidden">
-                  <SidebarMenuButton className="flex-1" render={<div />}>
-                    <FolderIcon />
-                    <span className="truncate">{workspace.name}</span>
-                  </SidebarMenuButton>
+          <div key={workspace.id} className="flex flex-col gap-0.5">
+            <Row
+              icon={<FolderIcon className="size-4" />}
+              label={workspace.name}
+              onClick={() => (folded ? unfold() : undefined)}
+              actions={
+                <>
                   <IconButton
                     label={`New workflow in ${workspace.name}`}
                     onClick={() => setDialog({ kind: "new-workflow", workspaceId: workspace.id })}
@@ -140,73 +222,75 @@ export function BoardSidebarContent() {
                       </MenuItem>
                     </MenuPopup>
                   </Menu>
-                </div>
-              </SidebarMenuItem>
-              <SidebarMenuSub>
-                {workflows
-                  .filter((workflow) => workflow.workspaceId === workspace.id)
-                  .map((workflow) => (
-                    <SidebarMenuSubItem key={workflow.id}>
-                      <div className="flex items-center gap-1">
-                        <SidebarMenuSubButton
-                          className="flex-1"
-                          isActive={workflow.id === currentId}
-                          render={<button type="button" />}
-                          onClick={() => setCurrentWorkflow(workflow.id)}
-                        >
-                          <span>{workflow.name}</span>
-                        </SidebarMenuSubButton>
-                        <Menu>
-                          <MenuTrigger render={<IconButton label={`${workflow.name} actions`} />}>
-                            <MoreHorizontalIcon />
-                          </MenuTrigger>
-                          <MenuPopup align="end" className="min-w-36">
-                            <MenuItem
-                              onClick={() =>
-                                setDialog({
-                                  kind: "rename-workflow",
-                                  id: workflow.id,
-                                  name: workflow.name,
-                                })
-                              }
-                            >
-                              Rename
-                            </MenuItem>
-                            <MenuItem
-                              variant="destructive"
-                              onClick={() =>
-                                setDialog({
-                                  kind: "delete-workflow",
-                                  id: workflow.id,
-                                  name: workflow.name,
-                                })
-                              }
-                            >
-                              Delete
-                            </MenuItem>
-                          </MenuPopup>
-                        </Menu>
-                      </div>
-                    </SidebarMenuSubItem>
-                  ))}
-              </SidebarMenuSub>
-            </SidebarMenu>
-          </SidebarGroup>
+                </>
+              }
+            />
+            <div className="flex flex-col gap-0.5 [[data-folded=true]_&]:hidden">
+              {workflows
+                .filter((workflow) => workflow.workspaceId === workspace.id)
+                .map((workflow) => (
+                  <Row
+                    key={workflow.id}
+                    indent
+                    icon={<span className="size-1.5 rounded-full bg-current opacity-60" />}
+                    label={workflow.name}
+                    active={workflow.id === currentId}
+                    onClick={() => setCurrentWorkflow(workflow.id)}
+                    actions={
+                      <Menu>
+                        <MenuTrigger render={<IconButton label={`${workflow.name} actions`} />}>
+                          <MoreHorizontalIcon />
+                        </MenuTrigger>
+                        <MenuPopup align="end" className="min-w-36">
+                          <MenuItem
+                            onClick={() =>
+                              setDialog({
+                                kind: "rename-workflow",
+                                id: workflow.id,
+                                name: workflow.name,
+                              })
+                            }
+                          >
+                            Rename
+                          </MenuItem>
+                          <MenuItem
+                            variant="destructive"
+                            onClick={() =>
+                              setDialog({
+                                kind: "delete-workflow",
+                                id: workflow.id,
+                                name: workflow.name,
+                              })
+                            }
+                          >
+                            Delete
+                          </MenuItem>
+                        </MenuPopup>
+                      </Menu>
+                    }
+                  />
+                ))}
+            </div>
+          </div>
         ))}
-      </SidebarContent>
-      <SidebarFooter>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              tooltip="Settings"
-              onClick={() => void navigate({ to: "/settings" })}
-            >
-              <SettingsIcon />
-              <span>Settings</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarFooter>
+      </nav>
+      <div className="shrink-0 p-2">
+        <Row
+          icon={<SettingsIcon className="size-4" />}
+          label="Settings"
+          onClick={() => void navigate({ to: "/settings" })}
+        />
+      </div>
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize board sidebar"
+        className="absolute inset-y-0 -right-1.5 z-20 w-3 cursor-col-resize after:absolute after:inset-y-0 after:left-1/2 after:w-0.5 hover:after:bg-border"
+        onPointerDown={startDrag}
+        onClick={() => {
+          if (!moved.current && folded) unfold();
+        }}
+      />
       {dialog?.kind === "new-workspace" ? (
         <NameDialog
           title="New workspace"
@@ -268,6 +352,6 @@ export function BoardSidebarContent() {
       {settingsWorkspace ? (
         <WorkspaceSettingsDialog workspace={settingsWorkspace} onClose={close} />
       ) : null}
-    </>
+    </aside>
   );
 }

@@ -82,4 +82,3 @@ export { useOrchestrationCommand } from "../state/use-orchestration-command";
 export { buildThreadRouteParams } from "../threadRoutes";
 export { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 export { isElectron } from "../env";
-export { setLocalStorageItem } from "../hooks/useLocalStorage";
