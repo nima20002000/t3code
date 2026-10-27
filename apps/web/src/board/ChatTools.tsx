@@ -50,7 +50,9 @@ export function useChatTools(threadRef: ScopedThreadRef | null) {
       <FloatingPanel
         storageKey={`board:${tool}-panel`}
         label={tool === "browser" ? "Browser" : "Terminal"}
-        className="top-16 right-[calc(420px+1.5rem)] h-[60%] w-[520px] max-w-[calc(100%-1.5rem)]"
+        className={`top-16 right-[calc(420px+1.5rem)] max-w-[calc(100%-1.5rem)] ${
+          tool === "browser" ? "h-[60%] w-[520px]" : "h-[280px] w-[440px]"
+        }`}
         header={
           <>
             <span className="px-1 text-sm font-medium">
