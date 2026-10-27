@@ -21,9 +21,17 @@ export interface BoardNode {
   readonly awaitingFirstReply?: boolean;
 }
 
+/** Directed work connection: `a` (source) may send work requests to `b` (target), which returns to `a`. */
 export interface BoardEdge {
   readonly a: string;
   readonly b: string;
+}
+
+/** A user-started workflow run waiting for the engine to send its task to the entry node. */
+export interface RunRequest {
+  readonly id: string;
+  readonly nodeId: string;
+  readonly task: string;
 }
 
 export interface PendingWake {
@@ -44,9 +52,10 @@ export interface BoardState {
   readonly edges: ReadonlyArray<BoardEdge>;
   readonly pending: ReadonlyArray<PendingWake>;
   readonly log: ReadonlyArray<BoardLogEntry>;
+  readonly runQueue: ReadonlyArray<RunRequest>;
 }
 
-const EMPTY_STATE: BoardState = { nodes: [], edges: [], pending: [], log: [] };
+const EMPTY_STATE: BoardState = { nodes: [], edges: [], pending: [], log: [], runQueue: [] };
 
 function readJson<T>(key: string, fallback: T): T {
   try {
@@ -158,6 +167,20 @@ export function areConnected(a: string, b: string): boolean {
   return state.edges.some(
     (edge) => (edge.a === a && edge.b === b) || (edge.a === b && edge.b === a),
   );
+}
+
+/** True when a saved edge lets `from` send work requests to `to`. */
+export function canRequest(from: string, to: string): boolean {
+  return state.edges.some((edge) => edge.a === from && edge.b === to);
+}
+
+/** Queues a workflow run; the engine sends `task` to the entry node and clears the request. */
+export function requestRun(nodeId: string, task: string) {
+  setState({ ...state, runQueue: [...state.runQueue, { id: randomUUID(), nodeId, task }] });
+}
+
+export function clearRunRequest(id: string) {
+  setState({ ...state, runQueue: state.runQueue.filter((run) => run.id !== id) });
 }
 
 export function addEdge(a: string, b: string): boolean {
