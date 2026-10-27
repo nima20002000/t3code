@@ -107,6 +107,7 @@ export function FloatingPanel(props: {
   const panel = useRef<HTMLElement>(null);
   const floatRect = useRef<DOMRect | null>(null);
   const animated = useRef("");
+  const holding = useRef<Animation | null>(null);
   // oxlint-disable-next-line t3code/react-effect-budget -- Measure the panel to animate between its floating and full-window rects.
   useLayoutEffect(() => {
     const element = panel.current;
@@ -116,6 +117,8 @@ export function FloatingPanel(props: {
       `inset(${inner.top - rect.top}px ${rect.right - inner.right}px ${rect.bottom - inner.bottom}px ${inner.left - rect.left}px round ${radius})`;
     const options = { duration: 200, easing: "cubic-bezier(0.2, 0, 0, 1)" };
     if (!full) {
+      holding.current?.cancel();
+      holding.current = null;
       floatRect.current = rect;
       animated.current = "";
       return;
@@ -135,10 +138,8 @@ export function FloatingPanel(props: {
       [{ clipPath: clip(rect, "0px") }, { clipPath: clip(floating, "12px") }],
       { ...options, fill: "forwards" },
     );
-    animation.onfinish = () => {
-      animation.cancel();
-      setClosing(false);
-    };
+    holding.current = animation;
+    animation.onfinish = () => setClosing(false);
   });
 
   // Drag by the header's empty space; the spot is kept per viewer.
