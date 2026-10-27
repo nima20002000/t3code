@@ -7,6 +7,7 @@ import {
   AuthTokenExchangeGrantType,
   ExecutionEnvironmentDescriptor,
   ORCHESTRATION_PROTOCOL_VERSION,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import * as Effect from "effect/Effect";
@@ -18,7 +19,7 @@ const decodeDescriptor = Schema.decodeUnknownEffect(ExecutionEnvironmentDescript
 const decodeToken = Schema.decodeUnknownEffect(AuthAccessTokenResult);
 
 export class PeerPairingError extends Schema.TaggedError<PeerPairingError>()("PeerPairingError", {
-  stage: Schema.Literals(["address", "descriptor", "protocol", "exchange", "store"]),
+  stage: Schema.Literals(["address", "descriptor", "protocol", "exchange", "store", "local"]),
   cause: Schema.optionalKey(Schema.Defect()),
 }) {
   override get message(): string {
@@ -95,6 +96,7 @@ export const pair = Effect.fn("PeerPairing.pair")(function* (input: {
   readonly name: string;
   readonly pairingUrlOrCode: string;
   readonly host?: string;
+  readonly localEnvironmentId?: EnvironmentId;
   readonly store: PeerStore;
 }) {
   const target = yield* Effect.try({
@@ -110,6 +112,9 @@ export const pair = Effect.fn("PeerPairing.pair")(function* (input: {
     catch: (cause) => new PeerPairingError({ stage: "address", cause }),
   });
   const descriptor = yield* readDescriptor(target.httpBaseUrl);
+  if (descriptor.environmentId === input.localEnvironmentId) {
+    return yield* new PeerPairingError({ stage: "local" });
+  }
   const response = yield* request(new URL("/oauth/token", target.httpBaseUrl), {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },

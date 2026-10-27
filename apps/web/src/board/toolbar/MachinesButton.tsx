@@ -13,21 +13,28 @@ export function MachinesButton() {
   const primary = usePrimaryEnvironment();
   const [name, setName] = useState("");
   const [link, setLink] = useState("");
+  const [host, setHost] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isLink = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(link.trim());
   const pair = async () => {
-    if (!name.trim() || !link.trim() || busy) return;
+    if (!name.trim() || !link.trim() || (!isLink && !host.trim()) || busy) return;
     setBusy(true);
     setError(null);
     try {
       await runBoardMutation((client) =>
         client.pairPeer({
           headers: {},
-          payload: { name: name.trim(), pairingUrlOrCode: link.trim() },
+          payload: {
+            name: name.trim(),
+            pairingUrlOrCode: link.trim(),
+            ...(!isLink ? { host: host.trim() } : {}),
+          },
         }),
       );
       setName("");
       setLink("");
+      setHost("");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -81,16 +88,26 @@ export function MachinesButton() {
           />
         </label>
         <label className="grid gap-1">
-          Pairing link
+          Pairing link or code
           <Input
             value={link}
             onChange={(event) => setLink(event.target.value)}
-            placeholder="Paste pairing link"
+            placeholder="Paste pairing link or code"
           />
         </label>
+        {link.trim() && !isLink ? (
+          <label className="grid gap-1">
+            Machine address
+            <Input
+              value={host}
+              onChange={(event) => setHost(event.target.value)}
+              placeholder="https://machine.example.com"
+            />
+          </label>
+        ) : null}
         <Button
           size="sm"
-          disabled={busy || !name.trim() || !link.trim()}
+          disabled={busy || !name.trim() || !link.trim() || (!isLink && !host.trim())}
           onClick={() => void pair()}
         >
           {busy ? "Pairing…" : "Pair machine"}

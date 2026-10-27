@@ -244,6 +244,7 @@ export const BoardUpdateNodeInput = Schema.Struct({
 export const BoardPairPeerInput = Schema.Struct({
   name: TrimmedNonEmptyString,
   pairingUrlOrCode: TrimmedNonEmptyString,
+  host: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export const BoardStartRunInput = Schema.Struct({
   id: Id,

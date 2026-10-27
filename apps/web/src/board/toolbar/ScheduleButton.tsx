@@ -59,6 +59,16 @@ export function ScheduleButton(props: { readonly nodes: ReadonlyArray<BoardNode>
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
+  const setEnabled = async (id: string, enabled: boolean) => {
+    setError(null);
+    try {
+      await runBoardMutation((client) =>
+        client.updateSchedule({ headers: {}, params: { scheduleId: id }, payload: { enabled } }),
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
   return (
     <ToolbarPopover label="Schedule" icon={<ClockIcon />}>
       {props.nodes.length === 0 ? (
@@ -114,14 +124,23 @@ export function ScheduleButton(props: { readonly nodes: ReadonlyArray<BoardNode>
                 Every {schedule.everyMs / 60_000} min · {schedule.enabled ? "enabled" : "paused"}
               </div>
             </div>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              aria-label={`Delete schedule ${schedule.task}`}
-              onClick={() => void remove(schedule.id)}
-            >
-              <Trash2Icon />
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => void setEnabled(schedule.id, !schedule.enabled)}
+              >
+                {schedule.enabled ? "Pause" : "Resume"}
+              </Button>
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label={`Delete schedule ${schedule.task}`}
+                onClick={() => void remove(schedule.id)}
+              >
+                <Trash2Icon />
+              </Button>
+            </div>
           </div>
         ))}
       </div>

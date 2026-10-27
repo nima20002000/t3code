@@ -12,6 +12,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import type { SqlError } from "effect/sql/SqlError";
 import * as AuthHttp from "../auth/http.ts";
 import * as BoardScheduler from "./BoardScheduler.ts";
+import * as BoardPeers from "./BoardPeers.ts";
 import * as BoardService from "./BoardService.ts";
 import * as BoardStore from "./BoardStore.ts";
 import * as DriverRegistry from "./DriverRegistry.ts";
@@ -45,6 +46,7 @@ const handlers = HttpApiBuilder.group(
   "board",
   Effect.fnUntraced(function* (handler) {
     const board = yield* BoardService.BoardService;
+    const peers = yield* BoardPeers.BoardPeers;
     const store = yield* BoardStore.BoardStore;
     return handler
       .handle("getSnapshot", () => read(store.snapshot()))
@@ -72,16 +74,8 @@ const handlers = HttpApiBuilder.group(
         operate(board.deleteEdge(params.workflowId, params.fromId, params.toId)),
       )
       .handle("listPeers", () => read(board.listPeers()))
-      .handle("pairPeer", () =>
-        operate(
-          Effect.fail(new BoardInternalError({ message: "Remote pairing is not available." })),
-        ),
-      )
-      .handle("deletePeer", () =>
-        operate(
-          Effect.fail(new BoardInternalError({ message: "Remote pairing is not available." })),
-        ),
-      )
+      .handle("pairPeer", ({ payload }) => operate(peers.pair(payload)))
+      .handle("deletePeer", ({ params }) => operate(peers.remove(params.peerId)))
       .handle("listRuns", ({ params }) =>
         read(board.getWorkflow(params.workflowId).pipe(Effect.map((workflow) => workflow.runs))),
       )
@@ -124,7 +118,7 @@ const handlers = HttpApiBuilder.group(
   }),
 );
 
-const services = Layer.merge(BoardService.layer, BoardScheduler.layer).pipe(
+const services = Layer.mergeAll(BoardService.layer, BoardScheduler.layer, BoardPeers.layer).pipe(
   Layer.provideMerge(TaskEngine.layer),
   Layer.provideMerge(DriverRegistry.layer),
   Layer.provideMerge(BoardStore.layer),

@@ -6,6 +6,9 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as LocalDriver from "./LocalDriver.ts";
+import * as BoardStore from "./BoardStore.ts";
+import * as PeerStore from "./remote/PeerStore.ts";
+import * as RemoteDriver from "./remote/RemoteDriver.ts";
 
 export class DriverRegistry extends Context.Service<
   DriverRegistry,
@@ -20,8 +23,16 @@ const make = Effect.gen(function* () {
   const local = yield* LocalDriver.LocalDriver;
   const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const localId = yield* environment.getEnvironmentId;
+  const boardStore = yield* BoardStore.BoardStore;
+  const remote = RemoteDriver.make(PeerStore.makeBoard(boardStore));
+  const peers = yield* boardStore.listPairedPeers();
   const drivers = yield* Ref.make<ReadonlyMap<EnvironmentId, NodeDriver>>(
-    new Map([[localId, local]]),
+    new Map([
+      ...peers
+        .filter((peer) => peer.environmentId !== localId)
+        .map((peer) => [peer.environmentId, remote] as const),
+      [localId, local],
+    ]),
   );
   const get = Effect.fn("DriverRegistry.get")(function* (id: EnvironmentId) {
     const driver = (yield* Ref.get(drivers)).get(id);

@@ -9,6 +9,8 @@ import * as Stream from "effect/Stream";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
+import type { EnvironmentId } from "@t3tools/contracts";
+import type { Peer } from "./remote/PeerStore.ts";
 
 export type TaskStatus =
   | "pending"
@@ -53,6 +55,10 @@ export class BoardStore extends Context.Service<
     readonly listTasks: (runId?: string) => StoreEffect<ReadonlyArray<BoardTask>>;
     readonly putTask: (task: BoardTask) => StoreEffect<void>;
     readonly listPeers: () => StoreEffect<ReadonlyArray<BoardPeer>>;
+    readonly getPeer: (id: EnvironmentId) => StoreEffect<Peer | undefined>;
+    readonly listPairedPeers: () => StoreEffect<ReadonlyArray<Peer>>;
+    readonly putPeer: (peer: Peer) => StoreEffect<BoardPeer>;
+    readonly deletePeer: (id: EnvironmentId) => StoreEffect<void>;
     readonly listSchedules: () => StoreEffect<ReadonlyArray<BoardSchedule>>;
     readonly putSchedule: (schedule: BoardSchedule) => StoreEffect<void>;
     readonly deleteSchedule: (id: string) => StoreEffect<void>;
@@ -85,9 +91,20 @@ export const migrate = Migrator.make({})({
 });
 
 type JsonRow = { readonly data: string };
+type PeerRow = JsonRow & { readonly bearer: string };
 const json = Schema.fromJsonString(Schema.Unknown);
 const encodeJson = Schema.encodeSync(json);
 const decodeJson = Schema.decodeUnknownSync(json);
+const peerFromRow = (row: PeerRow): Peer => {
+  const peer = decodeJson(row.data) as BoardPeer;
+  return {
+    id: peer.id,
+    name: peer.name,
+    environmentId: peer.environmentId,
+    url: peer.url,
+    bearer: row.bearer,
+  };
+};
 type TaskRow = {
   readonly id: string;
   readonly workflow_id: string;
@@ -163,6 +180,28 @@ const make = Effect.gen(function* () {
     const rows = yield* sql<JsonRow>`SELECT data FROM board_peers ORDER BY rowid`;
     return rows.map((row) => decodeJson(row.data) as BoardPeer);
   });
+  const getPeer = Effect.fn("BoardStore.getPeer")(function* (id: EnvironmentId) {
+    const rows = yield* sql<PeerRow>`SELECT data, bearer FROM board_peers WHERE id = ${id}`;
+    return rows[0] === undefined ? undefined : peerFromRow(rows[0]);
+  });
+  const listPairedPeers = Effect.fn("BoardStore.listPairedPeers")(function* () {
+    const rows = yield* sql<PeerRow>`SELECT data, bearer FROM board_peers ORDER BY rowid`;
+    return rows.map(peerFromRow);
+  });
+  const putPeer = Effect.fn("BoardStore.putPeer")(function* (peer: Peer) {
+    const visible: BoardPeer = {
+      id: peer.id,
+      name: peer.name,
+      environmentId: peer.environmentId,
+      url: peer.url,
+      status: "connected",
+    };
+    yield* sql`INSERT INTO board_peers (id, data, bearer) VALUES (${peer.environmentId}, ${encodeJson(visible)}, ${peer.bearer}) ON CONFLICT(id) DO UPDATE SET data = excluded.data, bearer = excluded.bearer`;
+    return visible;
+  });
+  const deletePeer = Effect.fn("BoardStore.deletePeer")(function* (id: EnvironmentId) {
+    yield* sql`DELETE FROM board_peers WHERE id = ${id}`;
+  });
   const listSchedules = Effect.fn("BoardStore.listSchedules")(function* () {
     const rows = yield* sql<JsonRow>`SELECT data FROM board_schedules ORDER BY rowid`;
     return rows.map((row) => decodeJson(row.data) as BoardSchedule);
@@ -233,6 +272,10 @@ const make = Effect.gen(function* () {
     listTasks,
     putTask,
     listPeers,
+    getPeer,
+    listPairedPeers,
+    putPeer,
+    deletePeer,
     listSchedules,
     putSchedule,
     deleteSchedule,
