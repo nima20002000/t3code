@@ -186,6 +186,15 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
         text: "finish",
       });
       assert.equal(replay.runId, sent.runId);
+      const replayProjection = yield* client[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
+        threadId,
+      });
+      assert.lengthOf(
+        replayProjection.runs.filter(
+          (run) => run.userMessageId === MessageId.make("board-test-message"),
+        ),
+        1,
+      );
       const [completed] = yield* driver
         .subscribeSettled({ thread, afterSequence: sent.sequence })
         .pipe(
@@ -200,7 +209,7 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
       );
       const subscribed = yield* Deferred.make<WebSocket>();
       const originalWebSocket = globalThis.WebSocket;
-      let subscriptions = 0;
+      const resumeSequences: Array<number | undefined> = [];
       class ObservedWebSocket extends originalWebSocket {
         override send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
           super.send(data);
@@ -211,7 +220,8 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
                 ? new TextDecoder().decode(data)
                 : "";
           if (frame.includes(ORCHESTRATION_V2_WS_METHODS.subscribeThread)) {
-            subscriptions++;
+            const request = JSON.parse(frame) as { payload: { afterSequence?: number } };
+            resumeSequences.push(request.payload.afterSequence);
             Deferred.doneUnsafe(subscribed, Effect.succeed(this));
           }
         }
@@ -225,15 +235,22 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
             globalThis.WebSocket = originalWebSocket;
           }),
       );
+      const replayedCompletion = yield* Deferred.make<number>();
       const waitingForHeld = yield* driver
-        .subscribeSettled({ thread, afterSequence: completed!.sequence })
+        .subscribeSettled({ thread, afterSequence: sent.sequence })
         .pipe(
+          Stream.tap((event) =>
+            event.runId === sent.runId
+              ? Deferred.succeed(replayedCompletion, event.sequence).pipe(Effect.asVoid)
+              : Effect.void,
+          ),
           Stream.filter((event) => event.messageId === MessageId.make("board-test-hold-message")),
           Stream.take(1),
           Stream.runCollect,
           Effect.forkScoped,
         );
       const firstSocket = yield* Deferred.await(subscribed);
+      const replayedSequence = yield* Deferred.await(replayedCompletion);
       yield* Effect.sync(() => firstSocket.close(4000, "test reconnect"));
       const held = yield* driver.send({
         thread,
@@ -262,7 +279,10 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
       });
       const [interrupted] = yield* Fiber.join(waitingForHeld);
       assert.equal(interrupted?.status, "interrupted");
-      assert.isAtLeast(subscriptions, 2);
+      assert.isAtLeast(resumeSequences.length, 2);
+      assert.equal(resumeSequences[0], sent.sequence);
+      assert.isAbove(replayedSequence, sent.sequence);
+      assert.isAtLeast(resumeSequences[1] ?? 0, replayedSequence);
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer))),
   ),
 );
