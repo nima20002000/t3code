@@ -28,7 +28,7 @@ vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (i
   return { ...actual, layer: Layer.succeed(actual.ConnectionDriver, fakeDriver) };
 });
 
-it("shows Board in the chat layout, hides the sidebar and mounts the node's real ChatView", async () => {
+it("shows Board in the chat layout, swaps the thread list for the board sidebar and mounts the node's real ChatView", async () => {
   const thread = threadWithHistory("board-seam-thread", 1);
   using _environment = installFakeEnvironment([thread]);
   const previousFetch = globalThis.fetch;
@@ -151,7 +151,7 @@ it("shows Board in the chat layout, hides the sidebar and mounts the node's real
       `data: ${JSON.stringify({ kind: "workflow.upserted", sequence: 1, workflow: { ...workflow, name: "Live workflow" } })}\n\n`,
     ),
   );
-  await expect.element(screen.getByText("Live workflow", { exact: true })).toBeVisible();
+  await expect.element(screen.getByRole("button", { name: "Live workflow" }).first()).toBeVisible();
   await userEvent.hover(screen.getByText("Scout", { exact: true }));
   await userEvent.click(screen.getByRole("button", { name: "Scout settings" }));
   const panel = screen.getByRole("complementary", { name: "Scout settings" });
