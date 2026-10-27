@@ -68,6 +68,7 @@ const RunViewsContext = createContext<{
   edges: ReadonlyMap<string, EdgeRunView>;
   pulses: ReadonlyMap<string, EdgePulse[]>;
   /** Nodes with a pulse still flying toward them; they keep their previous status until it lands. */
+  /** Nodes whose shown state waits for a pulse in flight: its target, and the sender of a return. */
   arriving: ReadonlySet<string>;
 }>({ nodes: new Map(), edges: new Map(), pulses: new Map(), arriving: new Set() });
 
@@ -105,6 +106,7 @@ interface Flight {
   readonly edgeId: string;
   /** The node the pulse lands on: task pulses reach the target, return pulses the requester. */
   readonly to: string;
+  readonly from: string;
 }
 
 /**
@@ -131,6 +133,7 @@ function useFlights(
       fresh.push({
         edgeId,
         to: crossing.signal === "task" ? edge.b : edge.a,
+        from: crossing.signal === "task" ? edge.a : edge.b,
         pulse: {
           key: crossing.key,
           signal: crossing.signal,
@@ -171,7 +174,10 @@ function useFlights(
   const arriving = new Set<string>();
   for (const flight of [...state.flights, ...fresh]) {
     pulses.set(flight.edgeId, [...(pulses.get(flight.edgeId) ?? []), flight.pulse].slice(-20));
-    if (!state.landed.has(flight.pulse.key)) arriving.add(flight.to);
+    if (state.landed.has(flight.pulse.key)) continue;
+    arriving.add(flight.to);
+    // A worker's result is still on its way: it keeps showing its work until the return lands.
+    if (flight.pulse.signal !== "task") arriving.add(flight.from);
   }
   return { pulses, arriving };
 }
