@@ -1,4 +1,4 @@
-import { createWorkflow } from "@t3tools/board-core/boardModel";
+import { createWorkflow, type Workflow } from "@t3tools/board-core/boardModel";
 import type { BoardSnapshot } from "@t3tools/board-core/http";
 import { expect, it } from "vite-plus/test";
 
@@ -61,4 +61,45 @@ it("only marks a local import after it succeeds and skips IDs already on the hub
       throw new Error("must not import twice");
     },
   });
+});
+
+it("does not leave old in-flight runs or queued work looking active after import", async () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
+  } as Storage;
+  const workflow = {
+    ...createWorkflow("active", "Active"),
+    pending: [{ id: "wake", from: "a", to: "b" }],
+    runQueue: [{ id: "queued", nodeId: "a", task: "queued task" }],
+    runs: [
+      {
+        id: "run",
+        nodeId: "a",
+        nodeName: "A",
+        task: "task",
+        status: "running" as const,
+        startedAt: "2026-01-01T00:00:00Z",
+        requests: [],
+      },
+    ],
+  };
+  values.set("t3.board.v2", JSON.stringify({ currentId: workflow.id, workflows: [workflow] }));
+  let imported: Workflow | undefined;
+  await importLocalWorkflows({
+    storage,
+    origin: "https://hub.example",
+    snapshot,
+    newId: () => "unused",
+    send: async (workflows) => {
+      imported = workflows[0];
+    },
+  });
+  expect(imported?.pending).toEqual([]);
+  expect(imported?.runQueue).toEqual([]);
+  expect(imported?.runs[0]?.status).toBe("stopped");
+  expect(imported?.log[0]?.text).toContain("stopped during import");
 });

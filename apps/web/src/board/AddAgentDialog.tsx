@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { useState } from "react";
+import * as Schema from "effect/Schema";
 
 import { ProviderModelPicker } from "../components/chat/ProviderModelPicker";
 import { Button } from "../components/ui/button";
@@ -32,6 +33,8 @@ import { EMPTY_SERVER_PROVIDERS } from "../state/server";
 import { createNode, nextNodePosition, useCurrentWorkflow } from "./boardStore";
 import { useBoardMachines } from "./useBoardMachines";
 
+const isProviderInstanceId = Schema.is(ProviderInstanceId);
+
 const FIELD_CLASS = "h-8 w-full rounded-md border bg-background px-2 text-sm";
 
 export function AddAgentDialog(props: { readonly onClose: () => void }) {
@@ -45,6 +48,8 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
   );
   const [projectChoice, setProjectChoice] = useState<ProjectId | "">("");
   const [manualProject, setManualProject] = useState("");
+  const [manualProvider, setManualProvider] = useState(settings.defaultInstanceId);
+  const [manualModel, setManualModel] = useState(settings.defaultModel);
   const [modelChoice, setModelChoice] = useState<{
     readonly environmentId: EnvironmentId;
     readonly selection: ModelSelection;
@@ -68,10 +73,15 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
     ProviderInstanceId.make(settings.defaultInstanceId),
     settings.defaultModel,
   );
+  const manualInstanceId = manualProvider.trim();
   const selection: ModelSelection | null =
-    modelChoice !== null && modelChoice.environmentId === environmentId
-      ? modelChoice.selection
-      : (resolveDefaultProviderModelSelection(providers, defaultSelection) ?? defaultSelection);
+    entries.length === 0
+      ? isProviderInstanceId(manualInstanceId) && manualModel.trim()
+        ? createModelSelection(manualInstanceId, manualModel.trim())
+        : null
+      : modelChoice !== null && modelChoice.environmentId === environmentId
+        ? modelChoice.selection
+        : (resolveDefaultProviderModelSelection(providers, defaultSelection) ?? defaultSelection);
   const environmentLabel =
     connected.find((environment) => environment.environmentId === environmentId)?.label ?? "";
   const agentName = name.trim() || environmentLabel || "Agent";
@@ -139,6 +149,7 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
                     setManualProject("");
                   }}
                 >
+                  <option value="">Select...</option>
                   {connected.map((environment) => (
                     <option key={environment.environmentId} value={environment.environmentId}>
                       {environment.label}
@@ -188,9 +199,22 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
                       }
                     />
                   ) : (
-                    <span className="text-muted-foreground">
-                      {settings.defaultInstanceId} / {settings.defaultModel} (workflow default)
-                    </span>
+                    <div className="grid gap-2">
+                      <label className="grid gap-1">
+                        Provider ID
+                        <Input
+                          value={manualProvider}
+                          onChange={(event) => setManualProvider(event.target.value)}
+                        />
+                      </label>
+                      <label className="grid gap-1">
+                        Model
+                        <Input
+                          value={manualModel}
+                          onChange={(event) => setManualModel(event.target.value)}
+                        />
+                      </label>
+                    </div>
                   )}
                 </div>
               </div>

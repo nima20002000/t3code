@@ -1,4 +1,4 @@
-import { migrateBoards } from "@t3tools/board-core/boardModel";
+import { MAX_LOG, migrateBoards } from "@t3tools/board-core/boardModel";
 import { BoardWorkflowSchema, type BoardSnapshot } from "@t3tools/board-core/http";
 import * as Schema from "effect/Schema";
 
@@ -37,9 +37,45 @@ export async function importLocalWorkflows(input: {
     }
     const migrated = migrateBoards(parsed, null, input.newId);
     const workflows = source.length === 0 ? [] : decodeWorkflows(migrated.workflows);
-    const missing = workflows.filter(
-      (workflow) => !input.snapshot.workflows.some((existing) => existing.id === workflow.id),
-    );
+    const missing = workflows
+      .filter(
+        (workflow) => !input.snapshot.workflows.some((existing) => existing.id === workflow.id),
+      )
+      .map((workflow): Workflow => {
+        if (
+          !workflow.pending.length &&
+          !workflow.runQueue.length &&
+          !workflow.runs.some((run) => run.status === "running")
+        )
+          return workflow;
+        const at = new Date().toISOString();
+        return {
+          ...workflow,
+          pending: [],
+          runQueue: [],
+          runs: workflow.runs.map((run) =>
+            run.status !== "running"
+              ? run
+              : {
+                  ...run,
+                  status: "stopped",
+                  endedAt: at,
+                  requests: run.requests.map((request) =>
+                    request.status === "pending" ? { ...request, status: "stopped" } : request,
+                  ),
+                },
+          ),
+          log: [
+            {
+              id: input.newId(),
+              at,
+              kind: "info" as const,
+              text: "Unfinished local run tracking was stopped during import; queued work was not started.",
+            },
+            ...workflow.log,
+          ].slice(0, MAX_LOG),
+        };
+      });
     if (missing.length) await input.send(missing);
   }
   input.storage.setItem(storageKey, "1");
