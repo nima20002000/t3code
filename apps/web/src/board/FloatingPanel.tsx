@@ -1,11 +1,5 @@
-import {
-  useLayoutEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type PointerEvent,
-  type ReactNode,
-} from "react";
+import { useState, type CSSProperties, type PointerEvent, type ReactNode, type Ref } from "react";
+import { flushSync } from "react-dom";
 
 type PanelPosition = { readonly x: number; readonly y: number };
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(value, max));
@@ -24,6 +18,54 @@ function savePanelPosition(key: string, position: PanelPosition) {
     localStorage.setItem(`${key}-position`, JSON.stringify(position));
   } catch {
     // Storage can be unavailable; the panel just opens at its default spot next time.
+  }
+}
+
+const floatingRects = new WeakMap<Element, DOMRect>();
+let morphing = false;
+const FADE_MS = 70;
+const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+
+/**
+ * Toggles full screen behind a plain card that moves on the compositor (transform and opacity
+ * only), so the chat re-laying out at its new size can block the main thread without a dropped
+ * frame. The panel reappears once the card lands and the new layout has painted.
+ */
+export async function morphPanel(panel: HTMLElement | null, maximize: boolean, update: () => void) {
+  if (morphing) return;
+  const window_ = new DOMRect(0, 0, window.innerWidth, window.innerHeight);
+  if (maximize && panel) floatingRects.set(panel, panel.getBoundingClientRect());
+  const target = maximize ? window_ : panel && floatingRects.get(panel);
+  if (!panel || !target || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    update();
+    return;
+  }
+  morphing = true;
+  const place = (rect: DOMRect) =>
+    `translate(${rect.x}px, ${rect.y}px) scale(${rect.width / window_.width}, ${rect.height / window_.height})`;
+  const card = document.createElement("div");
+  card.className = "board-panel-morph";
+  document.body.append(card);
+  try {
+    const move = card.animate(
+      [{ transform: place(panel.getBoundingClientRect()) }, { transform: place(target) }],
+      { duration: 240, easing: "cubic-bezier(0.2, 0, 0, 1)", fill: "forwards" },
+    );
+    card.animate([{ opacity: 0 }, { opacity: 1 }], { duration: FADE_MS, fill: "forwards" });
+    const hide = panel.animate([{ opacity: 1 }, { opacity: 0 }], {
+      duration: FADE_MS,
+      fill: "forwards",
+    });
+    await hide.finished;
+    flushSync(update);
+    await move.finished;
+    await nextFrame();
+    hide.cancel();
+    await card.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, fill: "forwards" })
+      .finished;
+  } finally {
+    card.remove();
+    morphing = false;
   }
 }
 
@@ -79,10 +121,11 @@ export function FloatingPanel(props: {
   readonly children: ReactNode;
   /** When this changes to a non-null value, the panel returns to its default place and size. */
   readonly resetKey?: string | null;
-  /** Fills the whole window, animating from and back to the floating spot. */
+  /** Fills the whole window; toggle it through `morphPanel` to animate the change. */
   readonly maximized?: boolean;
+  readonly ref?: Ref<HTMLElement>;
 }) {
-  const { storageKey } = props;
+  const { storageKey, ref } = props;
   const [position, setPosition] = useState(() => readPanelPosition(storageKey));
   const [size, setSize] = useState(() => readPanelSize(storageKey));
   const [seenReset, setSeenReset] = useState(props.resetKey ?? null);
@@ -94,53 +137,7 @@ export function FloatingPanel(props: {
     }
   }
 
-  // The panel keeps its full-window layout while it animates; only a clip moves, so the chat is
-  // laid out once instead of on every frame.
-  const requested = props.maximized ?? false;
-  const [seenRequested, setSeenRequested] = useState(requested);
-  const [closing, setClosing] = useState(false);
-  if (requested !== seenRequested) {
-    setSeenRequested(requested);
-    setClosing(!requested);
-  }
-  const full = requested || closing;
-  const panel = useRef<HTMLElement>(null);
-  const floatRect = useRef<DOMRect | null>(null);
-  const animated = useRef("");
-  const holding = useRef<Animation | null>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Measure the panel to animate between its floating and full-window rects.
-  useLayoutEffect(() => {
-    const element = panel.current;
-    if (!element) return;
-    const rect = element.getBoundingClientRect();
-    const clip = (inner: DOMRect, radius: string) =>
-      `inset(${inner.top - rect.top}px ${rect.right - inner.right}px ${rect.bottom - inner.bottom}px ${inner.left - rect.left}px round ${radius})`;
-    const options = { duration: 200, easing: "cubic-bezier(0.2, 0, 0, 1)" };
-    if (!full) {
-      holding.current?.cancel();
-      holding.current = null;
-      floatRect.current = rect;
-      animated.current = "";
-      return;
-    }
-    const floating = floatRect.current;
-    const phase = requested ? "open" : "close";
-    if (!floating || animated.current === phase) return;
-    animated.current = phase;
-    if (requested) {
-      element.animate(
-        [{ clipPath: clip(floating, "12px") }, { clipPath: clip(rect, "0px") }],
-        options,
-      );
-      return;
-    }
-    const animation = element.animate(
-      [{ clipPath: clip(rect, "0px") }, { clipPath: clip(floating, "12px") }],
-      { ...options, fill: "forwards" },
-    );
-    holding.current = animation;
-    animation.onfinish = () => setClosing(false);
-  });
+  const full = props.maximized ?? false;
 
   // Drag by the header's empty space; the spot is kept per viewer.
   const startMove = (event: PointerEvent<HTMLDivElement>) => {
@@ -236,7 +233,7 @@ export function FloatingPanel(props: {
 
   return (
     <aside
-      ref={panel}
+      ref={ref}
       aria-label={props.label}
       className={`board-chat-panel flex flex-col border bg-background shadow-lg ${
         full ? "fixed inset-0 z-50 rounded-none" : `absolute z-20 rounded-xl ${props.className}`

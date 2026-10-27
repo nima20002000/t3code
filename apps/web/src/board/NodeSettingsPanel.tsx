@@ -1,10 +1,10 @@
 import { Maximize2Icon, Minimize2Icon, SettingsIcon, XIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { AgentDialog } from "./AddAgentDialog";
-import { FloatingPanel } from "./FloatingPanel";
+import { FloatingPanel, morphPanel } from "./FloatingPanel";
 import { IconButton } from "./toolbar/IconButton";
 import { useSendBoardInstructions } from "./useSendBoardInstructions";
 import {
@@ -83,6 +83,9 @@ export function NodeSettingsPanel(props: {
   const [editingName, setEditingName] = useState(false);
   const [configuring, setConfiguring] = useState(false);
   const [maximized, setMaximized] = useState(false);
+  const panel = useRef<HTMLElement>(null);
+  const toggleMaximized = (next: boolean) =>
+    void morphPanel(panel.current, next, () => setMaximized(next));
 
   // The panel is too narrow for t3's right panel; start each node's chat with it closed.
   // oxlint-disable-next-line t3code/react-effect-budget -- Synchronize the external right-panel store with the active thread.
@@ -94,7 +97,7 @@ export function NodeSettingsPanel(props: {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (maximized) setMaximized(false);
+      if (maximized) void morphPanel(panel.current, false, () => setMaximized(false));
       else onClose();
     };
     window.addEventListener("keydown", onKey);
@@ -110,6 +113,7 @@ export function NodeSettingsPanel(props: {
     <FloatingPanel
       storageKey="board:chat-panel"
       maximized={maximized}
+      ref={panel}
       label={`${node.name} chat`}
       className="top-16 right-3 h-[70%] w-[420px] max-w-[calc(100%-1.5rem)]"
       header={
@@ -147,7 +151,7 @@ export function NodeSettingsPanel(props: {
           {node.threadId === "" ? null : (
             <IconButton
               label={maximized ? "Minimize" : "Full screen"}
-              onClick={() => setMaximized(!maximized)}
+              onClick={() => toggleMaximized(!maximized)}
             >
               {maximized ? <Minimize2Icon size={15} /> : <Maximize2Icon size={15} />}
             </IconButton>

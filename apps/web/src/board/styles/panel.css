@@ -1,0 +1,15 @@
+/* The card morphPanel moves between the chat panel's floating and full-window rects. */
+.board-panel-morph {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 60;
+  width: 100vw;
+  height: 100vh;
+  transform-origin: 0 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  /* A step above the page so the card reads against the board in both themes. */
+  background: color-mix(in srgb, var(--foreground) 7%, var(--background));
+  pointer-events: none;
+}
