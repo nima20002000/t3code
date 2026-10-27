@@ -22,15 +22,21 @@ function savePanelPosition(key: string, position: PanelPosition) {
 }
 
 let morphing = false;
-const FADE_MS = 110;
-const BLUR_MS = 160;
+const BLUR_MS = 320;
 const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
-const easing = "cubic-bezier(0.2, 0, 0, 1)";
+const fade = (element: Element, to: number, duration: number, delay = 0) =>
+  element.animate([{ opacity: 1 - to }, { opacity: to }], {
+    duration,
+    delay,
+    easing: "ease-out",
+    fill: "forwards",
+  }).finished;
 
 /**
- * Toggles full screen behind a blur of the board: the panel fades out with a slight shrink, changes
- * size while hidden, and fades back in. Resizing re-lays out the whole chat, which blocks the main
- * thread, so it happens while nothing on screen moves. Opening blurs first; closing clears last.
+ * Toggles full screen through a blur of the board. Opening: the blur comes in, the small panel
+ * fades into it, and the full panel fades in over the still-growing blur. Minimizing runs that in
+ * reverse. Resizing re-lays out the whole chat and blocks the main thread, so it happens while the
+ * panel is invisible.
  */
 export async function morphPanel(panel: HTMLElement | null, maximize: boolean, update: () => void) {
   if (morphing) return;
@@ -42,36 +48,21 @@ export async function morphPanel(panel: HTMLElement | null, maximize: boolean, u
   const backdrop = document.createElement("div");
   backdrop.className = "board-panel-backdrop";
   document.body.append(backdrop);
-  const blurIn = backdrop.animate([{ opacity: 0 }, { opacity: 1 }], {
-    // Closing starts under the full panel, where the blur is not seen yet.
-    duration: maximize ? BLUR_MS : 1,
-    fill: "forwards",
-  });
-  const hidden = { opacity: 0, transform: "scale(0.97)" };
   try {
-    await panel.animate([{ opacity: 1, transform: "none" }, hidden], {
-      duration: FADE_MS,
-      easing,
-      fill: "forwards",
-    }).finished;
-    await blurIn.finished;
+    // Minimizing starts under the full panel, where the blur already shows as it fades.
+    const blurIn = fade(backdrop, 1, maximize ? BLUR_MS : 1);
+    await fade(panel, 0, maximize ? 100 : 240);
     flushSync(update);
     // The chat re-renders once more when it observes its new size; let that pass before fading in.
     await nextFrame();
     await nextFrame();
-    await panel.animate([hidden, { opacity: 1, transform: "none" }], {
-      duration: FADE_MS,
-      easing,
-      fill: "forwards",
-    }).finished;
-    if (!maximize) {
-      await backdrop.animate([{ opacity: 1 }, { opacity: 0 }], {
-        duration: BLUR_MS,
-        fill: "forwards",
-      }).finished;
-    }
+    const reveal = fade(panel, 1, maximize ? 240 : 160);
+    if (maximize) await Promise.all([reveal, blurIn]);
+    else await Promise.all([reveal, fade(backdrop, 0, BLUR_MS, 60)]);
   } finally {
-    for (const animation of panel.getAnimations()) animation.cancel();
+    for (const animation of [...panel.getAnimations(), ...backdrop.getAnimations()]) {
+      animation.cancel();
+    }
     backdrop.remove();
     morphing = false;
   }
