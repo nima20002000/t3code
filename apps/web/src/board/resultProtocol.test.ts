@@ -126,7 +126,9 @@ describe("helpers", () => {
   });
 
   it("prefixes the role in the first prompt", () => {
-    expect(buildAgentFirstPrompt("Dev", " Fix bugs ", [])).toMatch(/^Fix bugs\n\n\[Board\]/);
+    expect(buildAgentFirstPrompt("Dev", " Fix bugs ", [])).toMatch(
+      /^Fix bugs\n\n\(The role above[\s\S]*\[Board\]/,
+    );
     expect(buildAgentFirstPrompt("Dev", " ", ["QA"])).toBe(buildBoardInstructions("Dev", ["QA"]));
   });
 
