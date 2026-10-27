@@ -40,6 +40,8 @@ export interface PendingBriefing {
   readonly sequence: number;
 }
 
+export const EVENT_RETENTION = 10_000;
+
 type EventInput = BoardEvent extends infer E
   ? E extends BoardEvent
     ? Omit<E, "sequence">
@@ -329,7 +331,9 @@ const make = Effect.gen(function* () {
     const rows = yield* sql<{
       readonly sequence: number;
     }>`INSERT INTO board_task_events (data) VALUES (${encodeJson(event)}) RETURNING sequence`;
-    return rows[0]!.sequence;
+    const sequence = rows[0]!.sequence;
+    yield* sql`DELETE FROM board_task_events WHERE sequence <= ${sequence - EVENT_RETENTION}`;
+    return sequence;
   });
   const snapshot = Effect.fn("BoardStore.snapshot")(function* () {
     return yield* sql.withTransaction(
@@ -350,6 +354,13 @@ const make = Effect.gen(function* () {
     Stream.unwrap(
       Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(changes);
+        const oldest = yield* sql<{
+          readonly sequence: number | null;
+        }>`SELECT MIN(sequence) AS sequence FROM board_task_events`;
+        // Replay has a gap: end the stream so the client reconnects from a fresh snapshot.
+        if (oldest[0]?.sequence != null && afterSequence < oldest[0].sequence - 1) {
+          return Stream.empty;
+        }
         const cursor = yield* Ref.make(afterSequence);
         const read = Effect.gen(function* () {
           const after = yield* Ref.get(cursor);

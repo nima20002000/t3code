@@ -129,3 +129,28 @@ it.effect("rolls board state and its event back together", () =>
     assert.deepStrictEqual(yield* store.listWorkflows(), []);
   }).pipe(Effect.provide(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)))),
 );
+
+it.effect("prunes old events and ends replay that would have a gap", () =>
+  Effect.gen(function* () {
+    const store = yield* BoardStore.BoardStore;
+    const workflow = createWorkflow("pruned", "Pruned");
+    const total = BoardStore.EVENT_RETENTION + 5;
+    yield* store.transaction(
+      Effect.forEach(
+        Array.from({ length: total }),
+        () => store.appendEvent({ kind: "workflow.upserted", workflow }),
+        { discard: true },
+      ),
+    );
+    const sql = yield* SqlClient.SqlClient;
+    const kept = yield* sql<{
+      readonly count: number;
+      readonly oldest: number;
+    }>`SELECT COUNT(*) AS count, MIN(sequence) AS oldest FROM board_task_events`;
+    assert.strictEqual(kept[0]?.count, BoardStore.EVENT_RETENTION);
+    assert.strictEqual(kept[0]?.oldest, 6);
+    assert.deepStrictEqual(Array.from(yield* Stream.runCollect(store.events(0))), []);
+    const resumed = yield* store.events(5).pipe(Stream.take(1), Stream.runCollect);
+    assert.strictEqual(resumed[0]?.sequence, 6);
+  }).pipe(Effect.provide(BoardStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)))),
+);
