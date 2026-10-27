@@ -13,15 +13,7 @@
   display: none;
 }
 
-/* In the small chat the composer spans the panel's whole bottom edge. */
-.board-chat-panel:not([data-full]) .chat-composer-lane {
-  padding-inline: 0;
-}
-
-.board-chat-panel:not([data-full]) [data-chat-composer-stack] {
-  max-width: none;
-}
-
+/* In the small chat the composer sits on the panel's bottom edge. */
 .board-chat-panel:not([data-full]) [data-chat-composer-stack] [class*="safe-area-inset-bottom"] {
   display: none;
 }
