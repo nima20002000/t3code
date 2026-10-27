@@ -28,6 +28,7 @@ import {
   type RunRecord,
   type Workflow,
   type Workspace,
+  workspaceNameTaken,
 } from "@t3tools/board-core";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -137,13 +138,7 @@ const make = Effect.gen(function* () {
     name: string,
     ownId?: string,
   ) {
-    const wanted = name.trim().toLowerCase();
-    // The name is the default folder name on every machine, so two workspaces cannot share it.
-    if (
-      (yield* store.listWorkspaces()).some(
-        (entry) => entry.id !== ownId && entry.name.trim().toLowerCase() === wanted,
-      )
-    )
+    if (workspaceNameTaken(yield* store.listWorkspaces(), name, ownId))
       return yield* new BoardConflictError({ message: "A workspace with that name exists." });
   });
   const removeProjects = Effect.fn("BoardService.removeProjects")(function* (
@@ -266,9 +261,8 @@ const make = Effect.gen(function* () {
   });
   const deleteWorkspace = Effect.fn("BoardService.deleteWorkspace")(function* (id: string) {
     const workspace = yield* getWorkspace(id);
-    const inside = (yield* store.listWorkflows()).filter((workflow) => workflow.workspaceId === id);
-    for (const workflow of inside) yield* checkEditable(workflow);
-    yield* removeProjects(workspace);
+    // Rows go first, in one transaction with the editable check, so no run can start while the
+    // slow machine cleanup below runs.
     yield* store.transaction(
       Effect.gen(function* () {
         const current = (yield* store.listWorkflows()).filter(
@@ -284,6 +278,7 @@ const make = Effect.gen(function* () {
         yield* store.appendEvent({ kind: "workspace.deleted", workspaceId: id });
       }),
     );
+    yield* removeProjects(workspace);
   });
 
   const create = Effect.fn("BoardService.createWorkflow")(function* (

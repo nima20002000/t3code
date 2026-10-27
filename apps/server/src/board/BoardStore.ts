@@ -41,6 +41,8 @@ export interface BoardTask {
   readonly checkpoint: unknown;
   readonly waitOn: ReadonlyArray<string>;
   readonly waitPolicy: "allSettled" | "failFast";
+  /** The kanban card moved to doing for this task ("" when there was none); its return moves that card. */
+  readonly cardId?: string;
 }
 
 export const EVENT_RETENTION = 10_000;
@@ -158,10 +160,16 @@ const workspacesMigration = Effect.gen(function* () {
     yield* sql`INSERT INTO board_task_events (data) VALUES (${encodeJson(event)})`;
 });
 
+const taskCardMigration = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`ALTER TABLE board_tasks ADD COLUMN card_id TEXT`;
+});
+
 export const migrations = {
   "1_Board": migration,
   "2_BoardIntents": intentsMigration,
   "3_BoardWorkspaces": workspacesMigration,
+  "4_BoardTaskCards": taskCardMigration,
 };
 
 export const migrate = Migrator.make({})({
@@ -196,6 +204,7 @@ type TaskRow = {
   readonly checkpoint: string;
   readonly wait_on: string;
   readonly wait_policy: BoardTask["waitPolicy"];
+  readonly card_id: string | null;
 };
 
 const taskFromRow = (row: TaskRow): BoardTask => ({
@@ -209,6 +218,7 @@ const taskFromRow = (row: TaskRow): BoardTask => ({
   checkpoint: decodeJson(row.checkpoint),
   waitOn: decodeJson(row.wait_on) as ReadonlyArray<string>,
   waitPolicy: row.wait_policy,
+  ...(row.card_id === null ? {} : { cardId: row.card_id }),
 });
 
 const make = Effect.gen(function* () {
@@ -257,9 +267,9 @@ const make = Effect.gen(function* () {
     return rows.map(taskFromRow);
   });
   const putTask = Effect.fn("BoardStore.putTask")(function* (task: BoardTask) {
-    yield* sql`INSERT INTO board_tasks (id, workflow_id, run_id, kind, owner, node_id, status, checkpoint, wait_on, wait_policy)
-      VALUES (${task.id}, ${task.workflowId}, ${task.runId}, ${task.kind}, ${task.owner}, ${task.nodeId}, ${task.status}, ${encodeJson(task.checkpoint)}, ${encodeJson(task.waitOn)}, ${task.waitPolicy})
-      ON CONFLICT(id) DO UPDATE SET status = excluded.status, checkpoint = excluded.checkpoint, wait_on = excluded.wait_on, wait_policy = excluded.wait_policy`;
+    yield* sql`INSERT INTO board_tasks (id, workflow_id, run_id, kind, owner, node_id, status, checkpoint, wait_on, wait_policy, card_id)
+      VALUES (${task.id}, ${task.workflowId}, ${task.runId}, ${task.kind}, ${task.owner}, ${task.nodeId}, ${task.status}, ${encodeJson(task.checkpoint)}, ${encodeJson(task.waitOn)}, ${task.waitPolicy}, ${task.cardId ?? null})
+      ON CONFLICT(id) DO UPDATE SET status = excluded.status, checkpoint = excluded.checkpoint, wait_on = excluded.wait_on, wait_policy = excluded.wait_policy, card_id = excluded.card_id`;
   });
   const listPeers = Effect.fn("BoardStore.listPeers")(function* () {
     const rows = yield* sql<JsonRow>`SELECT data FROM board_peers ORDER BY rowid`;

@@ -174,6 +174,16 @@ export const WORKSPACES_ROOT = "~/t3-workspaces";
  * The folder a workspace gets on a machine it has none on yet; `~` expands on that machine.
  * t3 never reuses a project id, so each folder needs a fresh `uniqueId`.
  */
+/** The name is the default folder name on every machine, so two workspaces cannot share its slug. */
+export function workspaceNameTaken(
+  workspaces: ReadonlyArray<Pick<Workspace, "id" | "name">>,
+  name: string,
+  ownId?: string,
+): boolean {
+  const wanted = workspaceSlug(name);
+  return workspaces.some((entry) => entry.id !== ownId && workspaceSlug(entry.name) === wanted);
+}
+
 export function defaultFolder(
   workspace: Workspace,
   environmentId: EnvironmentId,

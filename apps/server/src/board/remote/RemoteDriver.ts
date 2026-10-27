@@ -241,6 +241,8 @@ export function make(store: PeerStore): NodeDriver {
   return {
     ensureProject: Effect.fn("RemoteDriver.ensureProject")(function* (input) {
       const commandId = CommandId.make(`board:project:${input.projectId}`);
+      // A migrated folder has no path: its project already exists on that machine.
+      if (input.path === "") return { adopted: true };
       yield* useClient(store, input, (client) =>
         client[WS_METHODS.projectsMutate]({
           type: "project.create",
@@ -251,6 +253,7 @@ export function make(store: PeerStore): NodeDriver {
           createWorkspaceRootIfMissing: true,
         }),
       ).pipe(Effect.mapError((cause) => error("ensureProject", cause)));
+      return { adopted: false };
     }),
     deleteProject: Effect.fn("RemoteDriver.deleteProject")(function* (input) {
       yield* useClient(store, input, (client) =>

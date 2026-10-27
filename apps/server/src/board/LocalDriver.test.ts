@@ -183,3 +183,28 @@ it.effect("deletes a board-created folder under ~/t3-workspaces, never one elsew
     yield* fileSystem.remove(outside, { recursive: true });
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect("adopts a folder that already exists so the board never deletes it", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const dir = yield* fileSystem.makeTempDirectory();
+    const layer = projectDriver({
+      getById: () => Effect.succeedNone,
+      create: () => Effect.succeed({} as never),
+    });
+    yield* Effect.gen(function* () {
+      const driver = yield* LocalDriver.LocalDriver;
+      const input = {
+        environmentId: thread.environmentId,
+        projectId: thread.projectId,
+        title: "Workspace",
+      };
+      assert.deepStrictEqual(yield* driver.ensureProject({ ...input, path: dir }), {
+        adopted: true,
+      });
+      assert.deepStrictEqual(yield* driver.ensureProject({ ...input, path: `${dir}/new` }), {
+        adopted: false,
+      });
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

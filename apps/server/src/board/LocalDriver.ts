@@ -171,7 +171,12 @@ const make = Effect.gen(function* () {
   const ensureProject: NodeDriver["ensureProject"] = Effect.fn("LocalDriver.ensureProject")(
     function* (input) {
       const existing = yield* projects.getById(input.projectId);
-      if (Option.isSome(existing)) return;
+      if (Option.isSome(existing)) return { adopted: false };
+      const adopted = yield* fileSystem.exists(
+        input.path === "~" || input.path.startsWith("~/")
+          ? path.join(NodeOS.homedir(), input.path.slice(2))
+          : input.path,
+      );
       yield* projects.create({
         commandId: CommandId.make(`board:project:${input.projectId}`),
         projectId: input.projectId,
@@ -179,6 +184,7 @@ const make = Effect.gen(function* () {
         workspaceRoot: input.path,
         createWorkspaceRootIfMissing: true,
       });
+      return { adopted };
     },
     Effect.mapError(error("ensureProject")),
   );

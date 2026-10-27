@@ -74,10 +74,13 @@ export interface BoardDriverProject {
 }
 
 export interface NodeDriver {
-  /** Registers the t3 project for a workspace folder, creating the folder when it is missing. */
+  /**
+   * Registers the t3 project for a workspace folder, creating the folder when it is missing.
+   * `adopted` is true when the folder already existed, so the board must never delete it.
+   */
   readonly ensureProject: (
     input: BoardDriverProject & { readonly title: string; readonly path: string },
-  ) => Effect.Effect<void, NodeDriverError>;
+  ) => Effect.Effect<{ readonly adopted: boolean }, NodeDriverError>;
   /**
    * Removes the t3 project and its threads. With `removeFolder`, also deletes a board-created folder
    * under ~/t3-workspaces where the driver can (stock t3 has no remote folder delete).

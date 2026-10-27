@@ -163,6 +163,18 @@ export function buildStartMessage(runId: string, task: string): string {
   );
 }
 
+/** The current cards as one compact block, so the orchestrator knows the ids the board generated. */
+export function buildKanbanBrief(
+  cards: ReadonlyArray<{ readonly id: string; readonly title: string; readonly status: string }>,
+): string {
+  if (cards.length === 0) return "";
+  return [
+    "[Board] Current kanban cards",
+    "",
+    jsonBlock(cards.map(({ id, title, status }) => ({ id, title, status }))),
+  ].join("\n");
+}
+
 export function buildCorrectionMessage(reason: string): string {
   return `[Board] Your last reply had no valid result block: ${reason}. Reply again ending with a valid json block.`;
 }

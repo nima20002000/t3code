@@ -13,6 +13,7 @@ import {
   snapshotOf,
   snapshotsEqual,
   uniqueWorkflowName,
+  workspaceNameTaken,
   workspaceSlug,
   undoHistory,
   type BoardNode,
@@ -37,6 +38,13 @@ describe("workspaces", () => {
   it("slugs the name into a folder name", () => {
     expect(workspaceSlug("Big Project!")).toBe("big-project");
     expect(workspaceSlug("  ")).toBe("workspace");
+  });
+
+  it("rejects a name whose folder slug collides with another workspace", () => {
+    const others = [{ id: "w2", name: "My Board" }];
+    expect(workspaceNameTaken(others, "My-Board")).toBe(true);
+    expect(workspaceNameTaken(others, "My Board", "w2")).toBe(false);
+    expect(workspaceNameTaken(others, "Other")).toBe(false);
   });
 
   it("gives a machine its default folder under the t3 workspaces root", () => {

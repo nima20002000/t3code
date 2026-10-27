@@ -65,7 +65,7 @@ const makeHarness = Effect.gen(function* () {
   const queueFor = (threadId: ThreadId) => replies.get(threadId)!;
   const messages = yield* Ref.make(new Map<RunId, string>());
   const driver: NodeDriver = {
-    ensureProject: (input) => Queue.offer(projects, input).pipe(Effect.asVoid),
+    ensureProject: (input) => Queue.offer(projects, input).pipe(Effect.as({ adopted: false })),
     deleteProject: () => Effect.void,
     launch: (input) =>
       Effect.gen(function* () {
@@ -881,6 +881,97 @@ it.effect("does not start a schedule while a run is active and skips a paused sc
       assert.strictEqual(schedules.find((entry) => entry.id === "paused")?.nextRunAt, dueAt);
       assert.strictEqual((yield* store.getWorkflow("workflow"))?.runs.length, 1);
       assert.strictEqual(yield* Queue.size(harness.sends), 0);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+const withKanban = (kanban: string, routing: string) =>
+  `\`\`\`json\n{"summary":"plan","data":null,"kanban":${kanban},"routing":${routing}}\n\`\`\``;
+const requestTo = (to: string) => `{"kind":"request","requests":[{"to":"${to}","task":"work"}]}`;
+const card = (id: string, assigneeNodeId: string) => ({
+  id,
+  title: id,
+  body: "",
+  status: "todo" as const,
+  assigneeNodeId,
+  updatedBy: "engine",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+});
+
+it.effect(
+  "accepts several id-less card creates in one reply and tells the orchestrator their ids",
+  () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      const layer = TaskEngine.layer.pipe(
+        Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
+        Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+      );
+      yield* Effect.gen(function* () {
+        const engine = yield* TaskEngine.TaskEngine;
+        const store = yield* BoardStore.BoardStore;
+        yield* store.transaction(seed(store, setupWorkflow()));
+        yield* engine.start("workflow", { id: "run:cards", nodeId: "root", task: "Plan" });
+        const root = yield* Queue.take(harness.sends);
+        yield* harness.reply(
+          root,
+          withKanban(
+            '[{"op":"create","title":"Plan it","assignee":"one"},{"op":"create","title":"Build it","assignee":"two"}]',
+            '{"kind":"request","requests":[{"to":"one","task":"first"},{"to":"two","task":"second"}]}',
+          ),
+        );
+        const first = yield* Queue.take(harness.sends);
+        const second = yield* Queue.take(harness.sends);
+        const cards = yield* store.listKanban("workflow");
+        assert.deepStrictEqual(cards.map((entry) => [entry.title, entry.status]).toSorted(), [
+          ["Build it", "doing"],
+          ["Plan it", "doing"],
+        ]);
+        yield* harness.reply(first, returned("a"));
+        yield* harness.reply(second, returned("b"));
+        const joined = yield* Queue.take(harness.sends);
+        for (const entry of cards) assert.include(joined.text, entry.id);
+        assert.include(joined.text, "Plan it");
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+it.effect("a worker's return completes the card chosen for its own request", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const layer = TaskEngine.layer.pipe(
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(seed(store, setupWorkflow()));
+      yield* store.putCard("workflow", card("card-a", "one"));
+      yield* store.putCard("workflow", card("card-b", "one"));
+      const requestFrom = (runId: string) =>
+        Effect.gen(function* () {
+          yield* engine.start("workflow", { id: runId, nodeId: "root", task: "Go" });
+          const root = yield* Queue.take(harness.sends);
+          yield* harness.reply(root, withKanban("[]", requestTo("one")));
+          return yield* Queue.take(harness.sends);
+        });
+      const forA = yield* requestFrom("run:a");
+      const forB = yield* requestFrom("run:b");
+      const status = () =>
+        store
+          .listKanban("workflow")
+          .pipe(
+            Effect.map((cards) => cards.map((entry) => `${entry.id}:${entry.status}`).toSorted()),
+          );
+      assert.deepStrictEqual(yield* status(), ["card-a:doing", "card-b:doing"]);
+      yield* harness.reply(forB, returned("b done"));
+      yield* waitForRun(
+        store,
+        (run) => run.id === "run:b" && run.requests.some((entry) => entry.status === "returned"),
+      );
+      assert.deepStrictEqual(yield* status(), ["card-a:doing", "card-b:done"]);
+      assert.isDefined(forA);
     }).pipe(Effect.provide(layer));
   }),
 );

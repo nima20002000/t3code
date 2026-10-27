@@ -45,7 +45,7 @@ const card = (id: string, assigneeNodeId?: string): KanbanCard => ({
 const makeLayer = Effect.gen(function* () {
   const deleted = yield* Queue.unbounded<ProjectId>();
   const driver: NodeDriver = {
-    ensureProject: () => Effect.void,
+    ensureProject: () => Effect.succeed({ adopted: false }),
     deleteProject: (input) => Queue.offer(deleted, input.projectId).pipe(Effect.asVoid),
     launch: (input) =>
       Effect.succeed({

@@ -8,6 +8,7 @@ import {
   applyKanban,
   buildAgentInstructions,
   buildCorrectionMessage,
+  buildKanbanBrief,
   buildRequestMessage,
   buildReturnMessage,
   buildSeededMessage,
@@ -155,24 +156,32 @@ const make = Effect.gen(function* () {
       yield* store.appendEvent({ kind: "kanban.deleted", workflowId, cardId });
     }
   });
-  /** Moves the worker's assigned card; the first status group that has a card wins. */
+  /**
+   * Moves the worker's assigned card and returns its id ("" when none moved). With a `cardId` (the card
+   * chosen when the task began) only that card moves; otherwise the first status group with a card wins.
+   */
   const moveWorkerCard = Effect.fn("TaskEngine.moveWorkerCard")(function* (
     workflowId: string,
     node: BoardNode | undefined,
     groups: ReadonlyArray<ReadonlyArray<KanbanStatus>>,
     to: KanbanStatus,
     reason?: string,
+    cardId?: string,
   ) {
-    if (node?.profile !== "worker") return;
+    if (node?.profile !== "worker") return "";
     const cards = yield* store.listKanban(workflowId);
-    const card = groups
-      .map((statuses) => cardOfNode(cards, node.id, statuses))
-      .find((entry): entry is KanbanCard => entry !== undefined);
-    if (card)
-      yield* writeCards(workflowId, {
-        upserted: [moveCard(card, to, yield* now, reason)],
-        deleted: [],
-      });
+    const card =
+      cardId === undefined
+        ? groups
+            .map((statuses) => cardOfNode(cards, node.id, statuses))
+            .find((entry): entry is KanbanCard => entry !== undefined)
+        : cards.find((entry) => entry.id === cardId);
+    if (!card) return "";
+    yield* writeCards(workflowId, {
+      upserted: [moveCard(card, to, yield* now, reason)],
+      deleted: [],
+    });
+    return card.id;
   });
   /** Checks the orchestrator's kanban operations against the cards; a reason means they do not fit. */
   const kanbanProblem = Effect.fn("TaskEngine.kanbanProblem")(function* (
@@ -181,13 +190,14 @@ const make = Effect.gen(function* () {
     result: BoardResult,
   ) {
     if (node.profile !== "orchestrator" || !result.kanban?.length) return undefined;
+    let pending = 0;
     const applied = applyKanban({
       cards: yield* store.listKanban(workflow.id),
       ops: result.kanban,
       nodes: workflow.nodes,
       actor: node.id,
       at: yield* now,
-      newId: () => "pending",
+      newId: () => `pending-${(pending += 1)}`,
     });
     return applied.ok ? undefined : `kanban: ${applied.reason}`;
   });
@@ -256,6 +266,7 @@ const make = Effect.gen(function* () {
           [["doing"], ["todo", "blocked"]],
           "blocked",
           reason,
+          task.cardId,
         );
       }),
     );
@@ -500,7 +511,11 @@ const make = Effect.gen(function* () {
             const thread = prepared.success;
             const messageId = MessageId.make(stableId(task.id, `message:${checkpoint.step}`));
             const text = thread.seeded
-              ? checkpoint.text
+              ? node.profile === "orchestrator"
+                ? [checkpoint.text, buildKanbanBrief(yield* store.listKanban(task.workflowId))]
+                    .filter((part) => part !== "")
+                    .join("\n\n")
+                : checkpoint.text
               : buildSeededMessage(
                   yield* seedInstructions(runWorkflow(workflow, run), node),
                   checkpoint.text,
@@ -726,13 +741,15 @@ const make = Effect.gen(function* () {
                 { ...currentRun, requests: [...currentRun.requests, ...additions] },
               );
               yield* commitKanban(runWorkflow(currentWorkflow, currentRun), node, result);
-              for (const child of created)
-                yield* moveWorkerCard(
+              for (const child of created) {
+                const cardId = yield* moveWorkerCard(
                   task.workflowId,
                   currentRun.definition.nodes.find((entry) => entry.id === child.nodeId),
                   [["todo", "blocked"]],
                   "doing",
                 );
+                yield* store.putTask({ ...child, cardId });
+              }
               return created;
             }),
           );
@@ -795,6 +812,8 @@ const make = Effect.gen(function* () {
                 node,
                 [["doing"], ["todo", "blocked"]],
                 "done",
+                undefined,
+                current.cardId,
               );
           }),
         );
@@ -977,7 +996,8 @@ const make = Effect.gen(function* () {
             yield* store.appendEvent({ kind: "workflow.upserted", workflow: next });
           }
           yield* store.appendEvent({ kind: "run.upserted", workflowId, run });
-          yield* moveWorkerCard(workflowId, node, [["todo", "blocked"]], "doing");
+          const cardId = yield* moveWorkerCard(workflowId, node, [["todo", "blocked"]], "doing");
+          yield* store.putTask({ ...task, cardId });
           return run;
         }),
       )
