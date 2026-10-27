@@ -14,11 +14,7 @@ export type AgentNodeState =
   | "unavailable";
 /** A one-shot cue played when the state changes. */
 export type AgentNodeTransition = "ignite" | "complete" | "fail" | "wait";
-/** The three rim slots Foreman positions around the circle. */
-export type AgentActionSlot = "chat" | "settings" | "info";
-
-export interface AgentNodeAction {
-  readonly slot: AgentActionSlot;
+export interface AgentNodeChat {
   readonly label: string;
   readonly icon: ReactNode;
   readonly onClick: (event: MouseEvent<HTMLButtonElement>) => void;
@@ -26,8 +22,8 @@ export interface AgentNodeAction {
 
 /**
  * Adapted from Foreman Code's AgentNodeView (shared/ui/nocturne/Canvas.tsx): a circle with harness
- * rim, status word, one-shot transition cues and rim actions. The popover and meta rows were
- * dropped, and a machine chip was added under the provider and model.
+ * rim, status word and one-shot transition cues. It shows only the status, name, role and machine,
+ * with the chat button inside the circle; harness and model are in the name's tooltip.
  */
 export function AgentNodeView({
   name,
@@ -35,12 +31,13 @@ export function AgentNodeView({
   harnessLabel,
   model,
   machine,
+  role,
   statusLabel,
   state = "idle",
   transition,
   transitionKey,
   selected,
-  actions,
+  chat,
   children,
 }: {
   name: string;
@@ -48,13 +45,14 @@ export function AgentNodeView({
   harnessLabel: string;
   model?: string | null;
   machine: string;
+  role: string;
   statusLabel: string;
   state?: AgentNodeState;
   transition?: AgentNodeTransition;
   /** Changes for every new cue, so the same cue twice in a row still plays twice. */
   transitionKey?: string | number;
   selected?: boolean;
-  actions: ReadonlyArray<AgentNodeAction>;
+  chat: AgentNodeChat;
   children?: ReactNode;
 }) {
   const hover = useHoverControls();
@@ -90,42 +88,25 @@ export function AgentNodeView({
         </span>
         <Tooltip>
           <TooltipTrigger render={<strong className="n-agent-name">{name}</strong>} />
-          <TooltipPopup>{name}</TooltipPopup>
+          <TooltipPopup>
+            {name} · {harnessLabel}
+            {model ? ` / ${model}` : ""}
+          </TooltipPopup>
         </Tooltip>
-        <span className="n-agent-harness">{harnessLabel}</span>
-        {model ? (
-          <Tooltip>
-            <TooltipTrigger render={<span className="n-agent-model">{model}</span>} />
-            <TooltipPopup>{model}</TooltipPopup>
-          </Tooltip>
-        ) : null}
-        <Tooltip>
-          <TooltipTrigger render={<span className="n-agent-machine">{machine}</span>} />
-          <TooltipPopup>{machine}</TooltipPopup>
-        </Tooltip>
-      </div>
-      <div className="n-agent-actions" role="group" aria-label={`${name} actions`}>
-        {actions.map((action) => (
-          <Tooltip key={action.slot}>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  className="n-agent-action nodrag nopan"
-                  data-slot={action.slot}
-                  aria-label={action.label}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    action.onClick(event);
-                  }}
-                >
-                  {action.icon}
-                </button>
-              }
-            />
-            <TooltipPopup>{action.label}</TooltipPopup>
-          </Tooltip>
-        ))}
+        <span className="n-agent-role">
+          {role} · {machine}
+        </span>
+        <button
+          type="button"
+          className="n-agent-chat nodrag nopan"
+          aria-label={chat.label}
+          onClick={(event) => {
+            event.stopPropagation();
+            chat.onClick(event);
+          }}
+        >
+          {chat.icon}
+        </button>
       </div>
       {children}
     </div>

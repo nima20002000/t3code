@@ -195,36 +195,6 @@
       animation: n-agent-settle 700ms ease-out both;
     }
   }
-
-  /* Rim actions appear while the node is hovered or keyboard-focused. */
-  &:is(:hover, [data-hovered]) .n-agent-actions::after {
-    pointer-events: auto;
-  }
-  &:hover .n-agent-action,
-  &[data-hovered] .n-agent-action,
-  &:has(:focus-visible) .n-agent-action {
-    opacity: 1;
-    pointer-events: auto;
-  }
-  &:hover .n-agent-actions::before,
-  &[data-selected] .n-agent-actions::before,
-  &[data-open] .n-agent-actions::before {
-    pointer-events: auto;
-  }
-  .react-flow__node-agent &[data-selected] .n-agent-actions::before {
-    pointer-events: none;
-  }
-  &[data-pending] .n-agent-action[data-slot="settings"]::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    right: 0;
-    width: 8px;
-    height: 8px;
-    border: 1px solid var(--surface-raised);
-    border-radius: var(--radius-full);
-    background: var(--warning);
-  }
 }
 
 @utility n-agent-core {
@@ -314,52 +284,52 @@
   }
 }
 
-@utility n-agent-harness {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--agent-hue);
+/* Energy field: a harness-colored light circling a running agent. Decoration only. */
+/* The agent's role and machine under its name. */
+@utility n-agent-role {
+  max-width: calc(100% - 64px);
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--text-muted);
   font: var(--type-caption);
-  &::before {
-    content: "";
-    width: 4px;
-    height: 4px;
-    border-radius: var(--radius-full);
-    background: currentColor;
-  }
+  text-overflow: ellipsis;
+  white-space: nowrap;
   .react-flow__node-agent & {
-    font-size: clamp(11px, 4cqmin, 24px);
+    font-size: clamp(11px, 4cqmin, 22px);
     line-height: 1.4;
   }
 }
 
-@utility n-agent-model {
-  max-width: 140px;
-  overflow: hidden;
+/* The chat button sits inside the circle, quiet until the node is hovered. */
+@utility n-agent-chat {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  margin-top: 10px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--agent-hue) 30%, var(--border));
+  border-radius: var(--radius-full);
+  background: transparent;
   color: var(--text-muted);
-  font: var(--type-caption);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  .react-flow__node-agent & {
-    max-width: calc(100% - 72px);
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease;
+  .n-agent:hover &,
+  &:focus-visible {
+    border-color: var(--agent-hue);
+    color: var(--agent-hue);
+  }
+  &:hover {
+    background: color-mix(in srgb, var(--agent-hue) 12%, transparent);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
   }
 }
 
-/* Machine (environment) chip on the agent node. */
-@utility n-agent-machine {
-  max-width: 130px;
-  margin-top: 4px;
-  padding: 1px 8px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  color: var(--text-muted);
-  font: var(--type-caption);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Energy field: a harness-colored light circling a running agent. Decoration only. */
 @utility n-agent-energy {
   position: absolute;
   inset: -10px;
@@ -440,105 +410,6 @@
     @media (prefers-reduced-motion: no-preference) {
       animation: n-agent-spark 720ms cubic-bezier(0.1, 0.8, 0.3, 1) both;
     }
-  }
-}
-
-@utility n-agent-actions {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  pointer-events: none;
-  &::after {
-    content: "";
-    position: absolute;
-    left: 100%;
-    top: 31%;
-    width: 40px;
-    height: 34px;
-    pointer-events: none;
-  }
-  /* The rim area itself is hoverable, so pointing where the actions sit shows them. */
-  &::before {
-    content: "";
-    position: absolute;
-    left: 132px;
-    top: -34px;
-    width: 130px;
-    height: 150px;
-    border-radius: 40% 60% 60% 30%;
-    pointer-events: auto;
-  }
-  .is-connecting & {
-    display: none;
-  }
-  /* Compact nodes keep status, name and harness; model and role facts live in the node's Info panel. */
-  .react-flow__node-agent &::before {
-    left: 62%;
-    width: 62%;
-    height: 71%;
-  }
-}
-
-@utility n-agent-action {
-  position: absolute;
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  padding: 0;
-  border: 1px solid color-mix(in srgb, var(--agent-hue) 30%, var(--border-strong));
-  border-radius: var(--radius-full);
-  background: var(--surface-raised);
-  color: var(--agent-hue);
-  cursor: pointer;
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity 140ms ease,
-    background 140ms ease,
-    border-color 140ms ease;
-  .react-flow__node:focus-visible & {
-    opacity: 1;
-    pointer-events: auto;
-  }
-  &[data-slot="chat"] {
-    left: 146px;
-    top: -29px;
-  }
-  &[data-slot="settings"] {
-    left: 194px;
-    top: 10px;
-  }
-  &[data-slot="info"] {
-    left: 218px;
-    top: 66px;
-  }
-  .react-flow__node-agent &[data-slot="chat"] {
-    left: 69%;
-  }
-  .react-flow__node-agent &[data-slot="settings"] {
-    left: 92%;
-    top: 5%;
-  }
-  .react-flow__node-agent &[data-slot="info"] {
-    left: calc(100% + 6px);
-    top: 31%;
-  }
-  &:hover {
-    border-color: var(--agent-hue);
-    background: color-mix(in srgb, var(--agent-hue) 10%, var(--surface-raised));
-  }
-  &:focus-visible {
-    outline: 2px solid var(--focus);
-    outline-offset: 2px;
-  }
-  &[aria-expanded="true"] {
-    border-color: var(--agent-hue);
-    background: var(--agent-hue);
-    color: var(--on-harness);
-  }
-  @media (prefers-reduced-motion: reduce) {
-    transition: none;
   }
 }
 

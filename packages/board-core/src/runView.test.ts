@@ -80,7 +80,7 @@ describe("board run views", () => {
     );
     expect(states(views)).toEqual({
       Home: "waiting: Waiting for Researcher",
-      Italy: "completed: Returned to Home",
+      Italy: "completed: Returned",
       Researcher: "running: Working for Home",
       Spare: "idle: Idle",
     });

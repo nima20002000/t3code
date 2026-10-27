@@ -107,8 +107,7 @@ export function runViews<N extends BoardNode>(
         label: current.failureReason ? "Request failed" : `Request ${current.status}`,
       };
     else if (current?.status === "stopped") view = { state: "idle", label: "Stopped" };
-    else if (current?.status === "returned")
-      view = { state: "completed", label: `Returned to ${current.from}` };
+    else if (current?.status === "returned") view = { state: "completed", label: "Returned" };
     else view = IDLE;
     nodeViews.set(node.id, view);
   }

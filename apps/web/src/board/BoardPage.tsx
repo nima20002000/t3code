@@ -39,7 +39,6 @@ import {
 import { AgentHandles } from "./foreman/AgentHandles";
 import {
   AgentNodeView,
-  type AgentNodeAction,
   type AgentNodeState,
   type AgentNodeTransition,
 } from "./foreman/AgentNodeView";
@@ -222,17 +221,14 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
   const cue = useStateCue(view.state);
   const instanceId = String(node.modelSelection.instanceId);
 
-  const actions: AgentNodeAction[] = [
-    {
-      slot: "chat",
-      label: `Open ${node.name} thread`,
-      icon: <MessageSquareIcon size={15} />,
-      onClick: () => {
-        openSettings(node.id);
-        if (node.threadId === "") void openNodeChat(node.id);
-      },
+  const chat = {
+    label: `Open ${node.name} thread`,
+    icon: <MessageSquareIcon size={14} />,
+    onClick: () => {
+      openSettings(node.id);
+      if (node.threadId === "") void openNodeChat(node.id);
     },
-  ];
+  };
 
   return (
     <AgentNodeView
@@ -245,7 +241,8 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
       state={view.state}
       {...(cue.transition ? { transition: cue.transition, transitionKey: cue.key } : {})}
       selected={selected}
-      actions={actions}
+      chat={chat}
+      role={node.profile === "orchestrator" ? "Orchestrator" : "Worker"}
     >
       <AgentHandles name={node.name} />
     </AgentNodeView>
