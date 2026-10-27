@@ -457,6 +457,7 @@
     height: 34px;
     pointer-events: none;
   }
+  /* The rim area itself is hoverable, so pointing where the actions sit shows them. */
   &::before {
     content: "";
     position: absolute;
@@ -465,6 +466,7 @@
     width: 130px;
     height: 150px;
     border-radius: 40% 60% 60% 30%;
+    pointer-events: auto;
   }
   .is-connecting & {
     display: none;
