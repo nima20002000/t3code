@@ -94,11 +94,13 @@ it.live("runs a board request and interrupts through the real server and orchest
       ).origin;
 
       const request = (path: string, init?: RequestInit) =>
+        // @effect-diagnostics-next-line globalFetchInEffect:off -- Inspect the real HTTP response and SSE body.
         Effect.tryPromise(() => fetch(`${origin}${path}`, init));
       assert.strictEqual((yield* request("/api/board/snapshot")).status, 401);
-      const descriptor = (yield* Effect.tryPromise(async () =>
-        (await fetch(`${origin}/.well-known/t3/environment`)).json(),
-      )) as { environmentId: string };
+      const descriptorResponse = yield* request("/.well-known/t3/environment");
+      const descriptor = (yield* Effect.tryPromise(() => descriptorResponse.json())) as {
+        environmentId: string;
+      };
       const auth = yield* request("/oauth/token", {
         method: "POST",
         body: new URLSearchParams({

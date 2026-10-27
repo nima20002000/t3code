@@ -194,14 +194,59 @@ it.effect("stops all active tasks and interrupts their threads", () =>
       const interrupted = [
         yield* Queue.take(harness.interrupts),
         yield* Queue.take(harness.interrupts),
-        yield* Queue.take(harness.interrupts),
       ];
-      assert.deepStrictEqual(
-        new Set(interrupted),
-        new Set([thread("root"), thread("one"), thread("two")]),
-      );
+      assert.deepStrictEqual(new Set(interrupted), new Set([thread("one"), thread("two")]));
     }).pipe(Effect.provide(layer));
   }),
+);
+
+it.effect("retries an interrupted stop after restart with the same command ID", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const calls = yield* Queue.unbounded<Parameters<NodeDriver["interrupt"]>[0]>();
+    const firstCall = yield* Ref.make(true);
+    const never = yield* Deferred.make<void>();
+    const driver: NodeDriver = {
+      ...harness.driver,
+      interrupt: (input) =>
+        Effect.gen(function* () {
+          yield* Queue.offer(calls, input);
+          if (yield* Ref.getAndSet(firstCall, false)) yield* Deferred.await(never);
+        }),
+    };
+    const registry = DriverRegistry.DriverRegistry.of({
+      get: () => Effect.succeed(driver),
+      register: () => Effect.void,
+      remove: () => Effect.void,
+    });
+    const store = yield* BoardStore.BoardStore;
+    yield* store.transaction(store.putWorkflow(setupWorkflow()));
+    const engineLayer = TaskEngine.layer.pipe(
+      Layer.provide(Layer.succeed(BoardStore.BoardStore, store)),
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, registry)),
+    );
+    const first = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const engine = yield* TaskEngine.TaskEngine;
+        yield* engine.start("workflow", { id: "run:stop-recovery", nodeId: "root", task: "Hold" });
+        yield* Queue.take(harness.sends);
+        yield* engine.stop("workflow", "run:stop-recovery").pipe(Effect.forkScoped);
+        return yield* Queue.take(calls);
+      }).pipe(Effect.provide(engineLayer)),
+    );
+    const sequence = (yield* store.snapshot()).sequence;
+    assert.strictEqual((yield* store.getTask("run:stop-recovery"))?.status, "completing");
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* TaskEngine.TaskEngine;
+        const replay = yield* Queue.take(calls);
+        assert.strictEqual(replay.commandId, first.commandId);
+        assert.strictEqual(replay.runId, first.runId);
+        yield* store.events(sequence).pipe(Stream.runHead);
+        assert.strictEqual((yield* store.getTask("run:stop-recovery"))?.status, "stopped");
+      }).pipe(Effect.provide(engineLayer)),
+    );
+  }).pipe(Effect.provide(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)))),
 );
 
 it.effect("records capped requests as denied and returns them to the requester", () =>

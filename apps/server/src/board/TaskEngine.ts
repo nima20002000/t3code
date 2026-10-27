@@ -14,6 +14,7 @@ import {
   validateGraph,
   type BoardResult,
   type BoardStartRunInput,
+  type BoardDriverThread,
   type NodeDriverError,
   type RunRecord,
   type RunRequestRecord,
@@ -56,6 +57,7 @@ type Checkpoint =
       readonly messageId: MessageId;
     }
   | { readonly stage: "join"; readonly step: number; readonly denied: ReadonlyArray<string> }
+  | { readonly stage: "interrupt"; readonly thread: BoardDriverThread; readonly runId: RunId }
   | { readonly stage: "done"; readonly result: BoardResult };
 
 export class TaskEngine extends Context.Service<
@@ -73,7 +75,7 @@ const stableId = (taskId: string, purpose: string) =>
   `board:${createHash("sha256").update(taskId).update("\0").update(purpose).digest("hex")}`;
 const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 const terminal = (status: BoardStore.TaskStatus) =>
-  status === "done" || status === "failed" || status === "stopped";
+  status === "done" || status === "failed" || status === "stopped" || status === "completing";
 
 const make = Effect.gen(function* () {
   const store = yield* BoardStore.BoardStore;
@@ -88,10 +90,7 @@ const make = Effect.gen(function* () {
     locks.set(id, lock);
     return lock;
   };
-  const saveRun = Effect.fn("TaskEngine.saveRun")(function* (
-    workflow: import("@t3tools/board-core").Workflow,
-    run: RunRecord,
-  ) {
+  const saveRun = Effect.fn("TaskEngine.saveRun")(function* (workflow: Workflow, run: RunRecord) {
     yield* store.putWorkflow({
       ...workflow,
       runs: workflow.runs.map((entry) => (entry.id === run.id ? run : entry)),
@@ -128,6 +127,30 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const interruptTask = Effect.fn("TaskEngine.interruptTask")(function* (taskId: string) {
+    const task = yield* store.getTask(taskId);
+    if (!task || task.status !== "completing") return;
+    const checkpoint = task.checkpoint as Checkpoint;
+    if (checkpoint.stage !== "interrupt") return;
+    const driver = yield* drivers.get(checkpoint.thread.environmentId);
+    yield* driver.interrupt({
+      thread: checkpoint.thread,
+      runId: checkpoint.runId,
+      commandId: CommandId.make(stableId(task.id, "interrupt")),
+    });
+    yield* store.transaction(
+      Effect.gen(function* () {
+        const current = yield* store.getTask(taskId);
+        if (!current || current.status !== "completing") return;
+        yield* store.putTask({ ...current, status: "stopped" });
+        const workflow = yield* store.getWorkflow(task.workflowId);
+        const run = workflow?.runs.find((entry) => entry.id === task.runId);
+        if (workflow && run)
+          yield* store.appendEvent({ kind: "run.upserted", workflowId: workflow.id, run });
+      }),
+    );
+  });
+
   const stopTasks = Effect.fn("TaskEngine.stopTasks")(function* (
     runId: string,
     ids: ReadonlySet<string>,
@@ -152,13 +175,32 @@ const make = Effect.gen(function* () {
             const selected = all.filter(
               (task) => stoppedIds.has(task.id) && !terminal(task.status),
             );
-            for (const task of selected.toReversed())
-              yield* store.putTask({ ...task, status: "stopped" });
             const id = workflowId ?? selected[0]?.workflowId;
             const workflow = id === undefined ? undefined : yield* store.getWorkflow(id);
             const run = workflow?.runs.find((entry) => entry.id === runId);
             if (workflowId !== undefined && (!workflow || !run))
               return yield* new BoardNotFoundError({ message: "Run not found." });
+            for (const task of selected.toReversed()) {
+              const checkpoint = task.checkpoint as Checkpoint;
+              const node = workflow?.nodes.find((entry) => entry.id === task.nodeId);
+              if (checkpoint.stage === "settle" && node?.projectId) {
+                yield* store.putTask({
+                  ...task,
+                  status: "completing",
+                  checkpoint: {
+                    stage: "interrupt",
+                    thread: {
+                      environmentId: node.environmentId,
+                      projectId: node.projectId,
+                      threadId: node.threadId,
+                    },
+                    runId: checkpoint.runId,
+                  } satisfies Checkpoint,
+                });
+              } else {
+                yield* store.putTask({ ...task, status: "stopped" });
+              }
+            }
             if (!workflow || !run || run.status !== "running") return { targets: selected, run };
             const at = yield* now;
             const updated: RunRecord = {
@@ -180,32 +222,11 @@ const make = Effect.gen(function* () {
             return { targets: selected, run: updated };
           }),
         );
-        const workflows = new Map<string, Workflow>();
         let failure: NodeDriverError | undefined;
-        for (const task of targets) {
-          let workflow = workflows.get(task.workflowId);
-          if (!workflow) {
-            workflow = yield* store.getWorkflow(task.workflowId);
-            if (workflow) workflows.set(task.workflowId, workflow);
-          }
-          const node = workflow?.nodes.find((entry) => entry.id === task.nodeId);
-          if (!node?.projectId) continue;
-          const checkpoint = task.checkpoint as Checkpoint;
-          const result = yield* drivers.get(node.environmentId).pipe(
-            Effect.flatMap((driver) =>
-              driver.interrupt({
-                thread: {
-                  environmentId: node.environmentId,
-                  projectId: node.projectId!,
-                  threadId: node.threadId,
-                },
-                commandId: CommandId.make(stableId(task.id, "interrupt")),
-                ...(checkpoint.stage === "settle" ? { runId: checkpoint.runId } : {}),
-              }),
-            ),
-            Effect.result,
-          );
+        for (const task of targets.toReversed()) {
+          const result = yield* interruptTask(task.id).pipe(Effect.result);
           if (Result.isFailure(result)) {
+            if (result.failure._tag === "SqlError") return yield* result.failure;
             failure ??= result.failure;
             yield* Effect.logWarning("Could not interrupt board task", {
               taskId: task.id,
@@ -227,7 +248,12 @@ const make = Effect.gen(function* () {
   > {
     while (true) {
       const task = yield* store.getTask(taskId);
-      if (!task || terminal(task.status)) return;
+      if (!task) return;
+      if (task.status === "completing") {
+        yield* interruptTask(task.id);
+        return;
+      }
+      if (terminal(task.status)) return;
       const workflow = yield* store.getWorkflow(task.workflowId);
       const run = workflow?.runs.find((entry) => entry.id === task.runId);
       const node = workflow?.nodes.find((entry) => entry.id === task.nodeId);
@@ -561,7 +587,12 @@ const make = Effect.gen(function* () {
         Cause.hasInterruptsOnly(cause)
           ? Effect.void
           : Effect.logError("Board task failed", { taskId: id, cause }).pipe(
-              Effect.andThen(failTask(id, "The board task failed.")),
+              Effect.andThen(
+                Effect.gen(function* () {
+                  const task = yield* store.getTask(id);
+                  if (task?.status !== "completing") yield* failTask(id, "The board task failed.");
+                }),
+              ),
               Effect.catch((error) =>
                 Effect.logError("Could not persist board task failure", {
                   taskId: id,
@@ -689,7 +720,8 @@ const make = Effect.gen(function* () {
           { discard: true },
         ),
       );
-      for (const task of tasks) if (!terminal(task.status)) yield* spawn(task.id);
+      for (const task of tasks)
+        if (task.status === "completing" || !terminal(task.status)) yield* spawn(task.id);
     }).pipe(Effect.catch((cause) => Effect.logError("Could not recover board tasks", { cause }))),
   );
   return TaskEngine.of({ start, stop });

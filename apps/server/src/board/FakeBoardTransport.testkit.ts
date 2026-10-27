@@ -5,6 +5,7 @@ import * as CodexClient from "effect-codex-app-server/client";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
@@ -21,6 +22,23 @@ const frames = NodeFS.readFileSync(
   .map(
     (line) => JSON.parse(line) as { type: string; label?: string; frame?: Record<string, unknown> },
   );
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeFrame = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      id: Schema.optionalKey(Schema.Number),
+      method: Schema.String,
+      params: Schema.optionalKey(
+        Schema.Struct({
+          threadId: Schema.optionalKey(Schema.String),
+          input: Schema.optionalKey(
+            Schema.Array(Schema.Struct({ text: Schema.optionalKey(Schema.String) })),
+          ),
+        }),
+      ),
+    }),
+  ),
+);
 
 const recorded = (label: string) => {
   const frame = frames.find(
@@ -44,7 +62,7 @@ export function layer(tag: typeof CodexAdapter.CodexAppServerClientFactory) {
         const decoder = new TextDecoder();
         let remainder = "";
         const emit = (frame: unknown) =>
-          Queue.offer(incoming, encoder.encode(`${JSON.stringify(frame)}\n`));
+          Queue.offer(incoming, encoder.encode(`${encodeJson(frame)}\n`));
         const outbound = (chunk: string | Uint8Array) =>
           Effect.gen(function* () {
             remainder +=
@@ -52,11 +70,7 @@ export function layer(tag: typeof CodexAdapter.CodexAppServerClientFactory) {
             const lines = remainder.split("\n");
             remainder = lines.pop() ?? "";
             for (const line of lines) {
-              const message = JSON.parse(line) as {
-                id?: number;
-                method: string;
-                params?: { threadId?: string; input?: ReadonlyArray<{ text?: string }> };
-              };
+              const message = yield* decodeFrame(line).pipe(Effect.orDie);
               if (message.method === "initialized") continue;
               if (message.method === "initialize") {
                 yield* emit({ ...recorded("initialize"), id: message.id });
@@ -123,7 +137,7 @@ export function layer(tag: typeof CodexAdapter.CodexAppServerClientFactory) {
                   text:
                     result === null
                       ? "Briefing noted."
-                      : `\`\`\`json\n${JSON.stringify(result)}\n\`\`\``,
+                      : `\`\`\`json\n${encodeJson(result)}\n\`\`\``,
                   phase: "final_answer",
                   memoryCitation: null,
                   delivery: null,
