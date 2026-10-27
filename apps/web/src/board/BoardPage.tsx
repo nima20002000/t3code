@@ -12,11 +12,11 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ActivityIcon, MessageSquareIcon, SettingsIcon, XIcon } from "lucide-react";
+import { MessageSquareIcon, XIcon } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState, type MouseEvent } from "react";
 import type { EdgeRunView, NodeRunView } from "@t3tools/board-core/runView";
 
-import { AgentSettingsDialog, NodeSettingsPanel } from "./NodeSettingsPanel";
+import { NodeSettingsPanel } from "./NodeSettingsPanel";
 import { AgentDialog } from "./AddAgentDialog";
 import {
   addEdge,
@@ -62,8 +62,6 @@ import {
 const ACTIVE_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 
 const OpenSettingsContext = createContext<(nodeId: string) => void>(() => {});
-const ConfigureContext = createContext<(nodeId: string) => void>(() => {});
-const OpenActivityContext = createContext<(nodeId: string) => void>(() => {});
 const RunViewsContext = createContext<{
   nodes: ReadonlyMap<string, NodeRunView>;
   edges: ReadonlyMap<string, EdgeRunView>;
@@ -198,8 +196,6 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
   const peers = useBoardPeers();
   const threads = useThreadShells();
   const openSettings = useContext(OpenSettingsContext);
-  const configure = useContext(ConfigureContext);
-  const openActivity = useContext(OpenActivityContext);
   const { nodes: runViews, arriving } = useContext(RunViewsContext);
   const runView = runViews.get(node.id);
 
@@ -233,18 +229,6 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
         openSettings(node.id);
         if (node.threadId === "") void openNodeChat(node.id);
       },
-    },
-    {
-      slot: "settings",
-      label: `${node.name} settings`,
-      icon: <SettingsIcon size={15} />,
-      onClick: () => configure(node.id),
-    },
-    {
-      slot: "info",
-      label: `${node.name} run activity`,
-      icon: <ActivityIcon size={15} />,
-      onClick: () => openActivity(node.id),
     },
   ];
 
@@ -398,23 +382,17 @@ function BoardCanvasPage() {
     nodes.map((n) => toFlowNode(n)),
   );
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<ReadonlySet<string>>(new Set());
-  const [activityNodeId, setActivityNodeId] = useState<string | null>(null);
   const selectedEdge =
     selectedEdgeIds.size === 1
       ? edges.find((edge) => selectedEdgeIds.has(`${edge.a}:${edge.b}`))
       : undefined;
-  const activity: ActivityTarget | null =
-    activityNodeId && nodes.some((node) => node.id === activityNodeId)
-      ? { kind: "node", nodeId: activityNodeId }
-      : selectedEdge
-        ? { kind: "edge", from: selectedEdge.a, to: selectedEdge.b }
-        : null;
+  const activity: ActivityTarget | null = selectedEdge
+    ? { kind: "edge", from: selectedEdge.a, to: selectedEdge.b }
+    : null;
   const [addingAgent, setAddingAgent] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [settingsNodeId, setSettingsNodeId] = useState<string | null>(null);
   const settingsNode = nodes.find((n) => n.id === settingsNodeId) ?? null;
-  const [configureNodeId, setConfigureNodeId] = useState<string | null>(null);
-  const configureNode = nodes.find((n) => n.id === configureNodeId) ?? null;
 
   const displayedNodes = nodes.map((node) =>
     toFlowNode(
@@ -515,36 +493,32 @@ function BoardCanvasPage() {
           />
         </div>
         <OpenSettingsContext.Provider value={setSettingsNodeId}>
-          <ConfigureContext.Provider value={setConfigureNodeId}>
-            <OpenActivityContext.Provider value={setActivityNodeId}>
-              <RunViewsContext.Provider value={{ ...views, ...flights }}>
-                <ReactFlow
-                  className="absolute! inset-0"
-                  nodes={displayedNodes}
-                  edges={flowEdges}
-                  nodeTypes={NODE_TYPES}
-                  edgeTypes={EDGE_TYPES}
-                  onNodesChange={onNodesChange}
-                  onEdgesChange={onEdgesChange}
-                  onConnect={onConnect}
-                  onNodeClick={onNodeClick}
-                  onPaneClick={() => {
-                    linkFrom.current = null;
-                  }}
-                  onNodeDragStart={() => recordHistoryStep()}
-                  onConnectStart={() => setConnecting(true)}
-                  onConnectEnd={() => setConnecting(false)}
-                  deleteKeyCode={["Backspace", "Delete"]}
-                  proOptions={{ hideAttribution: true }}
-                  fitView
-                  minZoom={0.2}
-                  maxZoom={1.6}
-                >
-                  <Background color="var(--border)" gap={24} size={1} />
-                </ReactFlow>
-              </RunViewsContext.Provider>
-            </OpenActivityContext.Provider>
-          </ConfigureContext.Provider>
+          <RunViewsContext.Provider value={{ ...views, ...flights }}>
+            <ReactFlow
+              className="absolute! inset-0"
+              nodes={displayedNodes}
+              edges={flowEdges}
+              nodeTypes={NODE_TYPES}
+              edgeTypes={EDGE_TYPES}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onNodeClick={onNodeClick}
+              onPaneClick={() => {
+                linkFrom.current = null;
+              }}
+              onNodeDragStart={() => recordHistoryStep()}
+              onConnectStart={() => setConnecting(true)}
+              onConnectEnd={() => setConnecting(false)}
+              deleteKeyCode={["Backspace", "Delete"]}
+              proOptions={{ hideAttribution: true }}
+              fitView
+              minZoom={0.2}
+              maxZoom={1.6}
+            >
+              <Background color="var(--border)" gap={24} size={1} />
+            </ReactFlow>
+          </RunViewsContext.Provider>
         </OpenSettingsContext.Provider>
         {kanban ? (
           <BoardKanban
@@ -556,21 +530,11 @@ function BoardCanvasPage() {
         {selectedRun ? (
           <RunDetails run={selectedRun} onClose={() => setSelectedRunId(null)} />
         ) : null}
-        {activity && !kanban ? (
+        {activity ? (
           <RunActivityCard
             workflow={workflow}
             target={activity}
-            onClose={() => {
-              setActivityNodeId(null);
-              setSelectedEdgeIds(new Set());
-            }}
-          />
-        ) : null}
-        {configureNode ? (
-          <AgentSettingsDialog
-            key={configureNode.id}
-            node={configureNode}
-            onClose={() => setConfigureNodeId(null)}
+            onClose={() => setSelectedEdgeIds(new Set())}
           />
         ) : null}
         {settingsNode ? (
