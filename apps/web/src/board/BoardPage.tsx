@@ -16,7 +16,7 @@ import { ActivityIcon, MessageSquareIcon, SettingsIcon, XIcon } from "lucide-rea
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { EdgeRunView, NodeRunView } from "@t3tools/board-core/runView";
 
-import { NodeSettingsPanel } from "./NodeSettingsPanel";
+import { AgentSettingsDialog, NodeSettingsPanel } from "./NodeSettingsPanel";
 import { AgentDialog } from "./AddAgentDialog";
 import {
   addEdge,
@@ -61,6 +61,7 @@ import {
 const ACTIVE_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 
 const OpenSettingsContext = createContext<(nodeId: string) => void>(() => {});
+const ConfigureContext = createContext<(nodeId: string) => void>(() => {});
 const OpenActivityContext = createContext<(nodeId: string) => void>(() => {});
 const RunViewsContext = createContext<{
   nodes: ReadonlyMap<string, NodeRunView>;
@@ -196,6 +197,7 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
   const peers = useBoardPeers();
   const threads = useThreadShells();
   const openSettings = useContext(OpenSettingsContext);
+  const configure = useContext(ConfigureContext);
   const openActivity = useContext(OpenActivityContext);
   const { nodes: runViews, arriving } = useContext(RunViewsContext);
   const runView = runViews.get(node.id);
@@ -235,7 +237,7 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
       slot: "settings",
       label: `${node.name} settings`,
       icon: <SettingsIcon size={15} />,
-      onClick: () => openSettings(node.id),
+      onClick: () => configure(node.id),
     },
     {
       slot: "info",
@@ -385,6 +387,8 @@ function BoardCanvasPage() {
   const [connecting, setConnecting] = useState(false);
   const [settingsNodeId, setSettingsNodeId] = useState<string | null>(null);
   const settingsNode = nodes.find((n) => n.id === settingsNodeId) ?? null;
+  const [configureNodeId, setConfigureNodeId] = useState<string | null>(null);
+  const configureNode = nodes.find((n) => n.id === configureNodeId) ?? null;
 
   const displayedNodes = nodes.map((node) =>
     toFlowNode(
@@ -477,30 +481,32 @@ function BoardCanvasPage() {
           <BoardKanban workflow={workflow} />
         ) : (
           <OpenSettingsContext.Provider value={setSettingsNodeId}>
-            <OpenActivityContext.Provider value={setActivityNodeId}>
-              <RunViewsContext.Provider value={{ ...views, ...flights }}>
-                <ReactFlow
-                  className="absolute! inset-0"
-                  nodes={displayedNodes}
-                  edges={flowEdges}
-                  nodeTypes={NODE_TYPES}
-                  edgeTypes={EDGE_TYPES}
-                  onNodesChange={onNodesChange}
-                  onEdgesChange={onEdgesChange}
-                  onConnect={onConnect}
-                  onNodeDragStart={() => recordHistoryStep()}
-                  onConnectStart={() => setConnecting(true)}
-                  onConnectEnd={() => setConnecting(false)}
-                  deleteKeyCode={["Backspace", "Delete"]}
-                  proOptions={{ hideAttribution: true }}
-                  fitView
-                  minZoom={0.2}
-                  maxZoom={1.6}
-                >
-                  <Background color="var(--border)" gap={24} size={1} />
-                </ReactFlow>
-              </RunViewsContext.Provider>
-            </OpenActivityContext.Provider>
+            <ConfigureContext.Provider value={setConfigureNodeId}>
+              <OpenActivityContext.Provider value={setActivityNodeId}>
+                <RunViewsContext.Provider value={{ ...views, ...flights }}>
+                  <ReactFlow
+                    className="absolute! inset-0"
+                    nodes={displayedNodes}
+                    edges={flowEdges}
+                    nodeTypes={NODE_TYPES}
+                    edgeTypes={EDGE_TYPES}
+                    onNodesChange={onNodesChange}
+                    onEdgesChange={onEdgesChange}
+                    onConnect={onConnect}
+                    onNodeDragStart={() => recordHistoryStep()}
+                    onConnectStart={() => setConnecting(true)}
+                    onConnectEnd={() => setConnecting(false)}
+                    deleteKeyCode={["Backspace", "Delete"]}
+                    proOptions={{ hideAttribution: true }}
+                    fitView
+                    minZoom={0.2}
+                    maxZoom={1.6}
+                  >
+                    <Background color="var(--border)" gap={24} size={1} />
+                  </ReactFlow>
+                </RunViewsContext.Provider>
+              </OpenActivityContext.Provider>
+            </ConfigureContext.Provider>
           </OpenSettingsContext.Provider>
         )}
         {selectedRun ? (
@@ -514,6 +520,13 @@ function BoardCanvasPage() {
               setActivityNodeId(null);
               setSelectedEdgeIds(new Set());
             }}
+          />
+        ) : null}
+        {configureNode ? (
+          <AgentSettingsDialog
+            key={configureNode.id}
+            node={configureNode}
+            onClose={() => setConfigureNodeId(null)}
           />
         ) : null}
         {settingsNode ? (
