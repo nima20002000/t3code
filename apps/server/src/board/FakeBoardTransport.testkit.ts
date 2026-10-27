@@ -61,6 +61,8 @@ export function layer(tag: typeof CodexAdapter.CodexAppServerClientFactory) {
         const encoder = new TextEncoder();
         const decoder = new TextDecoder();
         let remainder = "";
+        let activeThreadId: string | undefined;
+        let activeTurnId: string | undefined;
         const emit = (frame: unknown) =>
           Queue.offer(incoming, encoder.encode(`${encodeJson(frame)}\n`));
         const outbound = (chunk: string | Uint8Array) =>
@@ -93,6 +95,8 @@ export function layer(tag: typeof CodexAdapter.CodexAppServerClientFactory) {
               if (message.method === "turn/start") {
                 const threadId = message.params?.threadId;
                 const turnId = `board-fake-turn-${++turnNumber}`;
+                activeThreadId = threadId;
+                activeTurnId = turnId;
                 const response = recorded("turn/start") as {
                   result: { turn: Record<string, unknown> };
                 };
@@ -178,6 +182,22 @@ export function layer(tag: typeof CodexAdapter.CodexAppServerClientFactory) {
               }
               if (message.method === "turn/interrupt") {
                 yield* emit({ id: message.id, result: {} });
+                yield* emit({
+                  method: "turn/completed",
+                  params: {
+                    threadId: activeThreadId,
+                    turn: {
+                      id: activeTurnId,
+                      items: [],
+                      itemsView: "summary",
+                      status: "interrupted",
+                      error: null,
+                      startedAt: 1790295630,
+                      completedAt: 1790295635,
+                      durationMs: 4607,
+                    },
+                  },
+                });
                 interrupted.resolve();
                 continue;
               }
