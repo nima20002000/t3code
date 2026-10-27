@@ -56,7 +56,7 @@ export class BoardStore extends Context.Service<
     readonly listSchedules: () => StoreEffect<ReadonlyArray<BoardSchedule>>;
     readonly putSchedule: (schedule: BoardSchedule) => StoreEffect<void>;
     readonly deleteSchedule: (id: string) => StoreEffect<void>;
-    readonly appendEvent: (event: EventInput) => StoreEffect<void>;
+    readonly appendEvent: (event: EventInput) => StoreEffect<number>;
     readonly snapshot: () => StoreEffect<{
       readonly sequence: number;
       readonly workflows: ReadonlyArray<Workflow>;
@@ -174,7 +174,10 @@ const make = Effect.gen(function* () {
     yield* sql`DELETE FROM board_schedules WHERE id = ${id}`;
   });
   const appendEvent = Effect.fn("BoardStore.appendEvent")(function* (event: EventInput) {
-    yield* sql`INSERT INTO board_task_events (data) VALUES (${encodeJson(event)})`;
+    const rows = yield* sql<{
+      readonly sequence: number;
+    }>`INSERT INTO board_task_events (data) VALUES (${encodeJson(event)}) RETURNING sequence`;
+    return rows[0]!.sequence;
   });
   const snapshot = Effect.fn("BoardStore.snapshot")(function* () {
     return yield* sql.withTransaction(

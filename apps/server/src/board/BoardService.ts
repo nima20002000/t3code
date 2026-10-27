@@ -3,7 +3,11 @@ import {
   BoardInvalidRequestError,
   BoardNotFoundError,
   buildAgentFirstPrompt,
+  buildBoardInstructions,
+  connectedNodeNames,
   createWorkflow,
+  incomingNodeNames,
+  MAX_LOG,
   validateGraph,
   type BoardCreateNodeInput,
   type BoardCreateScheduleInput,
@@ -26,6 +30,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import type { SqlError } from "effect/sql/SqlError";
 import * as BoardStore from "./BoardStore.ts";
 import * as DriverRegistry from "./DriverRegistry.ts";
@@ -76,12 +81,73 @@ const make = Effect.gen(function* () {
     if (!workflow) return yield* new BoardNotFoundError({ message: "Workflow not found." });
     return workflow;
   });
-  const save = Effect.fn("BoardService.save")(function* (workflow: Workflow) {
+  const saveWithSequence = Effect.fn("BoardService.saveWithSequence")(function* (
+    workflow: Workflow,
+  ) {
     if (validateGraph(workflow).length)
       return yield* new BoardInvalidRequestError({ message: "The workflow graph is invalid." });
     yield* store.putWorkflow(workflow);
-    yield* store.appendEvent({ kind: "workflow.upserted", workflow });
-    return workflow;
+    const sequence = yield* store.appendEvent({ kind: "workflow.upserted", workflow });
+    return { workflow, sequence };
+  });
+  const save = Effect.fn("BoardService.save")(function* (workflow: Workflow) {
+    return (yield* saveWithSequence(workflow)).workflow;
+  });
+  const sendUpdatedInstructions = Effect.fn("BoardService.sendUpdatedInstructions")(function* (
+    workflow: Workflow,
+    sequence: number,
+    nodeIds: ReadonlyArray<string>,
+  ) {
+    for (const nodeId of nodeIds) {
+      const node = workflow.nodes.find((entry) => entry.id === nodeId);
+      if (!node) continue;
+      const key = `${encodeURIComponent(workflow.id)}:${sequence}:${encodeURIComponent(node.id)}`;
+      const send = node.projectId
+        ? drivers.get(node.environmentId).pipe(
+            Effect.flatMap((driver) =>
+              driver.send({
+                thread: {
+                  environmentId: node.environmentId,
+                  projectId: node.projectId!,
+                  threadId: node.threadId,
+                },
+                commandId: CommandId.make(`board:briefing:${key}`),
+                messageId: MessageId.make(`board:briefing:${key}`),
+                text: buildBoardInstructions(
+                  node.name,
+                  connectedNodeNames(workflow.nodes, workflow.edges, node.id),
+                  incomingNodeNames(workflow.nodes, workflow.edges, node.id),
+                ),
+              }),
+            ),
+          )
+        : Effect.fail(new BoardInvalidRequestError({ message: "Node project is missing." }));
+      const result = yield* send.pipe(Effect.result);
+      if (Result.isSuccess(result)) continue;
+      yield* Effect.logWarning("Could not send updated board instructions", {
+        workflowId: workflow.id,
+        nodeId,
+        cause: result.failure,
+      });
+      yield* store.transaction(
+        Effect.gen(function* () {
+          const current = yield* store.getWorkflow(workflow.id);
+          if (!current) return;
+          yield* save({
+            ...current,
+            log: [
+              ...current.log,
+              {
+                id: `briefing:${key}`,
+                at: DateTime.formatIso(yield* DateTime.now),
+                kind: "error" as const,
+                text: `Could not send updated board instructions to ${node.name}.`,
+              },
+            ].slice(-MAX_LOG),
+          });
+        }),
+      );
+    }
   });
   const checkEditable = (workflow: Workflow) =>
     workflow.runs.some((run) => run.status === "running")
@@ -243,32 +309,34 @@ const make = Effect.gen(function* () {
     );
   });
   const createEdge = Effect.fn("BoardService.createEdge")(function* (id: string, edge: BoardEdge) {
-    return yield* store.transaction(
+    const { workflow, sequence } = yield* store.transaction(
       Effect.gen(function* () {
         const workflow = yield* getWorkflow(id);
         yield* checkEditable(workflow);
-        yield* save({ ...workflow, edges: [...workflow.edges, edge] });
-        return edge;
+        return yield* saveWithSequence({ ...workflow, edges: [...workflow.edges, edge] });
       }),
     );
+    yield* sendUpdatedInstructions(workflow, sequence, [edge.a, edge.b]);
+    return edge;
   });
   const deleteEdge = Effect.fn("BoardService.deleteEdge")(function* (
     id: string,
     from: string,
     to: string,
   ) {
-    yield* store.transaction(
+    const { workflow, sequence } = yield* store.transaction(
       Effect.gen(function* () {
         const workflow = yield* getWorkflow(id);
         yield* checkEditable(workflow);
         if (!workflow.edges.some((edge) => edge.a === from && edge.b === to))
           return yield* new BoardNotFoundError({ message: "Edge not found." });
-        yield* save({
+        return yield* saveWithSequence({
           ...workflow,
           edges: workflow.edges.filter((edge) => edge.a !== from || edge.b !== to),
         });
       }),
     );
+    yield* sendUpdatedInstructions(workflow, sequence, [from, to]);
   });
   const findSchedule = Effect.fn("BoardService.findSchedule")(function* (id: string) {
     const schedule = (yield* store.listSchedules()).find((entry) => entry.id === id);

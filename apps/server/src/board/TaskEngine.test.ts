@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   createWorkflow,
+  NodeDriverError,
   type BoardDriverSend,
   type BoardDriverSettled,
   type NodeDriver,
@@ -20,6 +21,7 @@ import * as BoardStore from "./BoardStore.ts";
 import * as DriverRegistry from "./DriverRegistry.ts";
 import * as TaskEngine from "./TaskEngine.ts";
 import * as BoardScheduler from "./BoardScheduler.ts";
+import * as BoardService from "./BoardService.ts";
 
 const environmentId = EnvironmentId.make("environment:test");
 const projectId = ProjectId.make("project:test");
@@ -114,6 +116,64 @@ const waitForRun = (
     Effect.map(Option.getOrThrow),
   );
 
+it.effect("sends updated instructions when connections change", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const layer = BoardService.layer.pipe(
+      Layer.provideMerge(TaskEngine.layer),
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const board = yield* BoardService.BoardService;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(store.putWorkflow({ ...setupWorkflow(), edges: [] }));
+      yield* board.createEdge("workflow", { a: "root", b: "one" });
+      const source = yield* Queue.take(harness.sends);
+      const target = yield* Queue.take(harness.sends);
+      assert.include(source.text, "You can send requests to:\n- one");
+      assert.include(target.text, "These agents may send requests to you:\n- root");
+      yield* board.deleteEdge("workflow", "root", "one");
+      const updated = yield* Queue.take(harness.sends);
+      yield* Queue.take(harness.sends);
+      assert.include(updated.text, "You can send requests to:\n- (none)");
+      assert.notStrictEqual(source.commandId, updated.commandId);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("records an instruction delivery failure in the workflow", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const driver: NodeDriver = {
+      ...harness.driver,
+      send: () => Effect.fail(new NodeDriverError({ operation: "send", message: "Unavailable" })),
+    };
+    const registry = DriverRegistry.DriverRegistry.of({
+      get: () => Effect.succeed(driver),
+      register: () => Effect.void,
+      remove: () => Effect.void,
+    });
+    const layer = BoardService.layer.pipe(
+      Layer.provideMerge(TaskEngine.layer),
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const board = yield* BoardService.BoardService;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(store.putWorkflow({ ...setupWorkflow(), edges: [] }));
+      yield* board.createEdge("workflow", { a: "root", b: "one" });
+      const workflow = yield* board.getWorkflow("workflow");
+      assert.deepStrictEqual(
+        workflow.log.map((entry) => entry.kind),
+        ["error", "error"],
+      );
+      assert.deepStrictEqual(workflow.edges, [{ a: "root", b: "one" }]);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 it.effect("joins all child returns before sending one combined message", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness;
@@ -178,6 +238,21 @@ it.effect("joins the latest child results if a return commits during the join", 
     const holdRead = yield* Ref.make(false);
     const reading = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
+    const subscribed = yield* Queue.unbounded<ThreadId>();
+    const driver: NodeDriver = {
+      ...harness.driver,
+      subscribeSettled: (input) =>
+        Stream.unwrap(
+          Queue.offer(subscribed, input.thread.threadId).pipe(
+            Effect.as(harness.driver.subscribeSettled(input)),
+          ),
+        ),
+    };
+    const registry = DriverRegistry.DriverRegistry.of({
+      get: () => Effect.succeed(driver),
+      register: () => Effect.void,
+      remove: () => Effect.void,
+    });
     const observedStore = BoardStore.BoardStore.of({
       ...store,
       getWorkflow: (id) =>
@@ -191,16 +266,20 @@ it.effect("joins the latest child results if a return commits during the join", 
         }),
     });
     const layer = TaskEngine.layer.pipe(
-      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, registry)),
       Layer.provide(Layer.succeed(BoardStore.BoardStore, observedStore)),
     );
     yield* store.transaction(store.putWorkflow(setupWorkflow()));
     yield* Effect.gen(function* () {
       const engine = yield* TaskEngine.TaskEngine;
       yield* engine.start("workflow", { id: "run:join-race", nodeId: "root", task: "Delegate" });
-      yield* harness.reply(yield* Queue.take(harness.sends), request);
+      const root = yield* Queue.take(harness.sends);
+      yield* Queue.take(subscribed);
+      yield* harness.reply(root, request);
       const first = yield* Queue.take(harness.sends);
       const second = yield* Queue.take(harness.sends);
+      yield* Queue.take(subscribed);
+      yield* Queue.take(subscribed);
       yield* harness.reply(first, returned("first result"));
       yield* waitForRun(
         store,
@@ -307,6 +386,49 @@ it.effect("retries an interrupted stop after restart with the same command ID", 
       }).pipe(Effect.provide(engineLayer)),
     );
   }).pipe(Effect.provide(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)))),
+);
+
+it.effect("allows a failed stop to be retried without restarting", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const calls = yield* Queue.unbounded<Parameters<NodeDriver["interrupt"]>[0]>();
+    const firstCall = yield* Ref.make(true);
+    const driver: NodeDriver = {
+      ...harness.driver,
+      interrupt: (input) =>
+        Effect.gen(function* () {
+          yield* Queue.offer(calls, input);
+          if (yield* Ref.getAndSet(firstCall, false))
+            return yield* new NodeDriverError({
+              operation: "interrupt",
+              message: "Temporary failure",
+            });
+        }),
+    };
+    const registry = DriverRegistry.DriverRegistry.of({
+      get: () => Effect.succeed(driver),
+      register: () => Effect.void,
+      remove: () => Effect.void,
+    });
+    const layer = TaskEngine.layer.pipe(
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(store.putWorkflow(setupWorkflow()));
+      yield* engine.start("workflow", { id: "run:stop-retry", nodeId: "root", task: "Hold" });
+      yield* Queue.take(harness.sends);
+      yield* engine.stop("workflow", "run:stop-retry").pipe(Effect.flip);
+      assert.strictEqual((yield* store.getTask("run:stop-retry"))?.status, "completing");
+      yield* engine.stop("workflow", "run:stop-retry");
+      const first = yield* Queue.take(calls);
+      const second = yield* Queue.take(calls);
+      assert.strictEqual(first.commandId, second.commandId);
+      assert.strictEqual((yield* store.getTask("run:stop-retry"))?.status, "stopped");
+    }).pipe(Effect.provide(layer));
+  }),
 );
 
 it.effect("records capped requests as denied and returns them to the requester", () =>

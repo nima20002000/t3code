@@ -113,24 +113,35 @@ export function layer(tag: typeof CodexAdapter.CodexAppServerClientFactory) {
                   held.resolve();
                   continue;
                 }
-                const result = text.startsWith("[Board] Workflow run started")
-                  ? {
-                      summary: "delegate",
-                      data: null,
-                      routing: {
-                        kind: "request",
-                        requests: [{ to: "Child", task: "Deliver result" }],
-                      },
-                    }
-                  : text.startsWith("[Board] Work request")
-                    ? { summary: "child returned", data: 42, routing: { kind: "return" } }
-                    : text.startsWith("[Board] Work return")
+                const result =
+                  text.startsWith("[Board] You are the agent") &&
+                  text.includes("You can send requests to:\n- Child")
+                    ? {
+                        summary: "briefing reply",
+                        data: null,
+                        routing: {
+                          kind: "request",
+                          requests: [{ to: "Child", task: "Do not route" }],
+                        },
+                      }
+                    : text.startsWith("[Board] Workflow run started")
                       ? {
-                          summary: "run finished",
-                          data: { joined: true },
-                          routing: { kind: "finish" },
+                          summary: "delegate",
+                          data: null,
+                          routing: {
+                            kind: "request",
+                            requests: [{ to: "Child", task: "Deliver result" }],
+                          },
                         }
-                      : null;
+                      : text.startsWith("[Board] Work request")
+                        ? { summary: "child returned", data: 42, routing: { kind: "return" } }
+                        : text.startsWith("[Board] Work return")
+                          ? {
+                              summary: "run finished",
+                              data: { joined: true },
+                              routing: { kind: "finish" },
+                            }
+                          : null;
                 const item = {
                   type: "agentMessage",
                   id: `answer-${turnId}`,

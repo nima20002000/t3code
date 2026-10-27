@@ -250,7 +250,7 @@ const make = Effect.gen(function* () {
       const task = yield* store.getTask(taskId);
       if (!task) return;
       if (task.status === "completing") {
-        yield* interruptTask(task.id);
+        yield* lockFor(task.runId).withPermits(1)(interruptTask(task.id));
         return;
       }
       if (terminal(task.status)) return;
@@ -694,8 +694,18 @@ const make = Effect.gen(function* () {
         );
       const run = workflow?.runs.find((entry) => entry.id === runId);
       if (!workflow || !run) return yield* new BoardNotFoundError({ message: "Run not found." });
-      if (run.status !== "running") return run;
-      const stopped = yield* stopTasks(runId, new Set(), workflowId).pipe(
+      if (run.status !== "running" && run.status !== "stopped") return run;
+      const stopWork =
+        run.status === "running"
+          ? stopTasks(runId, new Set(), workflowId)
+          : lockFor(runId).withPermits(1)(
+              Effect.gen(function* () {
+                for (const task of yield* store.listTasks(runId))
+                  if (task.status === "completing") yield* interruptTask(task.id);
+                return run;
+              }),
+            );
+      const stopped = yield* stopWork.pipe(
         Effect.catchTags({
           SqlError: (cause) =>
             Effect.logError("Could not stop board run", { runId, cause }).pipe(

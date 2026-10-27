@@ -183,16 +183,67 @@ it.live("runs a board request and interrupts through the real server and orchest
         });
         assert.strictEqual(response.status, 200);
       }
+      const rootThread = ThreadId.make("board-seam-root");
+      const threadSequence = Effect.fn("BoardSeam.threadSequence")(function* () {
+        const snapshot = yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
+          threadId: rootThread,
+        }).pipe(
+          Stream.filter((item) => item.kind === "snapshot"),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+        if (snapshot.kind !== "snapshot") return yield* Effect.die("Expected thread snapshot");
+        return snapshot.snapshotSequence;
+      });
+      const beforeBriefing = yield* threadSequence();
       assert.strictEqual(
         (yield* post("/api/board/workflows/workflow/edges", { a: "root", b: "child" })).status,
         200,
       );
+      const briefing = yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
+        threadId: rootThread,
+        afterSequence: beforeBriefing,
+      }).pipe(
+        Stream.filter(
+          (item) =>
+            item.kind === "event" &&
+            item.event.type === "message.updated" &&
+            item.event.payload.text.includes("You can send requests to:\n- Child"),
+        ),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      if (briefing.kind !== "event" || briefing.event.type !== "message.updated")
+        return yield* Effect.die("Expected board briefing");
+      const briefingRunId = briefing.event.payload.runId;
+      yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
+        threadId: rootThread,
+        afterSequence: briefing.sequence,
+      }).pipe(
+        Stream.filter(
+          (item) =>
+            item.kind === "event" &&
+            item.event.type === "run.updated" &&
+            item.event.payload.id === briefingRunId &&
+            item.event.payload.status === "completed",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      const beforeRun = yield* request("/api/board/workflows/workflow", { headers: authorization });
+      const beforeRunData = (yield* Effect.tryPromise(() => beforeRun.json())) as {
+        runs: ReadonlyArray<unknown>;
+      };
+      assert.deepStrictEqual(beforeRunData.runs, []);
       const events = yield* request("/api/board/events?afterSequence=0", {
         headers: authorization,
       });
       assert.strictEqual(events.status, 200);
       assert.include(events.headers.get("content-type"), "text/event-stream");
-      const reader = events.body!.getReader();
+      const reader = yield* Effect.acquireRelease(
+        Effect.sync(() => events.body!.getReader()),
+        (streamReader) => Effect.promise(() => streamReader.cancel()).pipe(Effect.ignore),
+      );
       let buffer = "";
       const decoder = new TextDecoder();
       const waitForRun = (runId: string, status: string) =>
@@ -249,6 +300,7 @@ it.live("runs a board request and interrupts through the real server and orchest
         200,
       );
       yield* Effect.promise(() => FakeTransport.held.promise);
+      const beforeQueued = yield* threadSequence();
       assert.strictEqual(
         (yield* post("/api/board/workflows/workflow/runs", {
           id: "queued",
@@ -257,10 +309,10 @@ it.live("runs a board request and interrupts through the real server and orchest
         })).status,
         200,
       );
-      const threadId = ThreadId.make("board-seam-root");
+      const threadId = rootThread;
       const queuedEvent = yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
         threadId,
-        afterSequence: 0,
+        afterSequence: beforeQueued,
       }).pipe(
         Stream.filter(
           (item) =>
@@ -297,7 +349,6 @@ it.live("runs a board request and interrupts through the real server and orchest
       );
       yield* Effect.promise(() => FakeTransport.interrupted.promise);
       yield* waitForRun("held", "stopped");
-      yield* Effect.promise(() => reader.cancel());
     }).pipe(Effect.provide(NodeServices.layer)),
   ),
 );
