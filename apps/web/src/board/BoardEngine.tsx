@@ -57,6 +57,10 @@ const ACTIVE_RUN_STATUSES = new Set(["preparing", "queued", "starting", "running
 
 type SendToNode = (node: BoardNode, text: string) => Promise<boolean>;
 
+const BRIEFING_PREFIX = "[Board] You are the agent";
+// Nodes whose last board message was a briefing: a `request` in the reply is not acted on outside a run.
+const briefedNodes = new Set<string>();
+
 export function useSendToBoardNode(): SendToNode {
   const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
     reportFailure: false,
@@ -64,6 +68,8 @@ export function useSendToBoardNode(): SendToNode {
   const startRef = useRef(startThreadTurn);
   startRef.current = startThreadTurn;
   return useCallback(async (node, text) => {
+    if (text.startsWith(BRIEFING_PREFIX)) briefedNodes.add(node.id);
+    else briefedNodes.delete(node.id);
     const info = nodeThreadInfo.get(node.id);
     if (!info) {
       appendLog(
@@ -310,6 +316,19 @@ function handleSettledThread(
   const parsed = parseResult(latest.text);
   if (!parsed.ok) {
     handleInvalid(workflowId, node, parsed.reason, send);
+    return;
+  }
+  const currentWorkflow = getWorkflow(workflowId);
+  if (
+    briefedNodes.delete(node.id) &&
+    parsed.result.routing.kind === "request" &&
+    !(currentWorkflow && activeRunOf(currentWorkflow))
+  ) {
+    appendLog(
+      "info",
+      `${node.name} answered a briefing with a request; ignored: ${truncate(parsed.result.summary)}`,
+      workflowId,
+    );
     return;
   }
   const problem = handleResult(workflowId, node, parsed.result, send);

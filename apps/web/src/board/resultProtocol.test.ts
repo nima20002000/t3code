@@ -120,6 +120,7 @@ describe("helpers", () => {
     expect(text).toContain('"kind": "request"');
     expect(text).toContain('"kind": "return"');
     expect(text).toContain('"kind": "finish"');
+    expect(text).toContain("THIS MESSAGE IS A BRIEFING");
     expect(text).toContain("You can send requests to:\n- QA");
     expect(text).toContain("may send requests to you:\n- Lead");
   });

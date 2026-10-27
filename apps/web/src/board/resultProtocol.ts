@@ -195,6 +195,11 @@ export function buildBoardInstructions(
   return [
     `[Board] You are the agent "${name}" on a board with other agents. The board routes work between agents; it never reads your prose.`,
     "",
+    "THIS MESSAGE IS A BRIEFING: information only. Do not continue, resume or redo any earlier task because of it, and do not run commands or send requests. Answer this briefing itself with just:",
+    "```json",
+    '{"summary": "...", "data": null, "routing": {"kind": "finish"}}',
+    "```",
+    "",
     "Every reply you write MUST end with exactly one fenced json block, the result envelope. The board reads only the LAST json block of your final message:",
     "",
     "```json",
@@ -224,6 +229,7 @@ export function buildBoardInstructions(
     '- A message starting with "[Board] Work request" holds a requestId. You must eventually answer it with a "return" that echoes that requestId.',
     '- A message starting with "[Board] Work return" is the answer to a request you sent; use it, then continue (request more work, return, or finish).',
     '- A message starting with "[Board] Workflow run started" gives you the task of a run.',
+    '- Act only on a "[Board] Work request" or "[Board] Workflow run started" message, or on direct user chat. After an interruption (for example a stopped run) never start new requests on your own or resume old work.',
     "- Request only agents listed below. Names are matched case-insensitively.",
     "- If your reply has no valid json block, the board asks you once to resend it.",
     "",
@@ -244,5 +250,7 @@ export function buildAgentFirstPrompt(
 ): string {
   const instructions = buildBoardInstructions(name, outgoingNames, incomingNames);
   const trimmed = role.trim();
-  return trimmed.length > 0 ? `${trimmed}\n\n${instructions}` : instructions;
+  return trimmed.length > 0
+    ? `${trimmed}\n\n(The role above is your only task for now: remember it, do not act on it yet.)\n\n${instructions}`
+    : instructions;
 }

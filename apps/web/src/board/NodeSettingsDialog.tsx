@@ -81,7 +81,7 @@ export function NodeSettingsDialog(props: {
       >
         <DialogTitle className="sr-only">{node.name} settings</DialogTitle>
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="grid shrink-0 gap-3 border-b p-4 pe-12 md:grid-cols-4">
+          <div className="grid shrink-0 gap-3 border-b p-4 pe-14 md:grid-cols-4">
             <label className="flex flex-col gap-1 text-sm">
               <span className="text-muted-foreground">Name</span>
               <Input
@@ -130,7 +130,7 @@ export function NodeSettingsDialog(props: {
               </Button>
             </div>
           </div>
-          <div className="relative flex min-h-0 flex-1 flex-col">
+          <div className="relative isolate flex min-h-[320px] min-w-0 flex-1 flex-col overflow-hidden">
             <ChatView
               environmentId={node.environmentId}
               threadId={node.threadId}
