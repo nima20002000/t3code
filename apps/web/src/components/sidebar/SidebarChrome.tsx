@@ -1,7 +1,10 @@
-import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon, WorkflowIcon } from "lucide-react";
+import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
+
+import { SidebarBoardUtility } from "../../board/BoardNavigation";
+export { SidebarBoardLink } from "../../board/BoardNavigation";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
@@ -156,29 +159,6 @@ function SidebarUtilityItem({
   );
 }
 
-/** Labeled entry to the Board page, shown near the top of the main sidebar. */
-export const SidebarBoardLink = memo(function SidebarBoardLink() {
-  const navigate = useNavigate();
-  const { isMobile, setOpenMobile } = useSidebar();
-  const active = useLocation({ select: (location) => location.pathname === "/board" });
-  return (
-    <SidebarMenu className="mt-1">
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          isActive={active}
-          onClick={() => {
-            if (isMobile) setOpenMobile(false);
-            void navigate({ to: "/board" });
-          }}
-        >
-          <WorkflowIcon />
-          <span>Board</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    </SidebarMenu>
-  );
-});
-
 const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
@@ -202,11 +182,6 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const handleSettingsClick = () => {
     closeMobileSidebar();
     void navigate({ to: "/settings" });
-  };
-
-  const handleBoardClick = () => {
-    closeMobileSidebar();
-    void navigate({ to: "/board" });
   };
 
   const handleUsageClick = () => {
@@ -244,7 +219,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handlePullRequestsClick}
             />
           ) : null}
-          <SidebarUtilityItem icon={<WorkflowIcon />} label="Board" onClick={handleBoardClick} />
+          <SidebarBoardUtility />
           <SidebarUtilityItem
             icon={<ChartNoAxesColumnIcon />}
             label="Usage"

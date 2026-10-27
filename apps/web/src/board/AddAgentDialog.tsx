@@ -2,7 +2,7 @@ import {
   type EnvironmentId,
   type ModelSelection,
   ProviderInstanceId,
-  type ProjectId,
+  ProjectId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { useState } from "react";
@@ -20,47 +20,31 @@ import {
 } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
-import { newMessageId, newThreadId } from "../lib/utils";
+import { newThreadId, randomUUID } from "../lib/utils";
 import {
   deriveProviderInstanceEntries,
   resolveDefaultProviderModelSelection,
   sortProviderInstanceEntries,
 } from "../providerInstances";
 import { useProjects } from "../state/entities";
-import {
-  useConnectedEnvironmentIds,
-  useEnvironmentIdentities,
-  useEnvironmentProviders,
-} from "../state/environments";
+import { useEnvironmentProviders } from "../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../state/server";
-import { threadEnvironment } from "../state/threads";
-import { useOrchestrationCommand } from "../state/use-orchestration-command";
-import { addNode, appendLog, useCurrentWorkflow } from "./boardStore";
-import { buildAgentFirstPrompt } from "@t3tools/board-core/resultProtocol";
+import { createNode, nextNodePosition, useCurrentWorkflow } from "./boardStore";
+import { useBoardMachines } from "./useBoardMachines";
 
 const FIELD_CLASS = "h-8 w-full rounded-md border bg-background px-2 text-sm";
 
-/**
- * Starts a new agent: creates a full-access thread in the chosen project, sends the role plus the
- * board instructions as its first turn (the same two commands the composer's "implement plan in
- * new thread" uses), then adds a board node bound to it.
- */
 export function AddAgentDialog(props: { readonly onClose: () => void }) {
-  const environments = useEnvironmentIdentities();
-  const connectedIds = useConnectedEnvironmentIds();
+  const connected = useBoardMachines();
   const providersByEnvironment = useEnvironmentProviders();
   const projects = useProjects();
-  const { id: workflowId, settings } = useCurrentWorkflow();
-  const createThread = useOrchestrationCommand(threadEnvironment.create, { reportFailure: false });
-  const startTurn = useOrchestrationCommand(threadEnvironment.startTurn, { reportFailure: false });
-
-  const connected = environments.filter((environment) =>
-    connectedIds.includes(environment.environmentId),
-  );
+  const workflow = useCurrentWorkflow();
+  const { id: workflowId, settings } = workflow;
   const [environmentId, setEnvironmentId] = useState<EnvironmentId | "">(
     connected[0]?.environmentId ?? "",
   );
   const [projectChoice, setProjectChoice] = useState<ProjectId | "">("");
+  const [manualProject, setManualProject] = useState("");
   const [modelChoice, setModelChoice] = useState<{
     readonly environmentId: EnvironmentId;
     readonly selection: ModelSelection;
@@ -80,77 +64,45 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
     EMPTY_SERVER_PROVIDERS;
   const entries = sortProviderInstanceEntries(deriveProviderInstanceEntries(providers));
   const modelOptionsByInstance = new Map(entries.map((entry) => [entry.instanceId, entry.models]));
+  const defaultSelection = createModelSelection(
+    ProviderInstanceId.make(settings.defaultInstanceId),
+    settings.defaultModel,
+  );
   const selection: ModelSelection | null =
     modelChoice !== null && modelChoice.environmentId === environmentId
       ? modelChoice.selection
-      : resolveDefaultProviderModelSelection(
-          providers,
-          createModelSelection(
-            ProviderInstanceId.make(settings.defaultInstanceId),
-            settings.defaultModel,
-          ),
-        );
+      : (resolveDefaultProviderModelSelection(providers, defaultSelection) ?? defaultSelection);
   const environmentLabel =
     connected.find((environment) => environment.environmentId === environmentId)?.label ?? "";
   const agentName = name.trim() || environmentLabel || "Agent";
-  const canSubmit = environmentId !== "" && project !== null && selection !== null && !submitting;
+  const projectId =
+    project?.id ?? (manualProject.trim() ? ProjectId.make(manualProject.trim()) : null);
+  const canSubmit = environmentId !== "" && projectId !== null && selection !== null && !submitting;
 
   const submit = async () => {
-    if (environmentId === "" || project === null || selection === null) return;
+    if (environmentId === "" || projectId === null || selection === null || submitting) return;
     setSubmitting(true);
     setError(null);
-    const threadId = newThreadId();
-    const created = await createThread({
-      environmentId,
-      input: {
-        threadId,
-        projectId: project.id,
-        title: agentName,
-        modelSelection: selection,
-        runtimeMode: settings.runtimeMode,
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-      },
-    });
-    if (created._tag === "Failure") {
-      setSubmitting(false);
-      setError("Could not create the thread.");
-      return;
-    }
-    const started = await startTurn({
-      environmentId,
-      input: {
-        threadId,
-        message: {
-          messageId: newMessageId(),
-          role: "user",
-          text: buildAgentFirstPrompt(agentName, role, [], []),
-          attachments: [],
-        },
-        modelSelection: selection,
-        titleSeed: agentName,
-        runtimeMode: settings.runtimeMode,
-        interactionMode: "default",
-      },
-    });
-    if (started._tag === "Failure") {
-      setSubmitting(false);
-      setError("The thread was created but its first turn failed to start.");
-      return;
-    }
-    addNode(
-      {
+    try {
+      await createNode(workflowId, {
+        kind: "launch",
+        id: randomUUID(),
         name: agentName,
         environmentId,
-        threadId,
-        baselined: true,
-        awaitingFirstReply: true,
-      },
-      workflowId,
-    );
-    appendLog("info", `Started agent ${agentName} on ${environmentLabel}.`, workflowId);
-    props.onClose();
+        projectId,
+        threadId: newThreadId(),
+        modelSelection: selection,
+        runtimeMode: settings.runtimeMode,
+        interactionMode: "default",
+        workspaceStrategy: { type: "root" },
+        role,
+        ...nextNodePosition(workflow),
+      });
+      props.onClose();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -184,6 +136,7 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
                   onChange={(event) => {
                     setEnvironmentId(event.target.value as EnvironmentId | "");
                     setProjectChoice("");
+                    setManualProject("");
                   }}
                 >
                   {connected.map((environment) => (
@@ -195,22 +148,31 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
               </label>
               <label className="flex flex-col gap-1">
                 Project
-                <select
-                  className={FIELD_CLASS}
-                  value={project?.id ?? ""}
-                  onChange={(event) => setProjectChoice(event.target.value as ProjectId)}
-                >
-                  {environmentProjects.map((candidate) => (
-                    <option key={candidate.id} value={candidate.id}>
-                      {candidate.title}
-                    </option>
-                  ))}
-                </select>
+                {environmentProjects.length ? (
+                  <select
+                    className={FIELD_CLASS}
+                    value={project?.id ?? ""}
+                    onChange={(event) => setProjectChoice(event.target.value as ProjectId)}
+                  >
+                    {environmentProjects.map((candidate) => (
+                      <option key={candidate.id} value={candidate.id}>
+                        {candidate.title}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <Input
+                    aria-label="Project ID"
+                    placeholder="Project ID on this machine"
+                    value={manualProject}
+                    onChange={(event) => setManualProject(event.target.value)}
+                  />
+                )}
               </label>
               <div className="flex flex-col gap-1">
                 Provider and model
                 <div>
-                  {selection !== null && environmentId !== "" ? (
+                  {selection !== null && environmentId !== "" && entries.length > 0 ? (
                     <ProviderModelPicker
                       environmentId={environmentId}
                       activeInstanceId={selection.instanceId}
@@ -226,7 +188,9 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
                       }
                     />
                   ) : (
-                    <span className="text-muted-foreground">No providers available</span>
+                    <span className="text-muted-foreground">
+                      {settings.defaultInstanceId} / {settings.defaultModel} (workflow default)
+                    </span>
                   )}
                 </div>
               </div>

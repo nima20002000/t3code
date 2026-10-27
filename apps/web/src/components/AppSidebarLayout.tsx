@@ -9,6 +9,7 @@ import {
 } from "react";
 import { useLocation, useRouter, type AnyRouter } from "@tanstack/react-router";
 
+import { BoardSidebar as Sidebar, boardHidesSidebar } from "../board/BoardNavigation";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { isElectron } from "../env";
 import {
@@ -52,7 +53,6 @@ import {
   THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
 } from "./threadSidebarWidth";
 import {
-  Sidebar,
   SidebarProvider,
   SidebarRail,
   SidebarTrigger,
@@ -383,8 +383,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     usePanelAnimationSettings();
   const pathname = useLocation({ select: (location) => location.pathname });
   const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
-  // Board mode: no thread sidebar. Only the sidebar is unmounted; children (BoardEngine) stay mounted.
-  const boardMode = pathname === "/board";
+  const boardMode = boardHidesSidebar(pathname);
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
   const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
@@ -425,32 +424,30 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         style={sidebarProviderStyle}
       >
         <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
-        {boardMode ? null : (
-          <Sidebar
-            side="left"
-            collapsible="offcanvas"
-            data-app-sidebar=""
-            role="navigation"
-            aria-label="Threads"
-            resizable={{
-              maxWidth: sidebarMaximumWidth,
-              minWidth: sidebarMinimumWidth,
-              shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
-                nextWidth <= currentWidth ||
-                wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-              storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-              onResize: setSidebarWidth,
-            }}
-            style={windowControlsInsetStyle}
-          >
-            {legacySidebarEnabled ? (
-              <LegacyThreadSidebar routeReveal={sidebarRouteReveal} />
-            ) : (
-              <ThreadSidebar routeReveal={sidebarRouteReveal} />
-            )}
-            <SidebarRail onDoubleClick={resetSidebarWidth} />
-          </Sidebar>
-        )}
+        <Sidebar
+          side="left"
+          collapsible="offcanvas"
+          data-app-sidebar=""
+          role="navigation"
+          aria-label="Threads"
+          resizable={{
+            maxWidth: sidebarMaximumWidth,
+            minWidth: sidebarMinimumWidth,
+            shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
+              nextWidth <= currentWidth ||
+              wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+            storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+            onResize: setSidebarWidth,
+          }}
+          style={windowControlsInsetStyle}
+        >
+          {legacySidebarEnabled ? (
+            <LegacyThreadSidebar routeReveal={sidebarRouteReveal} />
+          ) : (
+            <ThreadSidebar routeReveal={sidebarRouteReveal} />
+          )}
+          <SidebarRail onDoubleClick={resetSidebarWidth} />
+        </Sidebar>
         {children}
         <BackgroundThreadAnnouncer />
         <SidebarControl hidden={boardMode} />

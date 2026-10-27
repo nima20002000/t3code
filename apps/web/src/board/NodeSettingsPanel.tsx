@@ -9,9 +9,8 @@ import { useProject, useThreadShells } from "../state/entities";
 import { useEnvironmentIdentities } from "../state/environments";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useRightPanelStore } from "../rightPanelStore";
-import { useSendToBoardNode } from "./BoardEngine";
+import { useSendBoardInstructions } from "./useSendBoardInstructions";
 import {
-  appendLog,
   removeNode,
   renameNode,
   setNodeRole,
@@ -45,7 +44,7 @@ export function NodeSettingsPanel(props: {
   const { nodes, edges } = useCurrentWorkflow();
   const environments = useEnvironmentIdentities();
   const threads = useThreadShells();
-  const send = useSendToBoardNode();
+  const send = useSendBoardInstructions();
   const shell = threads.find(
     (thread) => thread.environmentId === node.environmentId && thread.id === node.threadId,
   );
@@ -77,11 +76,7 @@ export function NodeSettingsPanel(props: {
   const sendInstructions = async () => {
     const outgoing = connectedNodeNames(nodes, edges, node.id);
     const incoming = incomingNodeNames(nodes, edges, node.id);
-    const sent = await send(node, buildBoardInstructions(node.name, outgoing, incoming));
-    appendLog(
-      "info",
-      sent ? `Sent board instructions to ${node.name}.` : `Instructions to ${node.name} failed.`,
-    );
+    await send(node, buildBoardInstructions(node.name, outgoing, incoming));
   };
 
   return (
