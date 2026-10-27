@@ -95,7 +95,12 @@ const make = Effect.gen(function* () {
       ...workflow,
       runs: workflow.runs.map((entry) => (entry.id === run.id ? run : entry)),
     });
-    yield* store.appendEvent({ kind: "run.upserted", workflowId: workflow.id, run });
+    yield* store.appendEvent({
+      kind: "run.upserted",
+      workflowId: workflow.id,
+      run,
+      pending: workflow.pending,
+    });
   });
 
   const failTask = Effect.fn("TaskEngine.failTask")(function* (taskId: string, reason: string) {

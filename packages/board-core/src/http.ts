@@ -141,6 +141,7 @@ export const BoardEvent = Schema.Union([
     sequence: NonNegativeInt,
     workflowId: Id,
     run: BoardRunSchema,
+    pending: Schema.optionalKey(Schema.Array(BoardPendingWakeSchema)),
   }),
   Schema.Struct({
     kind: Schema.Literal("schedule.upserted"),

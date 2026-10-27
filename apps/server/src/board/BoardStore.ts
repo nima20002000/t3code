@@ -59,6 +59,11 @@ export class BoardStore extends Context.Service<
     readonly listPairedPeers: () => StoreEffect<ReadonlyArray<Peer>>;
     readonly putPeer: (peer: Peer) => StoreEffect<BoardPeer>;
     readonly deletePeer: (id: EnvironmentId) => StoreEffect<void>;
+    readonly updatePeerStatus: (
+      peer: Peer,
+      status: BoardPeer["status"],
+      error?: string,
+    ) => StoreEffect<BoardPeer | undefined>;
     readonly listSchedules: () => StoreEffect<ReadonlyArray<BoardSchedule>>;
     readonly putSchedule: (schedule: BoardSchedule) => StoreEffect<void>;
     readonly deleteSchedule: (id: string) => StoreEffect<void>;
@@ -202,6 +207,21 @@ const make = Effect.gen(function* () {
   const deletePeer = Effect.fn("BoardStore.deletePeer")(function* (id: EnvironmentId) {
     yield* sql`DELETE FROM board_peers WHERE id = ${id}`;
   });
+  const updatePeerStatus = Effect.fn("BoardStore.updatePeerStatus")(function* (
+    peer: Peer,
+    status: BoardPeer["status"],
+    error?: string,
+  ) {
+    const rows = yield* sql<PeerRow>`SELECT data, bearer FROM board_peers WHERE id = ${peer.environmentId}`;
+    const row = rows[0];
+    if (!row || row.bearer !== peer.bearer) return undefined;
+    const current = decodeJson(row.data) as BoardPeer;
+    if (current.status === status && current.error === error) return undefined;
+    const { error: _previousError, ...rest } = current;
+    const updated: BoardPeer = { ...rest, status, ...(error === undefined ? {} : { error }) };
+    yield* sql`UPDATE board_peers SET data = ${encodeJson(updated)} WHERE id = ${peer.environmentId}`;
+    return updated;
+  });
   const listSchedules = Effect.fn("BoardStore.listSchedules")(function* () {
     const rows = yield* sql<JsonRow>`SELECT data FROM board_schedules ORDER BY rowid`;
     return rows.map((row) => decodeJson(row.data) as BoardSchedule);
@@ -276,6 +296,7 @@ const make = Effect.gen(function* () {
     listPairedPeers,
     putPeer,
     deletePeer,
+    updatePeerStatus,
     listSchedules,
     putSchedule,
     deleteSchedule,

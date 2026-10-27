@@ -5,12 +5,15 @@ import {
   type BoardPairPeerInput,
   type BoardPeer,
 } from "@t3tools/board-core";
+import { AuthWebSocketTicketResult } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
+import * as Schema from "effect/Schema";
 import type { SqlError } from "effect/sql/SqlError";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { forkParked } from "../serverActivation.ts";
 import * as BoardStore from "./BoardStore.ts";
 import * as DriverRegistry from "./DriverRegistry.ts";
 import * as PeerPairing from "./remote/PeerPairing.ts";
@@ -44,6 +47,45 @@ const make = Effect.gen(function* () {
         ),
       ),
   };
+  const saved = yield* store.listPairedPeers();
+  yield* forkParked(
+    Effect.forEach(
+      saved,
+      (peer) =>
+        Effect.gen(function* () {
+          yield* peers.setStatus!(peer, "connecting");
+          const checked = yield* Effect.gen(function* () {
+            const descriptor = yield* PeerPairing.readDescriptor(peer.url);
+            if (descriptor.environmentId !== peer.environmentId) return false;
+            const response = yield* PeerPairing.request(
+              new URL("/api/auth/websocket-ticket/rpc", peer.url),
+              { method: "POST", headers: { authorization: `Bearer ${peer.bearer}` } },
+            );
+            yield* Schema.decodeUnknownEffect(Schema.toCodecJson(AuthWebSocketTicketResult))(
+              response,
+            );
+            return true;
+          }).pipe(Effect.catch(() => Effect.succeed(false)));
+          if (!checked) {
+            yield* Effect.logWarning("Could not verify paired board machine", {
+              environmentId: peer.environmentId,
+            });
+          }
+          yield* peers.setStatus!(
+            peer,
+            checked ? "connected" : "error",
+            checked ? undefined : "Could not reach or authenticate this machine.",
+          );
+        }).pipe(
+          Effect.catch(() =>
+            Effect.logWarning("Could not update board machine status", {
+              environmentId: peer.environmentId,
+            }),
+          ),
+        ),
+      { concurrency: 4, discard: true },
+    ),
+  );
   const pair = Effect.fn("BoardPeers.pair")(function* (input: BoardPairPeerInput) {
     const peer = yield* PeerPairing.pair({
       ...input,

@@ -1,5 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import type { BoardPeer } from "@t3tools/board-core";
 import type { BoardStore } from "../BoardStore.ts";
 
 export interface Peer {
@@ -15,6 +16,11 @@ export interface PeerStore {
   readonly list: () => Effect.Effect<ReadonlyArray<Peer>, Error>;
   readonly put: (peer: Peer) => Effect.Effect<void, Error>;
   readonly remove: (environmentId: EnvironmentId) => Effect.Effect<void, Error>;
+  readonly setStatus?: (
+    peer: Peer,
+    status: BoardPeer["status"],
+    error?: string,
+  ) => Effect.Effect<void, Error>;
 }
 
 export function makeBoard(store: BoardStore["Service"]): PeerStore {
@@ -35,6 +41,13 @@ export function makeBoard(store: BoardStore["Service"]): PeerStore {
           if (!peer) return;
           yield* store.deletePeer(id);
           yield* store.appendEvent({ kind: "peer.deleted", peerId: peer.id });
+        }),
+      ),
+    setStatus: (peer, status, error) =>
+      store.transaction(
+        Effect.gen(function* () {
+          const visible = yield* store.updatePeerStatus(peer, status, error);
+          if (visible) yield* store.appendEvent({ kind: "peer.upserted", peer: visible });
         }),
       ),
   };

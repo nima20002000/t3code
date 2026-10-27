@@ -40,6 +40,29 @@ class RemoteStateError extends Schema.TaggedError<RemoteStateError>()("RemoteSta
 const error = (operation: NodeDriverError["operation"], cause: unknown) =>
   new NodeDriverError({ operation, message: `Remote board ${operation} failed.`, cause });
 
+const reportStatus = (
+  store: PeerStore,
+  target: { readonly environmentId: BoardDriverThread["environmentId"] },
+  status: "connected" | "error",
+) =>
+  Effect.gen(function* () {
+    if (!store.setStatus) return;
+    const peer = yield* store.get(target.environmentId);
+    if (peer) {
+      yield* store.setStatus(
+        peer,
+        status,
+        status === "error" ? "Could not reach or authenticate this machine." : undefined,
+      );
+    }
+  }).pipe(
+    Effect.catch(() =>
+      Effect.logWarning("Could not update board machine status", {
+        environmentId: target.environmentId,
+      }),
+    ),
+  );
+
 const peerFor = Effect.fn("RemoteDriver.peerFor")(function* (
   store: PeerStore,
   thread: { readonly environmentId: BoardDriverThread["environmentId"] },
@@ -88,7 +111,9 @@ const useClient = <A, E>(
       Effect.gen(function* () {
         const peer = yield* peerFor(store, target);
         const client = yield* connect(peer);
-        return yield* use(client);
+        const result = yield* use(client);
+        yield* reportStatus(store, target, "connected");
+        return result;
       }),
     ).pipe(
       Effect.tapError((cause) => {
@@ -99,6 +124,9 @@ const useClient = <A, E>(
         });
       }),
       Effect.retry({ while: retryable, times: 3, schedule: Schedule.spaced("1 second") }),
+      Effect.tapError((cause) =>
+        connectionFailure(cause) ? reportStatus(store, target, "error") : Effect.void,
+      ),
     );
   });
 
@@ -165,6 +193,14 @@ function retryable(cause: unknown): boolean {
   return "cause" in cause && retryable(cause.cause);
 }
 
+function connectionFailure(cause: unknown): boolean {
+  if (isPeerHttpError(cause)) return true;
+  if (typeof cause !== "object" || cause === null) return false;
+  if ("_tag" in cause && (cause._tag === "RpcClientError" || cause._tag === "PeerPairingError"))
+    return true;
+  return "cause" in cause && connectionFailure(cause.cause);
+}
+
 export function make(store: PeerStore): NodeDriver {
   return {
     launch: Effect.fn("RemoteDriver.launch")(function* (input) {
@@ -210,6 +246,7 @@ export function make(store: PeerStore): NodeDriver {
       Stream.suspend(() => {
         let afterSequence = input.afterSequence;
         let warned = false;
+        let statusReported = false;
         const delivered = new Map<string, BoardDriverSettled["status"]>();
         const convert = (
           item: OrchestrationV2ThreadStreamItem,
@@ -250,9 +287,16 @@ export function make(store: PeerStore): NodeDriver {
           }),
         ).pipe(
           Stream.mapEffect((item) =>
-            Effect.try({
-              try: () => convert(item),
-              catch: () => new RemoteStateError({ reason: "Invalid remote thread." }),
+            Effect.gen(function* () {
+              const result = yield* Effect.try({
+                try: () => convert(item),
+                catch: () => new RemoteStateError({ reason: "Invalid remote thread." }),
+              });
+              if (!statusReported) {
+                statusReported = true;
+                yield* reportStatus(store, input.thread, "connected");
+              }
+              return result;
             }),
           ),
           Stream.flatMap((items) => Stream.fromIterable(items)),
@@ -262,6 +306,8 @@ export function make(store: PeerStore): NodeDriver {
           Stream.catchIf(retryable, () =>
             Stream.fromEffect(
               Effect.gen(function* () {
+                statusReported = false;
+                yield* reportStatus(store, input.thread, "error");
                 if (!warned) {
                   warned = true;
                   yield* Effect.logWarning(
@@ -271,6 +317,12 @@ export function make(store: PeerStore): NodeDriver {
                 }
               }),
             ).pipe(Stream.drain),
+          ),
+          Stream.catchIf(connectionFailure, (cause) =>
+            Stream.fromEffect(reportStatus(store, input.thread, "error")).pipe(
+              Stream.drain,
+              Stream.concat(Stream.fail(cause)),
+            ),
           ),
           Stream.repeat(Schedule.spaced("1 second")),
           Stream.mapError((cause) => error("subscribeSettled", cause)),

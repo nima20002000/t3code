@@ -1,13 +1,20 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { createWorkflow } from "@t3tools/board-core";
+import { EnvironmentId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as BoardStore from "./BoardStore.ts";
+import * as PeerStore from "./remote/PeerStore.ts";
+import * as DriverRegistry from "./DriverRegistry.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 
 it.effect("keeps core and board migration histories and board data across reopening", () =>
   Effect.scoped(
@@ -18,6 +25,13 @@ it.effect("keeps core and board migration histories and board data across reopen
       const layer = BoardStore.layer.pipe(
         Layer.provideMerge(SqlitePersistence.layerFromPath(path.join(directory, "statev2.sqlite"))),
       );
+      const peer = {
+        id: "remote",
+        name: "Remote",
+        environmentId: EnvironmentId.make("remote"),
+        url: "https://remote.example.test/",
+        bearer: "private-board-bearer",
+      };
       const first = yield* Effect.scoped(
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
@@ -33,6 +47,7 @@ it.effect("keeps core and board migration histories and board data across reopen
               yield* store.appendEvent({ kind: "workflow.upserted", workflow });
             }),
           );
+          yield* PeerStore.makeBoard(store).put(peer);
           return core;
         }).pipe(Effect.provide(layer)),
       );
@@ -52,8 +67,32 @@ it.effect("keeps core and board migration histories and board data across reopen
           assert.deepStrictEqual(core, first);
           assert.deepStrictEqual(board, [{ migration_id: 1, name: "Board" }]);
           const snapshot = yield* store.snapshot();
-          assert.strictEqual(snapshot.sequence, 1);
+          assert.strictEqual(snapshot.sequence, 2);
           assert.strictEqual(snapshot.workflows[0]?.id, "workflow");
+          assert.deepStrictEqual(yield* PeerStore.makeBoard(store).get(peer.environmentId), peer);
+          assert.strictEqual(snapshot.peers[0]?.environmentId, peer.environmentId);
+          assert.notInclude(JSON.stringify(snapshot), peer.bearer);
+          const events = yield* store.events(0).pipe(Stream.take(2), Stream.runCollect);
+          assert.strictEqual(events[1]?.kind, "peer.upserted");
+          assert.notInclude(JSON.stringify(events), peer.bearer);
+          const registry = DriverRegistry.layer.pipe(
+            Layer.provide(
+              Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
+                getEnvironmentId: Effect.succeed(EnvironmentId.make("hub")),
+              }),
+            ),
+            Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
+            Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+          );
+          yield* Effect.gen(function* () {
+            const drivers = yield* DriverRegistry.DriverRegistry;
+            assert.isDefined(yield* drivers.get(peer.environmentId));
+            assert.isDefined(yield* drivers.get(EnvironmentId.make("hub")));
+          }).pipe(Effect.provide(registry));
+          yield* PeerStore.makeBoard(store).remove(peer.environmentId);
+          assert.deepStrictEqual(yield* store.listPeers(), []);
+          const deleted = yield* store.events(2).pipe(Stream.take(1), Stream.runCollect);
+          assert.strictEqual(deleted[0]?.kind, "peer.deleted");
         }).pipe(Effect.provide(layer)),
       );
     }).pipe(Effect.provide(NodeServices.layer)),

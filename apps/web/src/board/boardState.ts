@@ -50,6 +50,7 @@ export function applyBoardEvent(snapshot: BoardSnapshot, event: BoardEvent): Boa
           w.id === event.workflowId
             ? {
                 ...w,
+                pending: event.pending ?? w.pending,
                 runs: w.runs.some((run) => run.id === event.run.id)
                   ? upsert(w.runs, event.run)
                   : [event.run, ...w.runs],

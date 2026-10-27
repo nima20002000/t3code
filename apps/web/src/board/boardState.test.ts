@@ -20,6 +20,37 @@ it("applies sequenced events and ignores replayed events", () => {
   ).toEqual([]);
 });
 
+it("keeps pending handoffs in step with run events", () => {
+  const workflow = createWorkflow("w1", "Example");
+  const initial = { ...snapshot, workflows: [workflow] };
+  const run = {
+    id: "run",
+    nodeId: "a",
+    nodeName: "A",
+    task: "work",
+    status: "running" as const,
+    startedAt: "2026-01-01T00:00:00Z",
+    requests: [],
+  };
+  const pending = [{ id: "handoff", from: "a", to: "b" }];
+  const waiting = applyBoardEvent(initial, {
+    kind: "run.upserted",
+    sequence: 5,
+    workflowId: workflow.id,
+    run,
+    pending,
+  });
+  expect(waiting.workflows[0]?.pending).toEqual(pending);
+  const completed = applyBoardEvent(waiting, {
+    kind: "run.upserted",
+    sequence: 6,
+    workflowId: workflow.id,
+    run: { ...run, status: "finished" },
+    pending: [],
+  });
+  expect(completed.workflows[0]?.pending).toEqual([]);
+});
+
 it("only marks a local import after it succeeds and skips IDs already on the hub", async () => {
   const values = new Map<string, string>();
   const storage = {
