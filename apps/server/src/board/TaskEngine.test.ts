@@ -51,7 +51,7 @@ const definitionOf = () => {
 };
 const finish = '```json\n{"summary":"finished","data":42,"routing":{"kind":"finish"}}\n```';
 const request =
-  '```json\n{"summary":"delegate","data":null,"routing":{"kind":"request","requests":[{"to":"one","task":"first"},{"to":"two","task":"second"}]}}\n```';
+  '```json\n{"summary":"delegate","data":null,"kanban":[{"op":"create","title":"first","assignee":"one"},{"op":"create","title":"second","assignee":"two"}],"routing":{"kind":"request","requests":[{"to":"one","task":"first"},{"to":"two","task":"second"}]}}\n```';
 const returned = (summary: string) =>
   `\`\`\`json\n{"summary":"${summary}","data":null,"routing":{"kind":"return"}}\n\`\`\``;
 

@@ -39,11 +39,19 @@ function savePanelSize(key: string, size: PanelSize) {
     // Storage can be unavailable; the panel just opens at its default size next time.
   }
 }
-type ResizeEdges = { readonly left?: boolean; readonly right?: boolean; readonly bottom?: boolean };
+type ResizeEdges = {
+  readonly left?: boolean;
+  readonly right?: boolean;
+  readonly top?: boolean;
+  readonly bottom?: boolean;
+};
 const RESIZE_HANDLES: ReadonlyArray<{ readonly edges: ResizeEdges; readonly className: string }> = [
   { edges: { left: true }, className: "inset-y-3 -left-1 w-2 cursor-ew-resize" },
   { edges: { right: true }, className: "inset-y-3 -right-1 w-2 cursor-ew-resize" },
   { edges: { bottom: true }, className: "inset-x-3 -bottom-1 h-2 cursor-ns-resize" },
+  { edges: { top: true }, className: "inset-x-3 -top-1 h-2 cursor-ns-resize" },
+  { edges: { left: true, top: true }, className: "-top-1 -left-1 size-4 cursor-nwse-resize" },
+  { edges: { right: true, top: true }, className: "-top-1 -right-1 size-4 cursor-nesw-resize" },
   { edges: { left: true, bottom: true }, className: "-bottom-1 -left-1 size-4 cursor-nesw-resize" },
   {
     edges: { right: true, bottom: true },
@@ -53,7 +61,7 @@ const RESIZE_HANDLES: ReadonlyArray<{ readonly edges: ResizeEdges; readonly clas
 
 /**
  * A board-owned window over the canvas: drag it by its header's empty space, resize it from its
- * sides and bottom corners. Its spot and size are kept per viewer under `storageKey`.
+ * edges and corners. Its spot and size are kept per viewer under `storageKey`.
  */
 export function FloatingPanel(props: {
   readonly storageKey: string;
@@ -124,14 +132,19 @@ export function FloatingPanel(props: {
       const dy = moveEvent.clientY - start.y;
       let { w, h } = { w: start.w, h: start.h };
       let x = start.left;
+      let y = start.top;
       if (edges.right) w = clamp(start.w + dx, MIN_PANEL.w, board.clientWidth - start.left);
       if (edges.left) {
         w = clamp(start.w - dx, MIN_PANEL.w, start.left + start.w);
         x = start.left + start.w - w;
       }
       if (edges.bottom) h = clamp(start.h + dy, MIN_PANEL.h, board.clientHeight - start.top);
+      if (edges.top) {
+        h = clamp(start.h - dy, MIN_PANEL.h, start.top + start.h);
+        y = start.top + start.h - h;
+      }
       nextSize = { w, h };
-      nextPosition = { x, y: start.top };
+      nextPosition = { x, y };
       setSize(nextSize);
       setPosition(nextPosition);
     };

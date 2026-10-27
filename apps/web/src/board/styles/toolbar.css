@@ -69,8 +69,11 @@
   &[data-status="doing"] {
     --col: var(--info);
   }
-  &[data-status="blocked"] {
+  &[data-status="waiting_for_human"] {
     --col: var(--warning);
+  }
+  &[data-status="blocked"] {
+    --col: var(--destructive);
   }
   &[data-status="done"] {
     --col: var(--success);

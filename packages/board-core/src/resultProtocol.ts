@@ -224,7 +224,7 @@ const PROFILE_RULES: Record<AgentProfile, ReadonlyArray<string>> = {
     '- Give work with routing "request": one request per worker, with the complete task (the worker sees only what you send). Several requests run in parallel.',
     '- Each worker\'s result comes back as a "[Board] Work return" message. Check it. If it is not good enough, request that worker again saying what to fix; otherwise move on.',
     '- Finish with routing {"kind":"finish"} only when the whole task is done. Put the final deliverable in "data"; anything still open belongs in the summary.',
-    "- You keep the workflow kanban (see below). Keep it current: a card for each piece of work you hand out, assigned to the worker.",
+    "- You keep the workflow kanban (see below), and the board checks it on every reply: each worker you request must have an open card assigned to it, and before you finish the run every card must be done, or waiting_for_human or blocked with a reason. A reply that breaks this is sent back to you.",
   ],
 };
 
@@ -247,7 +247,7 @@ function kanbanSection(
     '  {"op":"update","id":"<card id>","status":"blocked","reason":"why"},',
     '  {"op":"delete","id":"<card id>"} ]',
     "```",
-    'Statuses: todo, doing, blocked, done. "blocked" needs a "reason". The board moves a worker\'s card to doing when you give it work and to done or blocked when its result comes back; you correct the rest.',
+    'Statuses: todo, doing, waiting_for_human, blocked, done. "waiting_for_human" (the owner must act or answer) and "blocked" need a "reason". The board moves a worker\'s card to doing when you give it work and to done or blocked when its result comes back; you correct the rest.',
     `Assignees: ${nodeNames.join(", ") || "(none)"}.`,
     "Current cards:",
     ...rows,

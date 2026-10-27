@@ -6,6 +6,7 @@ import {
   BoardInvalidRequestError,
   BoardNotFoundError,
   applyKanban,
+  kanbanDuty,
   buildAgentInstructions,
   buildCorrectionMessage,
   buildKanbanBrief,
@@ -192,18 +193,33 @@ const make = Effect.gen(function* () {
     workflow: Workflow,
     node: BoardNode,
     result: BoardResult,
+    finishingRun: boolean,
   ) {
-    if (node.profile !== "orchestrator" || !result.kanban?.length) return undefined;
+    if (node.profile !== "orchestrator") return undefined;
     let pending = 0;
     const applied = applyKanban({
       cards: yield* store.listKanban(workflow.id),
-      ops: result.kanban,
+      ops: result.kanban ?? [],
       nodes: workflow.nodes,
       actor: node.id,
       at: yield* now,
       newId: () => `pending-${(pending += 1)}`,
     });
-    return applied.ok ? undefined : `kanban: ${applied.reason}`;
+    if (!applied.ok) return `kanban: ${applied.reason}`;
+    const requested =
+      result.routing.kind === "request"
+        ? result.routing.requests.flatMap((request) => {
+            const target = workflow.nodes.find(
+              (entry) => entry.name.trim().toLowerCase() === request.to.trim().toLowerCase(),
+            );
+            return target?.profile === "worker" ? [target] : [];
+          })
+        : [];
+    return kanbanDuty({
+      cards: applied.value.cards,
+      requested,
+      finishingRun: finishingRun && result.routing.kind === "finish",
+    });
   });
   const commitKanban = Effect.fn("TaskEngine.commitKanban")(function* (
     workflow: Workflow,
@@ -267,7 +283,7 @@ const make = Effect.gen(function* () {
         yield* moveWorkerCard(
           workflow.id,
           run.definition.nodes.find((entry) => entry.id === task.nodeId),
-          [["doing"], ["todo", "blocked"]],
+          [["doing"], ["todo", "blocked", "waiting_for_human"]],
           "blocked",
           reason,
           task.cardId,
@@ -710,7 +726,12 @@ const make = Effect.gen(function* () {
             : undefined;
         if (decision && !decision.ok) reason = decision.reason;
         if (reason === undefined && result)
-          reason = yield* kanbanProblem(runWorkflow(workflow, run), node, result);
+          reason = yield* kanbanProblem(
+            runWorkflow(workflow, run),
+            node,
+            result,
+            task.kind === "run",
+          );
         if (reason !== undefined || result === undefined) {
           if (checkpoint.corrected) {
             yield* failTask(
@@ -823,11 +844,19 @@ const make = Effect.gen(function* () {
                 { ...currentRun, requests: [...currentRun.requests, ...additions] },
               );
               yield* commitKanban(runWorkflow(currentWorkflow, currentRun), node, result);
+              for (const entry of additions.filter((addition) => addition.status === "denied"))
+                yield* moveWorkerCard(
+                  task.workflowId,
+                  currentRun.definition.nodes.find((candidate) => candidate.id === entry.toId),
+                  [["todo", "doing"]],
+                  "blocked",
+                  entry.failureReason,
+                );
               for (const child of created) {
                 const cardId = yield* moveWorkerCard(
                   task.workflowId,
                   currentRun.definition.nodes.find((entry) => entry.id === child.nodeId),
-                  [["todo", "blocked"]],
+                  [["todo", "blocked", "waiting_for_human"]],
                   "doing",
                 );
                 yield* store.putTask({ ...child, cardId });
@@ -892,7 +921,7 @@ const make = Effect.gen(function* () {
               yield* moveWorkerCard(
                 task.workflowId,
                 node,
-                [["doing"], ["todo", "blocked"]],
+                [["doing"], ["todo", "blocked", "waiting_for_human"]],
                 "done",
                 undefined,
                 current.cardId,
@@ -1078,7 +1107,12 @@ const make = Effect.gen(function* () {
             yield* store.appendEvent({ kind: "workflow.upserted", workflow: next });
           }
           yield* store.appendEvent({ kind: "run.upserted", workflowId, run });
-          const cardId = yield* moveWorkerCard(workflowId, node, [["todo", "blocked"]], "doing");
+          const cardId = yield* moveWorkerCard(
+            workflowId,
+            node,
+            [["todo", "blocked", "waiting_for_human"]],
+            "doing",
+          );
           yield* store.putTask({ ...task, cardId });
           return run;
         }),

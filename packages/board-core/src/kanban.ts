@@ -1,7 +1,16 @@
 /** Per-workflow kanban. Only the orchestrator edits it (reply operations); the engine moves assigned cards. */
 
-export type KanbanStatus = "todo" | "doing" | "blocked" | "done";
-export const KANBAN_STATUSES: ReadonlyArray<KanbanStatus> = ["todo", "doing", "blocked", "done"];
+export type KanbanStatus = "todo" | "doing" | "waiting_for_human" | "blocked" | "done";
+export const KANBAN_STATUSES: ReadonlyArray<KanbanStatus> = [
+  "todo",
+  "doing",
+  "waiting_for_human",
+  "blocked",
+  "done",
+];
+/** Statuses that say why the card is stuck, so they need a "reason". */
+export const needsReason = (status: KanbanStatus) =>
+  status === "blocked" || status === "waiting_for_human";
 
 export interface KanbanCard {
   readonly id: string;
@@ -156,8 +165,8 @@ export function applyKanban(input: {
       return { ok: false, reason: `${where}: title is longer than ${MAX_CARD_TITLE} characters` };
     if (draft.body.length > MAX_CARD_BODY)
       return { ok: false, reason: `${where}: body is longer than ${MAX_CARD_BODY} characters` };
-    if (draft.status === "blocked" && !draft.reason)
-      return { ok: false, reason: `${where}: a blocked card needs a "reason"` };
+    if (needsReason(draft.status) && !draft.reason)
+      return { ok: false, reason: `${where}: a ${draft.status} card needs a "reason"` };
     if (draft.reason !== undefined && draft.reason.length > MAX_CARD_REASON)
       return { ok: false, reason: `${where}: reason is longer than ${MAX_CARD_REASON} characters` };
     return {
@@ -167,7 +176,7 @@ export function applyKanban(input: {
         title: draft.title,
         body: draft.body,
         status: draft.status,
-        ...(draft.status === "blocked" && draft.reason ? { reason: draft.reason } : {}),
+        ...(needsReason(draft.status) && draft.reason ? { reason: draft.reason } : {}),
         ...(draft.assigneeNodeId === undefined ? {} : { assigneeNodeId: draft.assigneeNodeId }),
         updatedBy: input.actor,
         updatedAt: input.at,
@@ -258,4 +267,29 @@ export function moveCard(
     updatedBy: "engine",
     updatedAt: at,
   };
+}
+
+/**
+ * What the orchestrator owes the kanban in a reply, checked on the cards as its reply leaves them:
+ * every worker it hands work to has an open card, and a finished run leaves nothing in todo or doing.
+ * Returns a reason for the correction message, or undefined when the kanban fits.
+ */
+export function kanbanDuty(input: {
+  readonly cards: ReadonlyArray<KanbanCard>;
+  readonly requested: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  readonly finishingRun: boolean;
+}): string | undefined {
+  const open = (card: KanbanCard) => card.status !== "done";
+  const missing = input.requested.filter(
+    (worker) => !input.cards.some((card) => card.assigneeNodeId === worker.id && open(card)),
+  );
+  if (missing.length > 0)
+    return `kanban: every worker you give work to needs an open card (todo, doing or blocked) assigned to it; missing for ${missing.map((worker) => worker.name).join(", ")}. Add {"op":"create","title":"...","assignee":"<name>"} to "kanban".`;
+  if (!input.finishingRun) return undefined;
+  const unfinished = input.cards.filter(
+    (card) => card.status === "todo" || card.status === "doing",
+  );
+  if (unfinished.length > 0)
+    return `kanban: before you finish the run, move every card out of todo and doing (to done, or to blocked or waiting_for_human with a "reason"): ${unfinished.map((card) => `${card.id} "${card.title}"`).join(", ")}.`;
+  return undefined;
 }

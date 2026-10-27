@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   applyKanban,
   cardOfNode,
+  kanbanDuty,
   moveCard,
   parseKanbanOps,
   type KanbanCard,
@@ -154,5 +155,44 @@ describe("engine moves", () => {
     const blocked = moveCard(cards[1]!, "blocked", "t9", "failed");
     expect(blocked).toMatchObject({ status: "blocked", reason: "failed", updatedBy: "engine" });
     expect(moveCard(blocked, "done", "t10")).not.toHaveProperty("reason");
+  });
+});
+
+describe("kanbanDuty", () => {
+  const card = (id: string, status: KanbanCard["status"], assigneeNodeId?: string): KanbanCard => ({
+    id,
+    title: id,
+    body: "",
+    status,
+    ...(status === "blocked" || status === "waiting_for_human" ? { reason: "why" } : {}),
+    ...(assigneeNodeId ? { assigneeNodeId } : {}),
+    updatedBy: "root",
+    updatedAt: "2026-10-27T00:00:00.000Z",
+  });
+  const worker = { id: "w", name: "Worker" };
+
+  it("requires an open card for every worker given work", () => {
+    expect(kanbanDuty({ cards: [], requested: [worker], finishingRun: false })).toContain(
+      "missing for Worker",
+    );
+    expect(
+      kanbanDuty({ cards: [card("c", "done", "w")], requested: [worker], finishingRun: false }),
+    ).toContain("missing for Worker");
+    expect(
+      kanbanDuty({ cards: [card("c", "todo", "w")], requested: [worker], finishingRun: false }),
+    ).toBeUndefined();
+  });
+
+  it("lets a run finish only with nothing left in todo or doing", () => {
+    expect(
+      kanbanDuty({ cards: [card("c", "doing", "w")], requested: [], finishingRun: true }),
+    ).toContain('c "c"');
+    expect(
+      kanbanDuty({
+        cards: [card("a", "done"), card("b", "blocked"), card("c", "waiting_for_human")],
+        requested: [],
+        finishingRun: true,
+      }),
+    ).toBeUndefined();
   });
 });

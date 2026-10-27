@@ -52,7 +52,7 @@ export const BoardKanbanCardSchema = Schema.Struct({
   id: Id,
   title: Schema.String,
   body: Schema.String,
-  status: Schema.Literals(["todo", "doing", "blocked", "done"]),
+  status: Schema.Literals(["todo", "doing", "waiting_for_human", "blocked", "done"]),
   reason: Schema.optionalKey(Schema.String),
   assigneeNodeId: Schema.optionalKey(Id),
   updatedBy: Schema.String,

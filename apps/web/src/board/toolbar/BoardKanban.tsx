@@ -8,6 +8,7 @@ import { IconButton } from "./IconButton";
 const LABELS: Record<KanbanStatus, string> = {
   todo: "To do",
   doing: "Doing",
+  waiting_for_human: "Waiting for human",
   blocked: "Blocked",
   done: "Done",
 };
@@ -61,8 +62,8 @@ export function BoardKanban(props: { readonly workflow: Workflow; readonly onClo
                         {card.body}
                       </p>
                     ) : null}
-                    {card.status === "blocked" && card.reason ? (
-                      <p className="break-words text-warning-foreground">{card.reason}</p>
+                    {card.reason ? (
+                      <p className="break-words text-muted-foreground italic">{card.reason}</p>
                     ) : null}
                     {assignee ? <small className="text-muted-foreground">{assignee}</small> : null}
                   </article>
