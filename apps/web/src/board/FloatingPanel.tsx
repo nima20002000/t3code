@@ -94,39 +94,51 @@ export function FloatingPanel(props: {
     }
   }
 
+  // The panel keeps its full-window layout while it animates; only a clip moves, so the chat is
+  // laid out once instead of on every frame.
+  const requested = props.maximized ?? false;
+  const [seenRequested, setSeenRequested] = useState(requested);
+  const [closing, setClosing] = useState(false);
+  if (requested !== seenRequested) {
+    setSeenRequested(requested);
+    setClosing(!requested);
+  }
+  const full = requested || closing;
   const panel = useRef<HTMLElement>(null);
-  const lastRect = useRef<DOMRect | null>(null);
-  const wasMaximized = useRef(props.maximized ?? false);
+  const floatRect = useRef<DOMRect | null>(null);
+  const animated = useRef("");
   // oxlint-disable-next-line t3code/react-effect-budget -- Measure the panel to animate between its floating and full-window rects.
   useLayoutEffect(() => {
     const element = panel.current;
     if (!element) return;
-    const next = element.getBoundingClientRect();
-    const from = lastRect.current;
-    if ((props.maximized ?? false) !== wasMaximized.current && from) {
-      wasMaximized.current = props.maximized ?? false;
-      const radius = props.maximized ? ["12px", "0px"] : ["0px", "12px"];
-      element.animate(
-        [
-          {
-            transform: `translate(${from.left - next.left}px, ${from.top - next.top}px)`,
-            width: `${from.width}px`,
-            height: `${from.height}px`,
-            borderRadius: radius[0],
-            overflow: "hidden",
-          },
-          {
-            transform: "none",
-            width: `${next.width}px`,
-            height: `${next.height}px`,
-            borderRadius: radius[1],
-            overflow: "hidden",
-          },
-        ],
-        { duration: 200, easing: "cubic-bezier(0.2, 0, 0, 1)" },
-      );
+    const rect = element.getBoundingClientRect();
+    const clip = (inner: DOMRect, radius: string) =>
+      `inset(${inner.top - rect.top}px ${rect.right - inner.right}px ${rect.bottom - inner.bottom}px ${inner.left - rect.left}px round ${radius})`;
+    const options = { duration: 200, easing: "cubic-bezier(0.2, 0, 0, 1)" };
+    if (!full) {
+      floatRect.current = rect;
+      animated.current = "";
+      return;
     }
-    lastRect.current = next;
+    const floating = floatRect.current;
+    const phase = requested ? "open" : "close";
+    if (!floating || animated.current === phase) return;
+    animated.current = phase;
+    if (requested) {
+      element.animate(
+        [{ clipPath: clip(floating, "12px") }, { clipPath: clip(rect, "0px") }],
+        options,
+      );
+      return;
+    }
+    const animation = element.animate(
+      [{ clipPath: clip(rect, "0px") }, { clipPath: clip(floating, "12px") }],
+      { ...options, fill: "forwards" },
+    );
+    animation.onfinish = () => {
+      animation.cancel();
+      setClosing(false);
+    };
   });
 
   // Drag by the header's empty space; the spot is kept per viewer.
@@ -214,7 +226,7 @@ export function FloatingPanel(props: {
     handle.addEventListener("pointercancel", end);
   };
 
-  const style: CSSProperties = props.maximized
+  const style: CSSProperties = full
     ? {}
     : {
         ...(position ? { left: position.x, top: position.y, right: "auto", bottom: "auto" } : {}),
@@ -226,20 +238,18 @@ export function FloatingPanel(props: {
       ref={panel}
       aria-label={props.label}
       className={`board-chat-panel flex flex-col border bg-background shadow-lg ${
-        props.maximized
-          ? "fixed inset-0 z-50 rounded-none"
-          : `absolute z-20 rounded-xl ${props.className}`
+        full ? "fixed inset-0 z-50 rounded-none" : `absolute z-20 rounded-xl ${props.className}`
       }`}
       style={style}
     >
-      {props.maximized ? (
+      {full ? (
         <div
           aria-hidden
           className="h-(--native-titlebar-height) shrink-0"
           style={{ WebkitAppRegion: "drag" } as CSSProperties}
         />
       ) : null}
-      {props.maximized
+      {full
         ? null
         : RESIZE_HANDLES.map((handle) => (
             <div
