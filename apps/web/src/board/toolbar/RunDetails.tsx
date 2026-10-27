@@ -2,14 +2,18 @@ import { XIcon } from "lucide-react";
 
 import type { RunRecord } from "../boardStore";
 import { IconButton } from "./IconButton";
-import { formatJson, formatRunTime, RUN_STATUS_LABELS } from "./runPresentation";
+import { formatJson, formatRunTime, RUN_STATUS_DOT, RUN_STATUS_LABELS } from "./runPresentation";
+
+const SECTION_HEADING = "mb-1 text-2xs uppercase tracking-wider text-muted-foreground";
 
 function JsonBlock(props: { readonly label: string; readonly value: unknown }) {
   if (props.value === undefined) return null;
   return (
-    <details className="board-run-json">
-      <summary>{props.label}</summary>
-      <pre>{formatJson(props.value)}</pre>
+    <details>
+      <summary className="cursor-pointer text-2xs text-muted-foreground">{props.label}</summary>
+      <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-1.5 font-mono text-2xs leading-4">
+        {formatJson(props.value)}
+      </pre>
     </details>
   );
 }
@@ -18,14 +22,20 @@ function JsonBlock(props: { readonly label: string; readonly value: unknown }) {
 export function RunDetails(props: { readonly run: RunRecord; readonly onClose: () => void }) {
   const { run } = props;
   return (
-    <aside className="board-run-details" aria-label="Run details">
-      <header>
-        <div className="board-run-title">
-          <span className="board-run-status" data-status={run.status}>
-            <span className="runs-selector-dot" aria-hidden="true" />
+    <aside
+      className="board-run-details flex flex-col rounded-xl border border-border bg-card text-sm text-foreground shadow-lg"
+      aria-label="Run details"
+    >
+      <header className="flex items-center justify-between gap-2 border-b border-border py-2 pr-2 pl-3">
+        <div className="grid gap-0.5">
+          <span className="inline-flex items-center gap-1.5 text-xs">
+            <span
+              className={`size-2 flex-none rounded-full ${RUN_STATUS_DOT[run.status]}`}
+              aria-hidden="true"
+            />
             {RUN_STATUS_LABELS[run.status]}
           </span>
-          <small>
+          <small className="text-2xs text-muted-foreground">
             {formatRunTime(run.startedAt)}
             {run.endedAt ? ` - ${formatRunTime(run.endedAt)}` : ""}
           </small>
@@ -34,30 +44,35 @@ export function RunDetails(props: { readonly run: RunRecord; readonly onClose: (
           <XIcon />
         </IconButton>
       </header>
-      <div className="board-run-body">
+      <div className="grid min-h-0 flex-1 content-start gap-3.5 overflow-y-auto p-3">
         <section>
-          <h3>Task</h3>
-          <p>
+          <h3 className={SECTION_HEADING}>Task</h3>
+          <p className="break-words">
             <strong>{run.nodeName}</strong>: {run.task}
           </p>
         </section>
         <section>
-          <h3>Requests ({run.requests.length})</h3>
-          {run.requests.length === 0 ? <p className="board-run-muted">No requests made.</p> : null}
-          <ol>
+          <h3 className={SECTION_HEADING}>Requests ({run.requests.length})</h3>
+          {run.requests.length === 0 ? (
+            <p className="text-2xs text-muted-foreground">No requests made.</p>
+          ) : null}
+          <ol className="grid gap-2">
             {run.requests.map((request) => (
-              <li key={request.id} data-status={request.status}>
-                <div className="board-run-request-head">
+              <li
+                key={request.id}
+                className={`grid gap-1 rounded-lg border p-2 ${request.status === "denied" ? "border-destructive/45" : "border-border"}`}
+              >
+                <div className="flex justify-between gap-2 font-semibold">
                   <span>
                     {request.from} {"->"} {request.to}
                   </span>
-                  <small>{request.status}</small>
+                  <small className="font-normal text-muted-foreground">{request.status}</small>
                 </div>
-                <p>{request.task}</p>
+                <p className="break-words">{request.task}</p>
                 <JsonBlock label="Request input" value={request.input} />
                 {request.status === "returned" ? (
                   <>
-                    <p className="board-run-return">
+                    <p className="break-words text-success">
                       Return ({formatRunTime(request.returnedAt)}): {request.returnSummary}
                     </p>
                     <JsonBlock label="Return data" value={request.returnData} />
@@ -68,14 +83,16 @@ export function RunDetails(props: { readonly run: RunRecord; readonly onClose: (
           </ol>
         </section>
         <section>
-          <h3>Final result</h3>
+          <h3 className={SECTION_HEADING}>Final result</h3>
           {run.status === "running" ? (
-            <p className="board-run-muted">Still running.</p>
+            <p className="text-2xs text-muted-foreground">Still running.</p>
           ) : run.summary === undefined ? (
-            <p className="board-run-muted">No final result ({RUN_STATUS_LABELS[run.status]}).</p>
+            <p className="text-2xs text-muted-foreground">
+              No final result ({RUN_STATUS_LABELS[run.status]}).
+            </p>
           ) : (
             <>
-              <p>{run.summary}</p>
+              <p className="break-words">{run.summary}</p>
               <JsonBlock label="Final data" value={run.data} />
             </>
           )}

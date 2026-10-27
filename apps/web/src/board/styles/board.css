@@ -1,0 +1,3 @@
+/* Board-owned styles, imported once from index.css so Tailwind and t3's lint know every class. */
+@import "./canvas.css";
+@import "./toolbar.css";

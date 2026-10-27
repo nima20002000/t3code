@@ -37,7 +37,6 @@ import { ScheduleButton } from "./toolbar/ScheduleButton";
 import { WorkflowMenu } from "./toolbar/WorkflowMenu";
 import { WorkflowName } from "./toolbar/WorkflowName";
 import { WorkflowSettings } from "./toolbar/WorkflowSettings";
-import "./toolbar/boardToolbar.css";
 import { Button, Tooltip, TooltipPopup, TooltipTrigger } from "./upstream";
 
 const COLLAPSED_KEY = "board:controls-collapsed";
@@ -75,9 +74,9 @@ export function BoardTitle(props: {
 }) {
   const workflow = useCurrentWorkflow();
   return (
-    <div className="board-topbar-start">
+    <div className="flex min-w-0 flex-1 items-center gap-3">
       <BackButton />
-      <div className="board-title">
+      <div className="flex min-w-0 flex-col items-start">
         <WorkflowName
           key={workflow.name}
           editing={props.editing}
@@ -131,8 +130,12 @@ export function BoardToolbar(props: {
 
   if (collapsed) {
     return (
-      <div className="board-control-cluster">
-        <div className="board-bar" role="toolbar" aria-label="Board controls">
+      <div className="flex flex-wrap justify-end gap-2">
+        <div
+          className="flex items-center gap-0.5 rounded-lg border border-border bg-card p-1 shadow-lg"
+          role="toolbar"
+          aria-label="Board controls"
+        >
           <RunControl />
           {collapseButton}
         </div>
@@ -141,8 +144,12 @@ export function BoardToolbar(props: {
   }
 
   return (
-    <div className="board-control-cluster">
-      <div className="board-bar" role="toolbar" aria-label="Draft actions">
+    <div className="flex flex-wrap justify-end gap-2">
+      <div
+        className="flex items-center gap-0.5 rounded-lg border border-border bg-card p-1 shadow-lg"
+        role="toolbar"
+        aria-label="Draft actions"
+      >
         <IconButton
           label="Undo"
           disabled={!canUndo || pending || status !== "connected"}
@@ -167,7 +174,11 @@ export function BoardToolbar(props: {
         <Tooltip>
           <TooltipTrigger
             render={
-              <span className="board-saved" role="status" aria-label={savedLabel}>
+              <span
+                className="inline-flex items-center gap-1 px-1.5 text-2xs text-muted-foreground [&>svg]:size-3"
+                role="status"
+                aria-label={savedLabel}
+              >
                 <SavedIcon aria-hidden="true" />
               </span>
             }
@@ -175,14 +186,22 @@ export function BoardToolbar(props: {
           <TooltipPopup>{error ?? savedLabel}</TooltipPopup>
         </Tooltip>
       </div>
-      <div className="board-bar" role="toolbar" aria-label="Board controls">
+      <div
+        className="flex items-center gap-0.5 rounded-lg border border-border bg-card p-1 shadow-lg"
+        role="toolbar"
+        aria-label="Board controls"
+      >
         <RunsSelector
           runs={workflow.runs}
           selectedRunId={props.selectedRunId}
           onSelect={props.onSelectRun}
         />
       </div>
-      <div className="board-bar" role="toolbar" aria-label="Workflow controls">
+      <div
+        className="flex items-center gap-0.5 rounded-lg border border-border bg-card p-1 shadow-lg"
+        role="toolbar"
+        aria-label="Workflow controls"
+      >
         <WorkflowMenu onRename={() => window.setTimeout(props.onRename, 150)} />
         <IconButton label="Add agent" onClick={props.onAddAgent}>
           <PlusIcon />
@@ -200,7 +219,7 @@ export function BoardToolbar(props: {
         <ActivitiesButton log={workflow.log} />
         <IconButton
           label="Kanban"
-          className="board-kanban-toggle"
+          variant={props.kanban ? "secondary" : "ghost"}
           aria-pressed={props.kanban}
           onClick={props.onToggleKanban}
         >

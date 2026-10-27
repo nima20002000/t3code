@@ -48,7 +48,6 @@ import {
 import { SignalEdgeShape, type EdgePulse } from "./foreman/SignalEdgeShape";
 import { AGENT_NODE_SIZE, useFloatingCurve } from "./foreman/signalEdge";
 import { useHoverControls } from "./foreman/useHoverControls";
-import "./foreman/foreman.css";
 import { BoardTitle, BoardToolbar } from "./BoardToolbar";
 import { useBoardMachines } from "./useBoardMachines";
 import { BoardKanban } from "./toolbar/BoardKanban";
@@ -118,10 +117,15 @@ function AddNodeForm({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <div className="board-popover" role="dialog" aria-label="Add existing thread">
-      <label>
+    <div
+      className="absolute top-17 left-5 z-10 grid w-96 max-w-[calc(100%-2.5rem)] gap-3 rounded-sm border bg-card p-3.5 text-foreground shadow-lg"
+      role="dialog"
+      aria-label="Add existing thread"
+    >
+      <label className="grid gap-1 text-xs font-semibold text-muted-foreground">
         Machine
         <select
+          className="h-8 w-full rounded-md border bg-background px-2 text-sm font-normal text-foreground"
           value={environmentId}
           onChange={(event) => {
             setEnvironmentId(event.target.value as EnvironmentId | "");
@@ -138,10 +142,11 @@ function AddNodeForm({ onDone }: { onDone: () => void }) {
           ))}
         </select>
       </label>
-      <label>
+      <label className="grid gap-1 text-xs font-semibold text-muted-foreground">
         Thread
         {environmentThreads.length ? (
           <select
+            className="h-8 w-full rounded-md border bg-background px-2 text-sm font-normal text-foreground"
             value={threadId}
             onChange={(event) => setThreadId(event.target.value as ThreadId | "")}
           >
@@ -162,7 +167,7 @@ function AddNodeForm({ onDone }: { onDone: () => void }) {
         )}
       </label>
       {environmentThreads.length === 0 ? (
-        <label>
+        <label className="grid gap-1 text-xs font-semibold text-muted-foreground">
           Project ID
           <input
             className="h-8 rounded-md border bg-background px-2 text-sm"
@@ -171,7 +176,7 @@ function AddNodeForm({ onDone }: { onDone: () => void }) {
           />
         </label>
       ) : null}
-      <label>
+      <label className="grid gap-1 text-xs font-semibold text-muted-foreground">
         Name
         <input
           className="h-8 rounded-md border bg-background px-2 text-sm font-normal text-foreground"
@@ -538,7 +543,7 @@ function BoardCanvasPage() {
 
   return (
     <SidebarInset className="h-dvh">
-      <WorkspacePageHeader electron={isElectron} className="board-header border-b border-border">
+      <WorkspacePageHeader electron={isElectron} className="border-b border-border">
         <BoardTitle editing={editingName} onEditingChange={setEditingName} />
       </WorkspacePageHeader>
       <div className={`board-canvas relative min-h-0 flex-1${connecting ? " is-connecting" : ""}`}>

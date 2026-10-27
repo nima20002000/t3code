@@ -26,7 +26,7 @@ export function WorkflowName(props: {
             render={
               <button
                 type="button"
-                className="board-name-button"
+                className="board-name-text cursor-text truncate text-left"
                 onClick={() => {
                   setDraft(props.name);
                   props.onEditingChange(true);
@@ -40,7 +40,7 @@ export function WorkflowName(props: {
         </Tooltip>
       ) : (
         <input
-          className="board-name-field"
+          className="board-name-text"
           aria-label="Workflow name"
           value={draft}
           autoFocus

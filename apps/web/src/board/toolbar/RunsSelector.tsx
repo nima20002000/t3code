@@ -1,7 +1,7 @@
 import { CheckIcon, ListIcon } from "lucide-react";
 
 import type { RunRecord } from "../boardStore";
-import { formatRunTime, RUN_STATUS_LABELS } from "./runPresentation";
+import { formatRunTime, RUN_STATUS_DOT, RUN_STATUS_LABELS } from "./runPresentation";
 import { Button, Popover, PopoverPopup, PopoverTrigger } from "../upstream";
 
 /** Foreman-style Runs selector: lists past runs; picking one shows its details over the board. */
@@ -13,16 +13,23 @@ export function RunsSelector(props: {
   return (
     <Popover>
       <PopoverTrigger
-        render={<Button size="icon-sm" variant="ghost" className="runs-selector-trigger" />}
+        render={<Button size="icon-sm" variant="ghost" />}
         aria-label="Runs"
         title="Runs"
       >
         <ListIcon />
       </PopoverTrigger>
       <PopoverPopup width="lg" align="end" padding="none">
-        <div role="menu" aria-label="Runs" className="runs-selector-menu">
+        <div
+          role="menu"
+          aria-label="Runs"
+          className="max-h-[60vh] overflow-y-auto overscroll-contain"
+        >
           {props.runs.length > 0 ? (
-            <div className="runs-selector-head" aria-hidden="true">
+            <div
+              className="runs-selector-row sticky top-0 z-1 min-h-7.5 border-b border-border bg-popover text-2xs tracking-wide text-muted-foreground uppercase"
+              aria-hidden="true"
+            >
               <span />
               <span>Status</span>
               <span>Started</span>
@@ -33,10 +40,10 @@ export function RunsSelector(props: {
             type="button"
             role="menuitemradio"
             aria-checked={props.selectedRunId === null}
-            className="runs-selector-option"
+            className={`runs-selector-row min-h-9.5 cursor-pointer border-b border-border/50 text-xs whitespace-nowrap hover:bg-accent focus-visible:bg-accent ${props.selectedRunId === null ? "font-semibold" : ""}`}
             onClick={() => props.onSelect(null)}
           >
-            <span className="runs-selector-mark" aria-hidden="true">
+            <span className="text-primary" aria-hidden="true">
               {props.selectedRunId === null ? <CheckIcon size={12} /> : null}
             </span>
             <span style={{ gridColumn: "2 / -1" }}>Workflow (no run selected)</span>
@@ -47,22 +54,26 @@ export function RunsSelector(props: {
               type="button"
               role="menuitemradio"
               aria-checked={props.selectedRunId === run.id}
-              className="runs-selector-option"
-              data-status={run.status}
+              className={`runs-selector-row min-h-9.5 cursor-pointer border-b border-border/50 text-xs whitespace-nowrap hover:bg-accent focus-visible:bg-accent ${props.selectedRunId === run.id ? "font-semibold" : ""}`}
               onClick={() => props.onSelect(run.id)}
             >
-              <span className="runs-selector-mark" aria-hidden="true">
+              <span className="text-primary" aria-hidden="true">
                 {props.selectedRunId === run.id ? <CheckIcon size={12} /> : null}
               </span>
-              <span className="runs-selector-status">
-                <span className="runs-selector-dot" aria-hidden="true" />
+              <span className="inline-flex items-center gap-1.5 text-xs">
+                <span
+                  className={`size-2 flex-none rounded-full ${RUN_STATUS_DOT[run.status]}`}
+                  aria-hidden="true"
+                />
                 {RUN_STATUS_LABELS[run.status]}
               </span>
-              <span className="runs-selector-time">{formatRunTime(run.startedAt)}</span>
-              <span className="runs-selector-entry">{run.nodeName}</span>
+              <span>{formatRunTime(run.startedAt)}</span>
+              <span className="text-muted-foreground">{run.nodeName}</span>
             </button>
           ))}
-          {props.runs.length === 0 ? <p className="runs-selector-state">No runs yet</p> : null}
+          {props.runs.length === 0 ? (
+            <p className="m-0 px-3 py-2 text-xs text-muted-foreground">No runs yet</p>
+          ) : null}
         </div>
       </PopoverPopup>
     </Popover>

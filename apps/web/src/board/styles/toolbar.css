@@ -1,0 +1,78 @@
+/* Board toolbar and panels. Tailwind @utility declarations only; the rest is plain utilities in the TSX. */
+
+@utility board-name {
+  display: grid;
+  min-width: 0;
+  max-width: min(24rem, 40vw);
+  & > * {
+    grid-area: 1 / 1;
+    min-width: 0;
+  }
+}
+
+@utility board-name-text {
+  width: 100%;
+  max-width: 100%;
+  padding: 4px 0;
+  background: transparent;
+  color: var(--foreground);
+  font: 600 15px/22px var(--font-sans);
+  &:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 3px;
+  }
+}
+
+@utility board-floating-controls {
+  position: absolute;
+  z-index: 5;
+  inset: 0.75rem 0.75rem auto;
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
+  & > * {
+    pointer-events: auto;
+  }
+}
+
+@utility runs-selector-row {
+  display: grid;
+  grid-template-columns: 14px 92px minmax(0, 1fr) 84px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding-inline: 12px;
+  text-align: start;
+  & > * {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+@utility board-run-details {
+  position: absolute;
+  z-index: 4;
+  top: 4.5rem;
+  right: 1rem;
+  bottom: 1rem;
+  width: min(26rem, calc(100% - 2rem));
+}
+
+@utility board-kanban-column {
+  --col: var(--muted-foreground);
+  border: 1px solid color-mix(in srgb, var(--col) 45%, var(--border));
+  border-top: 4px solid var(--col);
+  background: color-mix(in srgb, var(--col) 10%, var(--background));
+  &[data-status="working"] {
+    --col: var(--info);
+  }
+  &[data-status="waiting"] {
+    --col: var(--warning);
+  }
+  &[data-status="disconnected"] {
+    --col: var(--destructive);
+  }
+}

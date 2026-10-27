@@ -111,7 +111,8 @@ export function AgentNodeView({
               render={
                 <button
                   type="button"
-                  className={`n-agent-action n-agent-action--${action.slot} nodrag nopan`}
+                  className="n-agent-action nodrag nopan"
+                  data-slot={action.slot}
                   aria-label={action.label}
                   onClick={(event) => {
                     event.stopPropagation();

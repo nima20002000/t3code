@@ -33,6 +33,9 @@ jobs:
       - name: Check the fork boundary
         run: node scripts/fork-boundary.mjs
 
+      - name: Lint board code with t3's rules
+        run: vp lint --report-unused-disable-directives packages/board-core apps/server/src/board apps/web/src/board scripts/board-test.mjs scripts/fork-boundary.mjs
+
       # tsc build info is keyed by file content, so an unchanged package is skipped across runs.
       - uses: actions/cache@v4
         with:

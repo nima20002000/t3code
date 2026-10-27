@@ -8,6 +8,14 @@ export const RUN_STATUS_LABELS: Record<RunStatus, string> = {
   failed: "Failed",
 };
 
+export const RUN_STATUS_DOT: Record<RunStatus, string> = {
+  running: "bg-info",
+  stopping: "bg-muted-foreground",
+  finished: "bg-success",
+  stopped: "bg-warning",
+  failed: "bg-destructive",
+};
+
 export function formatRunTime(iso: string | undefined): string {
   if (!iso) return "";
   const date = new Date(iso);

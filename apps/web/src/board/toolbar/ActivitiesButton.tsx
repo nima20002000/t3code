@@ -13,16 +13,31 @@ export function ActivitiesButton(props: { readonly log: ReadonlyArray<BoardLogEn
         <HistoryIcon />
       </PopoverTrigger>
       <PopoverPopup width="lg" align="end" padding="none">
-        <div className="board-activities">
-          <h2>Activities</h2>
+        <div className="flex max-h-[60vh] flex-col">
+          <h2 className="border-b border-border px-3 py-2.5 text-sm font-semibold">Activities</h2>
           {props.log.length === 0 ? (
-            <p className="board-run-muted">Nothing has happened yet.</p>
+            <p className="px-3 py-2.5 text-2xs text-muted-foreground">Nothing has happened yet.</p>
           ) : null}
-          <ol>
+          <ol className="overflow-y-auto">
             {props.log.map((entry) => (
-              <li key={entry.id} data-kind={entry.kind}>
-                <time dateTime={entry.at}>{formatRunTime(entry.at)}</time>
-                <span>{entry.text}</span>
+              <li
+                key={entry.id}
+                className="grid gap-0.5 border-b border-border/50 px-3 py-2 text-xs break-words"
+              >
+                <time dateTime={entry.at} className="text-2xs text-muted-foreground">
+                  {formatRunTime(entry.at)}
+                </time>
+                <span
+                  className={
+                    entry.kind === "error"
+                      ? "text-destructive-foreground"
+                      : entry.kind === "run"
+                        ? "font-semibold"
+                        : undefined
+                  }
+                >
+                  {entry.text}
+                </span>
               </li>
             ))}
           </ol>

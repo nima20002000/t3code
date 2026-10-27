@@ -25,14 +25,22 @@ export function BoardKanban(props: { readonly workflow: Workflow }) {
   const navigate = useNavigate();
   const cards = useNodeCards(props.workflow);
   return (
-    <section className="board-kanban" aria-label="Kanban">
-      <div className="board-kanban-columns">
+    <section
+      className="absolute inset-0 box-border bg-background px-4 pt-19 pb-4"
+      aria-label="Kanban"
+    >
+      <div className="grid h-full auto-cols-fr grid-flow-col gap-2">
         {COLUMNS.map((column) => {
           const columnCards = cards.filter((card) => column.states.includes(card.view.state));
           return (
-            <div key={column.status} className="board-kanban-column" data-status={column.status}>
-              <h3>
-                {column.label} <small>{columnCards.length}</small>
+            <div
+              key={column.status}
+              className="board-kanban-column flex min-h-0 min-w-0 flex-col gap-2 overflow-auto rounded-lg p-2.5"
+              data-status={column.status}
+            >
+              <h3 className="text-sm break-words">
+                {column.label}{" "}
+                <small className="font-normal text-muted-foreground">{columnCards.length}</small>
               </h3>
               {columnCards.map(({ node, view, machine, model, instanceId }) => (
                 <Tooltip key={node.id}>
@@ -40,7 +48,7 @@ export function BoardKanban(props: { readonly workflow: Workflow }) {
                     render={
                       <button
                         type="button"
-                        className="board-kanban-card"
+                        className="grid gap-0.5 rounded-lg border border-border bg-card px-2.5 py-2 text-left text-xs text-foreground hover:border-ring"
                         onClick={() =>
                           void navigate({
                             to: "/$environmentId/$threadId",
@@ -51,9 +59,9 @@ export function BoardKanban(props: { readonly workflow: Workflow }) {
                         }
                       >
                         <strong>{node.name}</strong>
-                        <span>{view.label}</span>
-                        <span>{machine}</span>
-                        <small>
+                        <span className="break-words text-muted-foreground">{view.label}</span>
+                        <span className="break-words text-muted-foreground">{machine}</span>
+                        <small className="break-words text-muted-foreground">
                           {[instanceId, model].filter(Boolean).join(" / ") || "Thread not found"}
                         </small>
                       </button>

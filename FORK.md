@@ -21,6 +21,7 @@ a merge (the server route is reserved for the later server phase):
 - `apps/web/src/routeTree.gen.ts`: generated board route registration.
 - `apps/server/scripts/migrate-dev-db.ts` and `apps/server/scripts/migrate-dev-db.test.ts`: dev seeding
   also clears the board execution and peer tables.
+- `apps/web/src/index.css`: one `@import` of `board/styles/board.css`, so Tailwind and the lint rules know the board's classes.
 - `AGENTS.md`: one paragraph pointing agents at this file and the board folders.
 - `pnpm-lock.yaml`: workspace and board dependency lock entries.
 

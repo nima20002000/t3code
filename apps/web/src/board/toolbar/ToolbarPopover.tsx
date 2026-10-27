@@ -22,7 +22,7 @@ export function ToolbarPopover(props: {
       >
         {props.icon}
         {props.badge ? (
-          <span className="ml-0.5 min-w-4 rounded-full bg-primary px-1 text-center text-[10px] leading-4 text-primary-foreground">
+          <span className="ml-0.5 min-w-4 rounded-full bg-primary px-1 text-center text-3xs leading-4 text-primary-foreground">
             {props.badge}
           </span>
         ) : null}
