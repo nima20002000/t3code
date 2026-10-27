@@ -43,7 +43,7 @@ export interface PendingWake {
 export interface BoardLogEntry {
   readonly id: string;
   readonly at: string;
-  readonly kind: "wake" | "result" | "info";
+  readonly kind: "wake" | "result" | "info" | "run" | "error";
   readonly text: string;
 }
 
