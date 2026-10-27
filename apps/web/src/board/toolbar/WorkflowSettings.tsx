@@ -2,16 +2,19 @@ import { ProviderInstanceId, type EnvironmentId, type RuntimeMode } from "@t3too
 import { createModelSelection } from "@t3tools/shared/model";
 import { SlidersHorizontalIcon } from "lucide-react";
 
-import { ProviderModelPicker } from "../../components/chat/ProviderModelPicker";
-import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
-import {
-  deriveProviderInstanceEntries,
-  sortProviderInstanceEntries,
-} from "../../providerInstances";
-import { useConnectedEnvironmentIds, useEnvironmentProviders } from "../../state/environments";
-import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { updateWorkflowSettings, useCurrentWorkflow } from "../boardStore";
 import { IconButton } from "./IconButton";
+import {
+  EMPTY_SERVER_PROVIDERS,
+  Popover,
+  PopoverPopup,
+  PopoverTrigger,
+  ProviderModelPicker,
+  deriveProviderInstanceEntries,
+  sortProviderInstanceEntries,
+  useConnectedEnvironmentIds,
+  useEnvironmentProviders,
+} from "../upstream";
 
 const FIELD_CLASS = "h-8 w-full rounded-md border bg-background px-2 text-sm";
 

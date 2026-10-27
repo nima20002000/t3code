@@ -12,13 +12,12 @@ import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import type { SqlError } from "effect/sql/SqlError";
-import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { forkParked } from "../serverActivation.ts";
 import * as BoardStore from "./BoardStore.ts";
 import * as DriverRegistry from "./DriverRegistry.ts";
 import * as PeerPairing from "./remote/PeerPairing.ts";
 import * as PeerStore from "./remote/PeerStore.ts";
 import * as RemoteDriver from "./remote/RemoteDriver.ts";
+import { ServerEnvironment, forkParked } from "./upstream.ts";
 
 export class BoardPeers extends Context.Service<
   BoardPeers,

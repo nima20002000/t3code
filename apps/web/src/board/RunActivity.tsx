@@ -2,8 +2,8 @@ import type { RunRequestRecord, Workflow } from "@t3tools/board-core/boardModel"
 import { runToShow } from "@t3tools/board-core/runView";
 import { XIcon } from "lucide-react";
 
-import { Button } from "../components/ui/button";
 import { formatRunTime } from "./toolbar/runPresentation";
+import { Button } from "./upstream";
 
 export type ActivityTarget =
   | { readonly kind: "node"; readonly nodeId: string }

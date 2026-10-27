@@ -1,9 +1,12 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { ReactNode } from "react";
-
-import { Button } from "../../components/ui/button";
-import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
-import { useEnvironmentIdentities } from "../../state/environments";
+import {
+  Button,
+  Popover,
+  PopoverPopup,
+  PopoverTrigger,
+  useEnvironmentIdentities,
+} from "../upstream";
 
 /** Foreman-style toolbar entry: an icon button that opens a popover. */
 export function ToolbarPopover(props: {

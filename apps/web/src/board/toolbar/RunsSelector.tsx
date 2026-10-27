@@ -1,9 +1,8 @@
 import { CheckIcon, ChevronDownIcon } from "lucide-react";
 
-import { Button } from "../../components/ui/button";
-import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 import type { RunRecord } from "../boardStore";
 import { formatRunTime, RUN_STATUS_LABELS } from "./runPresentation";
+import { Button, Popover, PopoverPopup, PopoverTrigger } from "../upstream";
 
 /** Foreman-style Runs selector: lists past runs; picking one shows its details over the board. */
 export function RunsSelector(props: {

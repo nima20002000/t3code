@@ -2,14 +2,7 @@ import { XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 
-import ChatView from "../components/ChatView";
-import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
-import { Textarea } from "../components/ui/textarea";
-import { useProject, useThreadShells } from "../state/entities";
-import { useConnectedEnvironmentIds, useEnvironmentIdentities } from "../state/environments";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { useRightPanelStore } from "../rightPanelStore";
 import { useSendBoardInstructions } from "./useSendBoardInstructions";
 import {
   removeNode,
@@ -24,6 +17,17 @@ import {
   connectedNodeNames,
   incomingNodeNames,
 } from "@t3tools/board-core/resultProtocol";
+import {
+  Button,
+  ChatView,
+  Input,
+  Textarea,
+  useConnectedEnvironmentIds,
+  useEnvironmentIdentities,
+  useProject,
+  useRightPanelStore,
+  useThreadShells,
+} from "./upstream";
 
 function InfoLine({ label, value }: { readonly label: string; readonly value: string }) {
   return (

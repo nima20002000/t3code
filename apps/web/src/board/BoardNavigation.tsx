@@ -1,15 +1,16 @@
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { WorkflowIcon } from "lucide-react";
 import { memo, type ComponentProps } from "react";
-
 import {
   Sidebar,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  Tooltip,
+  TooltipPopup,
+  TooltipTrigger,
   useSidebar,
-} from "../components/ui/sidebar";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
+} from "./upstream";
 
 export function boardHidesSidebar(pathname: string) {
   return pathname === "/board";

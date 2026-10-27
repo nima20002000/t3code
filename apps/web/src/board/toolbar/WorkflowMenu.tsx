@@ -1,6 +1,14 @@
 import { CopyIcon, PencilIcon, PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
 
 import {
+  createNewWorkflow,
+  duplicateWorkflow,
+  removeWorkflow,
+  setCurrentWorkflow,
+  useBoards,
+} from "../boardStore";
+import { IconButton } from "./IconButton";
+import {
   Menu,
   MenuGroup,
   MenuGroupLabel,
@@ -10,15 +18,7 @@ import {
   MenuRadioItem,
   MenuSeparator,
   MenuTrigger,
-} from "../../components/ui/menu";
-import {
-  createNewWorkflow,
-  duplicateWorkflow,
-  removeWorkflow,
-  setCurrentWorkflow,
-  useBoards,
-} from "../boardStore";
-import { IconButton } from "./IconButton";
+} from "../upstream";
 
 /** Foreman's gear "Workflow actions" menu, plus a switcher between workflows. */
 export function WorkflowMenu(props: { readonly onRename: () => void }) {

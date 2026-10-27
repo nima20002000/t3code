@@ -1,9 +1,9 @@
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as BoardStore from "./BoardStore.ts";
 import * as TaskEngine from "./TaskEngine.ts";
+import { Scheduler } from "./upstream.ts";
 
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {

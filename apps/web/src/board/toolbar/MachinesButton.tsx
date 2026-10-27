@@ -1,12 +1,10 @@
 import { MonitorIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
-import { Button } from "../../components/ui/button";
-import { Input } from "../../components/ui/input";
-import { usePrimaryEnvironment } from "../../state/environments";
 import { runBoardMutation } from "../boardApi";
 import { useBoardPeers } from "../boardStore";
 import { ToolbarPopover } from "./ToolbarPopover";
+import { Button, Input, usePrimaryEnvironment } from "../upstream";
 
 export function MachinesButton() {
   const peers = useBoardPeers();

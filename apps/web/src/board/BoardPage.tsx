@@ -19,11 +19,6 @@ import { ActivityIcon, MessageSquareIcon, SettingsIcon } from "lucide-react";
 import { createContext, useContext, useEffect, useState } from "react";
 import type { EdgeRunView, NodeRunView } from "@t3tools/board-core/runView";
 
-import { SidebarInset } from "../components/ui/sidebar";
-import { Button } from "../components/ui/button";
-import { useThreadShells } from "../state/entities";
-import { useConnectedEnvironmentIds, useEnvironmentIdentities } from "../state/environments";
-import { buildThreadRouteParams } from "../threadRoutes";
 import { NodeSettingsPanel } from "./NodeSettingsPanel";
 import { AddAgentDialog } from "./AddAgentDialog";
 import {
@@ -55,13 +50,21 @@ import { SignalEdgeShape, type EdgePulse } from "./foreman/SignalEdgeShape";
 import { AGENT_NODE_SIZE, useFloatingCurve } from "./foreman/signalEdge";
 import "./foreman/foreman.css";
 import { BoardToolbar } from "./BoardToolbar";
-import { randomUUID } from "../lib/utils";
 import { useBoardMachines } from "./useBoardMachines";
 import { BoardKanban } from "./toolbar/BoardKanban";
 import { useNodeRunViews } from "./toolbar/useNodeStatuses";
 import { RunActivityCard, type ActivityTarget } from "./RunActivity";
 import { RunDetails } from "./toolbar/RunDetails";
 import { useBoardPending } from "./boardApi";
+import {
+  Button,
+  SidebarInset,
+  buildThreadRouteParams,
+  randomUUID,
+  useConnectedEnvironmentIds,
+  useEnvironmentIdentities,
+  useThreadShells,
+} from "./upstream";
 
 const ACTIVE_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 

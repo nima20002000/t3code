@@ -10,13 +10,15 @@ import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 
-import { layer as primaryHttpLayer } from "../environments/primary/httpLayer";
-import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary/target";
-import { appAtomRegistry } from "../rpc/atomRegistry";
-import { readPrimaryEnvironmentId } from "../state/environments";
-import { environmentSummaries } from "../state/presentation";
-import { readPreparedConnection } from "../state/session";
 import type { BoardEvent } from "@t3tools/board-core/http";
+import {
+  appAtomRegistry,
+  environmentSummaries,
+  primaryHttpLayer,
+  readPreparedConnection,
+  readPrimaryEnvironmentId,
+  resolvePrimaryEnvironmentHttpUrl,
+} from "./upstream";
 
 const primaryRuntime = ManagedRuntime.make(primaryHttpLayer);
 const remoteRuntime = ManagedRuntime.make(

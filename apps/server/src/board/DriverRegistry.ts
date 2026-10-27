@@ -4,11 +4,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
-import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as LocalDriver from "./LocalDriver.ts";
 import * as BoardStore from "./BoardStore.ts";
 import * as PeerStore from "./remote/PeerStore.ts";
 import * as RemoteDriver from "./remote/RemoteDriver.ts";
+import { ServerEnvironment } from "./upstream.ts";
 
 export class DriverRegistry extends Context.Service<
   DriverRegistry,

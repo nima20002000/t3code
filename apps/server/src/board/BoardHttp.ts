@@ -10,7 +10,6 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import type { SqlError } from "effect/sql/SqlError";
-import * as AuthHttp from "../auth/http.ts";
 import * as BoardScheduler from "./BoardScheduler.ts";
 import * as BoardPeers from "./BoardPeers.ts";
 import * as BoardService from "./BoardService.ts";
@@ -18,6 +17,7 @@ import * as BoardStore from "./BoardStore.ts";
 import * as DriverRegistry from "./DriverRegistry.ts";
 import * as TaskEngine from "./TaskEngine.ts";
 import type { BoardConflictError, BoardInvalidRequestError } from "@t3tools/board-core";
+import { AuthHttp } from "./upstream.ts";
 
 type ServiceError =
   | SqlError

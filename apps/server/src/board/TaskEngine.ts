@@ -33,9 +33,9 @@ import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type { SqlError } from "effect/sql/SqlError";
-import { forkParked } from "../serverActivation.ts";
 import * as BoardStore from "./BoardStore.ts";
 import * as DriverRegistry from "./DriverRegistry.ts";
+import { forkParked } from "./upstream.ts";
 
 type EngineError =
   | BoardNotFoundError

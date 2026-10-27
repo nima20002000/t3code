@@ -1,11 +1,10 @@
 import { ClockIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
-import { Button } from "../../components/ui/button";
-import { randomUUID } from "../../lib/utils";
 import { runBoardMutation } from "../boardApi";
 import { useBoardSchedules, useCurrentWorkflow, type BoardNode } from "../boardStore";
 import { ToolbarPopover } from "./ToolbarPopover";
+import { Button, randomUUID } from "../upstream";
 
 const FIELD_CLASS = "h-8 w-full rounded-md border bg-background px-2 text-sm";
 

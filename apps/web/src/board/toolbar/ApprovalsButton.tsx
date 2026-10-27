@@ -12,18 +12,20 @@ import {
 import { BellIcon } from "lucide-react";
 import { useState } from "react";
 
-import { Button } from "../../components/ui/button";
-import {
-  buildPendingUserInputAnswers,
-  type PendingUserInputDraftAnswer,
-} from "../../pendingUserInput";
-import { derivePendingApprovals, derivePendingUserInputs } from "../../session-logic";
-import { useQuietThreadShells } from "../../state/entities";
-import { readEnvironmentScope } from "../../state/session";
-import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
-import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import type { BoardNode } from "../boardStore";
 import { ToolbarPopover, useMachineLabel } from "./ToolbarPopover";
+import {
+  Button,
+  type PendingUserInputDraftAnswer,
+  buildPendingUserInputAnswers,
+  derivePendingApprovals,
+  derivePendingUserInputs,
+  environmentThreadDetails,
+  readEnvironmentScope,
+  threadEnvironment,
+  useOrchestrationCommand,
+  useQuietThreadShells,
+} from "../upstream";
 
 type Reply = (failure: string | null) => void;
 

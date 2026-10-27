@@ -1,6 +1,5 @@
 import type { ComponentProps } from "react";
-
-import { Button } from "../../components/ui/button";
+import { Button } from "../upstream";
 
 /** Foreman-style icon button: a ghost button with an accessible label and a native tooltip. */
 export function IconButton({

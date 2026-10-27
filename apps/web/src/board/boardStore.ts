@@ -21,11 +21,6 @@ import {
 import { Atom } from "effect/reactivity";
 import { useEffect } from "react";
 
-import { toastManager } from "../components/ui/toast";
-import { randomUUID } from "../lib/utils";
-import { appAtomRegistry } from "../rpc/atomRegistry";
-import { readThreadShells } from "../state/entities";
-import { readEnvironmentScope } from "../state/session";
 import {
   boardHubOrigin,
   readBoardHubEnvironmentId,
@@ -49,6 +44,13 @@ export type {
   Workflow,
   WorkflowSettings,
 } from "@t3tools/board-core/boardModel";
+import {
+  appAtomRegistry,
+  randomUUID,
+  readEnvironmentScope,
+  readThreadShells,
+  toastManager,
+} from "./upstream";
 
 interface BoardState {
   readonly snapshot: BoardSnapshot | null;

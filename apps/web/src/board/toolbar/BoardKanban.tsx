@@ -1,10 +1,10 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
 
-import { buildThreadRouteParams } from "../../threadRoutes";
 import type { Workflow } from "../boardStore";
 import type { NodeRunState } from "@t3tools/board-core/runView";
 import { useNodeCards } from "./useNodeStatuses";
+import { buildThreadRouteParams } from "../upstream";
 
 const COLUMNS: ReadonlyArray<{
   readonly status: string;

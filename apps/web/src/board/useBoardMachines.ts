@@ -1,9 +1,9 @@
+import { useBoardPeers } from "./boardStore";
 import {
   useConnectedEnvironmentIds,
   useEnvironmentIdentities,
   usePrimaryEnvironmentId,
-} from "../state/environments";
-import { useBoardPeers } from "./boardStore";
+} from "./upstream";
 
 export function useBoardMachines() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();

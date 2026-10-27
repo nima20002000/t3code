@@ -1,5 +1,7 @@
 # T3 Code
 
+> **This checkout is the board fork.** Our code is only `packages/board-core/`, `apps/server/src/board/` and `apps/web/src/board/`; everything else is upstream t3. Read `FORK.md` before changing anything outside those folders, reach upstream only through each side's `upstream.ts`, and run `node scripts/fork-boundary.mjs`.
+
 T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs and agents (Codex, Claude Code, Cursor, Grok, OpenCode, Antigravity) and serves web, desktop, and mobile clients.
 
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.

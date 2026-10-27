@@ -1,10 +1,13 @@
 import { CommandId } from "@t3tools/contracts";
-import { toastManager } from "../components/ui/toast";
-import { newMessageId, randomUUID } from "../lib/utils";
-import { readThreadShells } from "../state/entities";
-import { threadEnvironment } from "../state/threads";
-import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import type { BoardNode } from "./boardStore";
+import {
+  newMessageId,
+  randomUUID,
+  readThreadShells,
+  threadEnvironment,
+  toastManager,
+  useOrchestrationCommand,
+} from "./upstream";
 
 export function useSendBoardInstructions() {
   const startTurn = useOrchestrationCommand(threadEnvironment.startTurn, { reportFailure: false });

@@ -1,9 +1,8 @@
 import { runToShow, runViews, type NodeRunView } from "@t3tools/board-core/runView";
 import { useMemo } from "react";
 
-import { useThreadShells } from "../../state/entities";
-import { useConnectedEnvironmentIds, useEnvironmentIdentities } from "../../state/environments";
 import { useBoardPeers, type BoardNode, type Workflow } from "../boardStore";
+import { useConnectedEnvironmentIds, useEnvironmentIdentities, useThreadShells } from "../upstream";
 
 const ACTIVE_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 

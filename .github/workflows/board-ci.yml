@@ -30,6 +30,9 @@ jobs:
 
       - uses: ./.github/actions/setup-ci-deps
 
+      - name: Check the fork boundary
+        run: node scripts/fork-boundary.mjs
+
       - name: Typecheck board core
         run: vp run --filter @t3tools/board-core typecheck
 

@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { useRef } from "react";
 
-import { Button } from "../components/ui/button";
 import {
   discardChanges,
   redo,
@@ -35,6 +34,7 @@ import { WorkflowMenu } from "./toolbar/WorkflowMenu";
 import { WorkflowName, type WorkflowNameHandle } from "./toolbar/WorkflowName";
 import { WorkflowSettings } from "./toolbar/WorkflowSettings";
 import "./toolbar/boardToolbar.css";
+import { Button } from "./upstream";
 
 function BackButton() {
   const router = useRouter();

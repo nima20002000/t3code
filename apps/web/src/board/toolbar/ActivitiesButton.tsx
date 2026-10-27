@@ -1,9 +1,9 @@
 import { HistoryIcon } from "lucide-react";
 
-import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 import type { BoardLogEntry } from "../boardStore";
 import { IconButton } from "./IconButton";
 import { formatRunTime } from "./runPresentation";
+import { Popover, PopoverPopup, PopoverTrigger } from "../upstream";
 
 /** Foreman-style Activities: an icon button opening a popover with the workflow log, newest first. */
 export function ActivitiesButton(props: { readonly log: ReadonlyArray<BoardLogEntry> }) {

@@ -1,12 +1,16 @@
 import { PlayIcon, SquareIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
-import { Button } from "../components/ui/button";
-import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
 import { activeRunOf, useCurrentWorkflow } from "./boardStore";
 import { runBoardMutation } from "./boardApi";
-import { randomUUID } from "../lib/utils";
-import { toastManager } from "../components/ui/toast";
+import {
+  Button,
+  Popover,
+  PopoverPopup,
+  PopoverTrigger,
+  randomUUID,
+  toastManager,
+} from "./upstream";
 
 const FIELD_CLASS = "w-full rounded-md border bg-background px-2 py-1.5 text-sm";
 

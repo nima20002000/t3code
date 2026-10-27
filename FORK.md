@@ -19,10 +19,18 @@ a merge (the server route is reserved for the later server phase):
   mount board-owned navigation components.
 - `apps/web/src/components/sidebar/mainAppLocation.ts`: board location.
 - `apps/web/src/routeTree.gen.ts`: generated board route registration.
-- `apps/server/scripts/migrate-dev-db.ts`: dev seeding also clears the board execution and peer tables.
+- `apps/server/scripts/migrate-dev-db.ts` and `apps/server/scripts/migrate-dev-db.test.ts`: dev seeding
+  also clears the board execution and peer tables.
+- `AGENTS.md`: one paragraph pointing agents at this file and the board folders.
 - `pnpm-lock.yaml`: workspace and board dependency lock entries.
 
-Fork tooling is `FORK.md`, `scripts/fork-sync.sh`, `scripts/board-test.mjs`, and the fork-only
+Board code reaches upstream only through one gateway per side:
+`apps/server/src/board/upstream.ts` and `apps/web/src/board/upstream.ts`. They list every upstream
+module the board depends on, so a merge that breaks the board shows up there. `board-core` imports
+no upstream app code. `scripts/fork-boundary.mjs` enforces both rules and that no upstream file
+outside this list changes; Board CI runs it. Tests are exempt from the gateway rule.
+
+Fork tooling is `FORK.md`, `scripts/fork-sync.sh`, `scripts/fork-boundary.mjs`, `scripts/board-test.mjs`, and the fork-only
 `.github/workflows/board-*.yml` workflows. Keep new board code in the owned
 folders; do not patch upstream internals to make the board work.
 

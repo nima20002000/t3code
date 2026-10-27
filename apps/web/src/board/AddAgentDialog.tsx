@@ -8,9 +8,10 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { useRef, useState } from "react";
 import * as Schema from "effect/Schema";
 
-import { ProviderModelPicker } from "../components/chat/ProviderModelPicker";
-import { Button } from "../components/ui/button";
+import { createNode, nextNodePosition, useCurrentWorkflow } from "./boardStore";
+import { useBoardMachines } from "./useBoardMachines";
 import {
+  Button,
   Dialog,
   DialogDescription,
   DialogFooter,
@@ -18,20 +19,18 @@ import {
   DialogPanel,
   DialogPopup,
   DialogTitle,
-} from "../components/ui/dialog";
-import { Input } from "../components/ui/input";
-import { Textarea } from "../components/ui/textarea";
-import { newThreadId, randomUUID } from "../lib/utils";
-import {
+  EMPTY_SERVER_PROVIDERS,
+  Input,
+  ProviderModelPicker,
+  Textarea,
   deriveProviderInstanceEntries,
+  newThreadId,
+  randomUUID,
   resolveDefaultProviderModelSelection,
   sortProviderInstanceEntries,
-} from "../providerInstances";
-import { useProjects } from "../state/entities";
-import { useEnvironmentProviders } from "../state/environments";
-import { EMPTY_SERVER_PROVIDERS } from "../state/server";
-import { createNode, nextNodePosition, useCurrentWorkflow } from "./boardStore";
-import { useBoardMachines } from "./useBoardMachines";
+  useEnvironmentProviders,
+  useProjects,
+} from "./upstream";
 
 const isProviderInstanceId = Schema.is(ProviderInstanceId);
 

@@ -2,10 +2,9 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
 import { FolderIcon } from "lucide-react";
 
-import { useRightPanelStore } from "../../rightPanelStore";
-import { buildThreadRouteParams } from "../../threadRoutes";
 import type { BoardNode } from "../boardStore";
 import { ToolbarPopover, useMachineLabel } from "./ToolbarPopover";
+import { buildThreadRouteParams, useRightPanelStore } from "../upstream";
 
 /**
  * Opens the thread view of a node with t3's own Files panel (the project file explorer on the
