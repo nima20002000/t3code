@@ -1,6 +1,8 @@
 # T3 Code
 
-> **This checkout is the board fork.** Our code is only `packages/board-core/`, `apps/server/src/board/` and `apps/web/src/board/`; everything else is upstream t3. Read `FORK.md` before changing anything outside those folders, reach upstream only through each side's `upstream.ts`, and run `node scripts/fork-boundary.mjs`.
+> **This checkout is the board fork.** Our code is only `packages/board-core/`, `apps/server/src/board/` and `apps/web/src/board/`; everything else is upstream t3. Read `FORK.md` before changing anything outside those folders, and reach upstream only through each side's `upstream.ts`.
+>
+> **Testing here overrides the Verifying section below:** run only our tests, with `node scripts/board-test.mjs` (all board tests, cached per file; `--full` ignores the cache; or pass test paths). Also run `node scripts/fork-boundary.mjs` and typecheck the packages you touched (`vp run --filter @t3tools/board-core typecheck`, `--filter t3`, `--filter @t3tools/web`). Never run upstream test suites or `vp run check:changed`; upstream code is upstream's responsibility.
 
 T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs and agents (Codex, Claude Code, Cursor, Grok, OpenCode, Antigravity) and serves web, desktop, and mobile clients.
 
