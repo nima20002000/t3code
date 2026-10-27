@@ -22,7 +22,6 @@ function savePanelPosition(key: string, position: PanelPosition) {
 }
 
 let morphing = false;
-const SWAP_MS = 100;
 const BLUR_MS = 280;
 const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
 const fade = (element: Element, to: number, duration: number) =>
@@ -33,10 +32,9 @@ const fade = (element: Element, to: number, duration: number) =>
   }).finished;
 
 /**
- * Toggles full screen through a blur of the board. The blur runs through the whole change: the old
- * panel fades out as it starts, and the new one fades in as it ends. Resizing re-lays out the whole
- * chat and blocks the main thread, so it happens while the panel is invisible; the blur keeps
- * moving on the compositor meanwhile.
+ * Toggles full screen through a blur of the board, with the new panel crossfading in sync with the
+ * blur. Resizing re-lays out the whole chat and blocks the main thread, so it happens first, while
+ * a still copy of the old panel stands in.
  */
 export async function morphPanel(panel: HTMLElement | null, maximize: boolean, update: () => void) {
   if (morphing) return;
@@ -49,31 +47,31 @@ export async function morphPanel(panel: HTMLElement | null, maximize: boolean, u
   backdrop.className = "board-panel-backdrop";
   backdrop.style.opacity = maximize ? "0" : "1";
   document.body.append(backdrop);
-  const blur = maximize ? 1 : 0;
-  // Opening leaves a still copy of the small panel under the blur, so it blurs with the board
-  // while the full panel fades in over both.
-  const still = maximize ? snapshot(panel) : null;
+  // A still copy of the old panel covers the swap: opening leaves the small one under the blur, so
+  // it blurs with the board while the full panel fades in; closing fades the full one out over the
+  // small one as the blur clears.
+  const still = snapshot(panel, maximize ? "14" : "60");
   try {
-    if (still) panel.style.opacity = "0";
-    else {
-      void fade(backdrop, 0.4, SWAP_MS * 3);
-      await fade(panel, 0, SWAP_MS);
-    }
+    panel.style.opacity = "0";
     flushSync(update);
     // The chat re-renders once more when it observes its new size; let that pass before fading in.
     await nextFrame();
     await nextFrame();
-    await Promise.all([fade(panel, 1, BLUR_MS), fade(backdrop, blur, BLUR_MS)]);
+    if (maximize) await Promise.all([fade(panel, 1, BLUR_MS), fade(backdrop, 1, BLUR_MS)]);
+    else {
+      panel.style.opacity = "";
+      await Promise.all([fade(still, 0, BLUR_MS), fade(backdrop, 0, BLUR_MS)]);
+    }
   } finally {
     for (const animation of panel.getAnimations()) animation.cancel();
     panel.style.opacity = "";
-    still?.remove();
+    still.remove();
     backdrop.remove();
     morphing = false;
   }
 }
 
-function snapshot(panel: HTMLElement) {
+function snapshot(panel: HTMLElement, zIndex: string) {
   const copy = panel.cloneNode(true) as HTMLElement;
   const rect = panel.getBoundingClientRect();
   Object.assign(copy.style, {
@@ -84,7 +82,7 @@ function snapshot(panel: HTMLElement) {
     width: `${rect.width}px`,
     height: `${rect.height}px`,
     margin: "0",
-    zIndex: "14",
+    zIndex,
     pointerEvents: "none",
   });
   copy.inert = true;
