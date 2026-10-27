@@ -480,9 +480,6 @@ function BoardCanvasPage() {
     }
   };
 
-  const onNodesChangeRef = useRef(onNodesChange);
-  onNodesChangeRef.current = onNodesChange;
-
   const onEdgesChange = (changes: EdgeChange[]) => {
     for (const change of changes) {
       if (change.type === "select") {
@@ -592,13 +589,14 @@ function BoardCanvasPage() {
         (target.isContentEditable || target.closest("input, textarea, select, [role=dialog]"))
       )
         return;
-      if (!canvas.current?.contains(target as Node) && target !== document.body) return;
+      if (!canvas.current?.contains(target as globalThis.Node | null) && target !== document.body)
+        return;
       const mod = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
       if (event.key === "Escape") {
         const selected = flow.current?.getNodes().filter((n) => n.selected) ?? [];
         if (selected.length === 0) return;
-        onNodesChangeRef.current(
+        onNodesChange(
           selected.map((n) => ({ type: "select" as const, id: n.id, selected: false })),
         );
       } else if (mod && key === "c") {
