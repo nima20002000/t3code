@@ -7,7 +7,8 @@ import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { useProject, useThreadShells } from "../state/entities";
 import { useEnvironmentIdentities } from "../state/environments";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useRightPanelStore } from "../rightPanelStore";
 import { useSendToBoardNode } from "./BoardEngine";
 import {
   appendLog,
@@ -50,6 +51,11 @@ export function NodeSettingsPanel(props: {
     "Unknown";
   const [name, setName] = useState(node.name);
   const [role, setRole] = useState(node.role ?? "");
+
+  // The panel is too narrow for t3's right panel; start each node's chat with it closed.
+  useEffect(() => {
+    useRightPanelStore.getState().close(scopeThreadRef(node.environmentId, node.threadId));
+  }, [node.environmentId, node.threadId]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
