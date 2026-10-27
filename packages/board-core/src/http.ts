@@ -367,7 +367,7 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
     }),
   )
   .add(
-    HttpApiEndpoint.patch("updateWorkspace", "/workspaces/:workspaceId", {
+    HttpApiEndpoint.post("updateWorkspace", "/workspaces/:workspaceId", {
       headers: OptionalAuthHeaders,
       params: WorkspaceParams,
       payload: BoardUpdateWorkspaceInput,
@@ -376,7 +376,7 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
     }),
   )
   .add(
-    HttpApiEndpoint.delete("deleteWorkspace", "/workspaces/:workspaceId", {
+    HttpApiEndpoint.post("deleteWorkspace", "/workspaces/:workspaceId/delete", {
       headers: OptionalAuthHeaders,
       params: WorkspaceParams,
       success: HttpApiSchema.NoContent,
@@ -393,7 +393,7 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
     }),
   )
   .add(
-    HttpApiEndpoint.delete("deleteFolder", "/workspaces/:workspaceId/folders/:environmentId", {
+    HttpApiEndpoint.post("deleteFolder", "/workspaces/:workspaceId/folders/:environmentId/delete", {
       headers: OptionalAuthHeaders,
       params: FolderParams,
       success: BoardWorkspaceSchema,
@@ -424,7 +424,7 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
     }),
   )
   .add(
-    HttpApiEndpoint.patch("updateWorkflow", "/workflows/:workflowId", {
+    HttpApiEndpoint.post("updateWorkflow", "/workflows/:workflowId", {
       headers: OptionalAuthHeaders,
       params: WorkflowParams,
       payload: BoardUpdateWorkflowInput,
@@ -433,7 +433,7 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
     }),
   )
   .add(
-    HttpApiEndpoint.delete("deleteWorkflow", "/workflows/:workflowId", {
+    HttpApiEndpoint.post("deleteWorkflow", "/workflows/:workflowId/delete", {
       headers: OptionalAuthHeaders,
       params: WorkflowParams,
       success: HttpApiSchema.NoContent,
@@ -450,7 +450,7 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
     }),
   )
   .add(
-    HttpApiEndpoint.patch("updateNode", "/workflows/:workflowId/nodes/:nodeId", {
+    HttpApiEndpoint.post("updateNode", "/workflows/:workflowId/nodes/:nodeId", {
       headers: OptionalAuthHeaders,
       params: NodeParams,
       payload: BoardUpdateNodeInput,
@@ -467,7 +467,7 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
     }),
   )
   .add(
-    HttpApiEndpoint.delete("deleteNode", "/workflows/:workflowId/nodes/:nodeId", {
+    HttpApiEndpoint.post("deleteNode", "/workflows/:workflowId/nodes/:nodeId/delete", {
       headers: OptionalAuthHeaders,
       params: NodeParams,
       success: HttpApiSchema.NoContent,
@@ -484,7 +484,7 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
     }),
   )
   .add(
-    HttpApiEndpoint.delete("deleteEdge", "/workflows/:workflowId/edges/:fromId/:toId", {
+    HttpApiEndpoint.post("deleteEdge", "/workflows/:workflowId/edges/:fromId/:toId/delete", {
       headers: OptionalAuthHeaders,
       params: EdgeParams,
       success: HttpApiSchema.NoContent,
@@ -507,7 +507,7 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
     }),
   )
   .add(
-    HttpApiEndpoint.delete("deletePeer", "/peers/:peerId", {
+    HttpApiEndpoint.post("deletePeer", "/peers/:peerId/delete", {
       headers: OptionalAuthHeaders,
       params: PeerParams,
       success: HttpApiSchema.NoContent,
@@ -563,7 +563,7 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
     }),
   )
   .add(
-    HttpApiEndpoint.patch("updateSchedule", "/schedules/:scheduleId", {
+    HttpApiEndpoint.post("updateSchedule", "/schedules/:scheduleId", {
       headers: OptionalAuthHeaders,
       params: ScheduleParams,
       payload: BoardUpdateScheduleInput,
@@ -572,7 +572,7 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
     }),
   )
   .add(
-    HttpApiEndpoint.delete("deleteSchedule", "/schedules/:scheduleId", {
+    HttpApiEndpoint.post("deleteSchedule", "/schedules/:scheduleId/delete", {
       headers: OptionalAuthHeaders,
       params: ScheduleParams,
       success: HttpApiSchema.NoContent,

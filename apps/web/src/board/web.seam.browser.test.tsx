@@ -154,7 +154,7 @@ it("shows Board in the chat layout, swaps the thread list for the board sidebar 
   await expect.element(screen.getByRole("button", { name: "Live workflow" }).first()).toBeVisible();
   await userEvent.hover(screen.getByText("Scout", { exact: true }));
   await userEvent.click(screen.getByRole("button", { name: "Scout settings" }));
-  const panel = screen.getByRole("complementary", { name: "Scout settings" });
+  const panel = screen.getByRole("complementary", { name: "Scout chat" });
   await expect.element(panel).toBeVisible();
   await expect
     .element(panel.getByText("Answer 0 for board-seam-thread.", { exact: false }))
@@ -162,7 +162,7 @@ it("shows Board in the chat layout, swaps the thread list for the board sidebar 
   await userEvent.click(panel.getByRole("button", { name: "Close" }));
   await userEvent.hover(screen.getByText("Remote agent", { exact: true }));
   await userEvent.click(screen.getByRole("button", { name: "Remote agent settings" }));
-  const remotePanel = screen.getByRole("complementary", { name: "Remote agent settings" });
+  const remotePanel = screen.getByRole("complementary", { name: "Remote agent chat" });
   await expect
     .element(
       remotePanel.getByText("Connect Remote machine in Connections to view and use this thread."),

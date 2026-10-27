@@ -104,11 +104,22 @@ describe("board wire contract", () => {
     expect(endpoints.startRun.path).toBe("/api/board/workflows/:workflowId/runs");
     expect(endpoints.stopRun.path).toBe("/api/board/workflows/:workflowId/runs/:runId/stop");
     expect(endpoints.getKanban.path).toBe("/api/board/workflows/:workflowId/kanban");
-    expect(endpoints.deleteWorkspace.path).toBe("/api/board/workspaces/:workspaceId");
+    expect(endpoints.deleteWorkspace.path).toBe("/api/board/workspaces/:workspaceId/delete");
     expect(endpoints.events.path).toBe("/api/board/events");
     expect([...endpoints.events.success]).toEqual(
       expect.arrayContaining([expect.objectContaining({ _tag: "StreamSse", mode: "sse" })]),
     );
     expect(endpoints.events.middlewares.size).toBeGreaterThan(0);
+  });
+});
+
+describe("BoardHttpApi methods", () => {
+  it("uses only GET and POST, the methods t3's cross-origin policy allows the desktop window", () => {
+    const methods = new Set(
+      Object.values(BoardHttpApi.groups).flatMap((group) =>
+        Object.values(group.endpoints).map((endpoint) => endpoint.method),
+      ),
+    );
+    expect([...methods].toSorted()).toEqual(["GET", "POST"]);
   });
 });

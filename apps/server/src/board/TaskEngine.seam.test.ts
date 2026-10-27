@@ -331,7 +331,7 @@ it.live("runs a board request and interrupts through the real server and orchest
         200,
       );
       const pausedSchedule = yield* request("/api/board/schedules/remote-schedule", {
-        method: "PATCH",
+        method: "POST",
         headers: { ...authorization, "content-type": "application/json" },
         body: JSON.stringify({ enabled: false }),
       });
@@ -532,8 +532,8 @@ it.live("runs a board request and interrupts through the real server and orchest
       );
       // Deleting the workspace removes its board-created projects, and their threads, on both machines.
       assert.strictEqual(
-        (yield* request("/api/board/workspaces/workspace", {
-          method: "DELETE",
+        (yield* request("/api/board/workspaces/workspace/delete", {
+          method: "POST",
           headers: authorization,
         })).status,
         204,
@@ -550,8 +550,8 @@ it.live("runs a board request and interrupts through the real server and orchest
       const { sequence } = (yield* Effect.tryPromise(() => snapshotBeforeRemoval.json())) as {
         sequence: number;
       };
-      const deletedPeer = yield* request(`/api/board/peers/${peer.id}`, {
-        method: "DELETE",
+      const deletedPeer = yield* request(`/api/board/peers/${peer.id}/delete`, {
+        method: "POST",
         headers: authorization,
       });
       assert.strictEqual(deletedPeer.status, 204);
