@@ -31,7 +31,7 @@ import { EMPTY_SERVER_PROVIDERS } from "../state/server";
 import { threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { addNode, appendLog } from "./boardStore";
-import { buildAgentFirstPrompt } from "./wakeProtocol";
+import { buildAgentFirstPrompt } from "./resultProtocol";
 
 const FIELD_CLASS = "h-8 w-full rounded-md border bg-background px-2 text-sm";
 
@@ -113,7 +113,7 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
         message: {
           messageId: newMessageId(),
           role: "user",
-          text: buildAgentFirstPrompt(agentName, role, []),
+          text: buildAgentFirstPrompt(agentName, role, [], []),
           attachments: [],
         },
         modelSelection: selection,
