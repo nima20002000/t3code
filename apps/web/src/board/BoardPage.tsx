@@ -296,8 +296,15 @@ export function BoardPage() {
   if (!workflow)
     return (
       <SidebarInset className="h-dvh">
-        <div className="p-6" role="status">
-          {status === "offline" ? `Board unavailable: ${error}` : "Connecting to board…"}
+        <div className="grid content-start gap-3 p-6">
+          <p role="status">
+            {status === "offline" ? `Board unavailable: ${error}` : "Connecting to board…"}
+          </p>
+          <div>
+            <Button size="sm" variant="outline" render={<Link to="/" />}>
+              Back
+            </Button>
+          </div>
         </div>
       </SidebarInset>
     );
