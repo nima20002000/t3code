@@ -17,7 +17,8 @@ import { MessageSquareIcon, XIcon } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState, type MouseEvent } from "react";
 import type { EdgeRunView, NodeRunView } from "@t3tools/board-core/runView";
 
-import { NodeSettingsPanel } from "./NodeSettingsPanel";
+import { AgentSettingsDialog, NodeSettingsPanel } from "./NodeSettingsPanel";
+import { copyNodes, deleteNodes, duplicateNodes, hasCopiedNodes, pasteNodes } from "./nodeActions";
 import { AgentDialog } from "./AddAgentDialog";
 import {
   addEdge,
@@ -56,6 +57,7 @@ import {
   SidebarInset,
   WorkspacePageHeader,
   isElectron,
+  readLocalApi,
   useEnvironmentIdentities,
   useThreadShells,
 } from "./upstream";
@@ -421,6 +423,13 @@ function BoardCanvasPage() {
   const [connecting, setConnecting] = useState(false);
   const [settingsNodeId, setSettingsNodeId] = useState<string | null>(null);
   const settingsNode = nodes.find((n) => n.id === settingsNodeId) ?? null;
+  const [renameOnOpen, setRenameOnOpen] = useState(false);
+  const [configuringId, setConfiguringId] = useState<string | null>(null);
+  const configuringNode = nodes.find((n) => n.id === configuringId) ?? null;
+  const openPanel = (id: string, rename = false) => {
+    setRenameOnOpen(rename);
+    setSettingsNodeId(id);
+  };
 
   const displayedNodes = nodes.map((node) =>
     toFlowNode(
@@ -471,6 +480,9 @@ function BoardCanvasPage() {
     }
   };
 
+  const onNodesChangeRef = useRef(onNodesChange);
+  onNodesChangeRef.current = onNodesChange;
+
   const onEdgesChange = (changes: EdgeChange[]) => {
     for (const change of changes) {
       if (change.type === "select") {
@@ -504,6 +516,108 @@ function BoardCanvasPage() {
     } else linkFrom.current = node.id;
   };
 
+  const selectedNodes = () => {
+    const ids = new Set(
+      flow.current
+        ?.getNodes()
+        .filter((n) => n.selected)
+        .map((n) => n.id),
+    );
+    return getCurrentWorkflow().nodes.filter((node) => ids.has(node.id));
+  };
+
+  const onNodeContextMenu = (event: MouseEvent, flowNode: AgentFlowNode) => {
+    event.preventDefault();
+    const node = flowNode.data.node;
+    const targets = flowNode.selected ? selectedNodes() : [node];
+    const many = targets.length > 1;
+    const api = readLocalApi();
+    if (!api) return;
+    void api.contextMenu
+      .show(
+        [
+          { id: "chat", label: "Open chat", disabled: many },
+          { id: "settings", label: "Settings", disabled: many },
+          { id: "rename", label: "Rename", icon: "pencil", disabled: many },
+          { id: "copy", label: many ? `Copy ${targets.length} agents` : "Copy", icon: "copy" },
+          {
+            id: "paste",
+            label: "Paste",
+            disabled: !hasCopiedNodes(),
+          },
+          { id: "duplicate", label: "Duplicate", icon: "copy" },
+          {
+            id: "delete",
+            label: many ? `Delete ${targets.length} agents` : "Delete",
+            destructive: true,
+            separatorBefore: true,
+          },
+        ],
+        { x: event.clientX, y: event.clientY },
+      )
+      .then((action) => {
+        switch (action) {
+          case "chat":
+            openPanel(node.id);
+            if (node.threadId === "") void openNodeChat(node.id);
+            break;
+          case "settings":
+            setConfiguringId(node.id);
+            break;
+          case "rename":
+            openPanel(node.id, true);
+            break;
+          case "copy":
+            copyNodes(targets);
+            break;
+          case "paste":
+            void pasteNodes();
+            break;
+          case "duplicate":
+            void duplicateNodes(targets);
+            break;
+          case "delete":
+            deleteNodes(targets);
+            break;
+        }
+      });
+  };
+
+  // oxlint-disable-next-line t3code/react-effect-budget -- Subscribe to the window keyboard event.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable || target.closest("input, textarea, select, [role=dialog]"))
+      )
+        return;
+      if (!canvas.current?.contains(target as Node) && target !== document.body) return;
+      const mod = event.ctrlKey || event.metaKey;
+      const key = event.key.toLowerCase();
+      if (event.key === "Escape") {
+        const selected = flow.current?.getNodes().filter((n) => n.selected) ?? [];
+        if (selected.length === 0) return;
+        onNodesChangeRef.current(
+          selected.map((n) => ({ type: "select" as const, id: n.id, selected: false })),
+        );
+      } else if (mod && key === "c") {
+        const selected = selectedNodes();
+        if (selected.length === 0) return;
+        copyNodes(selected);
+      } else if (mod && key === "v") {
+        if (!hasCopiedNodes()) return;
+        void pasteNodes();
+      } else if (mod && key === "d") {
+        const selected = selectedNodes();
+        event.preventDefault();
+        if (selected.length > 0) void duplicateNodes(selected);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   return (
     <SidebarInset className="h-dvh">
       <WorkspacePageHeader electron={isElectron} className="border-b border-border">
@@ -535,6 +649,7 @@ function BoardCanvasPage() {
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
               onNodeClick={onNodeClick}
+              onNodeContextMenu={onNodeContextMenu}
               onInit={(instance) => {
                 flow.current = instance;
               }}
@@ -576,11 +691,19 @@ function BoardCanvasPage() {
           <NodeSettingsPanel
             key={settingsNode.id}
             node={settingsNode}
+            renameOnOpen={renameOnOpen}
             onClose={() => setSettingsNodeId(null)}
           />
         ) : null}
       </div>
       {addingAgent ? <AgentDialog onClose={() => setAddingAgent(false)} /> : null}
+      {configuringNode ? (
+        <AgentSettingsDialog
+          node={configuringNode}
+          onClose={() => setConfiguringId(null)}
+          onRemoved={() => setSettingsNodeId(null)}
+        />
+      ) : null}
     </SidebarInset>
   );
 }

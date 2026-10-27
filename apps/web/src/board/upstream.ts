@@ -89,3 +89,4 @@ export { openPreviewSession } from "../components/preview/openPreviewSession";
 export { previewEnvironment } from "../state/preview";
 export { useAtomCommand } from "../state/use-atom-command";
 export { primaryServerKeybindingsAtom } from "../state/server";
+export { readLocalApi } from "../localApi";

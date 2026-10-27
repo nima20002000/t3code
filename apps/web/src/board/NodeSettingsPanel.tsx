@@ -78,6 +78,7 @@ export function AgentSettingsDialog(props: {
 export function NodeSettingsPanel(props: {
   readonly node: BoardNode;
   readonly onClose: () => void;
+  readonly renameOnOpen?: boolean;
 }) {
   const { node, onClose } = props;
   const environments = useEnvironmentIdentities();
@@ -88,7 +89,7 @@ export function NodeSettingsPanel(props: {
     peers.find((peer) => peer.environmentId === node.environmentId)?.name ??
     "Unknown";
   const [name, setName] = useState(node.name);
-  const [editingName, setEditingName] = useState(false);
+  const [editingName, setEditingName] = useState(props.renameOnOpen ?? false);
   const [configuring, setConfiguring] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const panel = useRef<HTMLElement>(null);
