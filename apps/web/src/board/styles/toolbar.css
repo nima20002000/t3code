@@ -63,17 +63,17 @@
 
 @utility board-kanban-column {
   --col: var(--muted-foreground);
-  border: 1px solid color-mix(in srgb, var(--col) 45%, var(--border));
-  border-top: 4px solid var(--col);
-  background: color-mix(in srgb, var(--col) 10%, var(--background));
-  &[data-status="working"] {
+  border: 1px solid var(--border);
+  border-top: 2px solid color-mix(in srgb, var(--col) 75%, transparent);
+  background: color-mix(in srgb, var(--col) 4%, var(--card));
+  &[data-status="doing"] {
     --col: var(--info);
   }
-  &[data-status="waiting"] {
+  &[data-status="blocked"] {
     --col: var(--warning);
   }
-  &[data-status="disconnected"] {
-    --col: var(--destructive);
+  &[data-status="done"] {
+    --col: var(--success);
   }
 }
 

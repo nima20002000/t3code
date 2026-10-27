@@ -477,38 +477,35 @@ function BoardCanvasPage() {
             onAddAgent={() => setAddingAgent(true)}
           />
         </div>
-        {kanban ? (
-          <BoardKanban workflow={workflow} />
-        ) : (
-          <OpenSettingsContext.Provider value={setSettingsNodeId}>
-            <ConfigureContext.Provider value={setConfigureNodeId}>
-              <OpenActivityContext.Provider value={setActivityNodeId}>
-                <RunViewsContext.Provider value={{ ...views, ...flights }}>
-                  <ReactFlow
-                    className="absolute! inset-0"
-                    nodes={displayedNodes}
-                    edges={flowEdges}
-                    nodeTypes={NODE_TYPES}
-                    edgeTypes={EDGE_TYPES}
-                    onNodesChange={onNodesChange}
-                    onEdgesChange={onEdgesChange}
-                    onConnect={onConnect}
-                    onNodeDragStart={() => recordHistoryStep()}
-                    onConnectStart={() => setConnecting(true)}
-                    onConnectEnd={() => setConnecting(false)}
-                    deleteKeyCode={["Backspace", "Delete"]}
-                    proOptions={{ hideAttribution: true }}
-                    fitView
-                    minZoom={0.2}
-                    maxZoom={1.6}
-                  >
-                    <Background color="var(--border)" gap={24} size={1} />
-                  </ReactFlow>
-                </RunViewsContext.Provider>
-              </OpenActivityContext.Provider>
-            </ConfigureContext.Provider>
-          </OpenSettingsContext.Provider>
-        )}
+        <OpenSettingsContext.Provider value={setSettingsNodeId}>
+          <ConfigureContext.Provider value={setConfigureNodeId}>
+            <OpenActivityContext.Provider value={setActivityNodeId}>
+              <RunViewsContext.Provider value={{ ...views, ...flights }}>
+                <ReactFlow
+                  className="absolute! inset-0"
+                  nodes={displayedNodes}
+                  edges={flowEdges}
+                  nodeTypes={NODE_TYPES}
+                  edgeTypes={EDGE_TYPES}
+                  onNodesChange={onNodesChange}
+                  onEdgesChange={onEdgesChange}
+                  onConnect={onConnect}
+                  onNodeDragStart={() => recordHistoryStep()}
+                  onConnectStart={() => setConnecting(true)}
+                  onConnectEnd={() => setConnecting(false)}
+                  deleteKeyCode={["Backspace", "Delete"]}
+                  proOptions={{ hideAttribution: true }}
+                  fitView
+                  minZoom={0.2}
+                  maxZoom={1.6}
+                >
+                  <Background color="var(--border)" gap={24} size={1} />
+                </ReactFlow>
+              </RunViewsContext.Provider>
+            </OpenActivityContext.Provider>
+          </ConfigureContext.Provider>
+        </OpenSettingsContext.Provider>
+        {kanban ? <BoardKanban workflow={workflow} onClose={() => setKanban(false)} /> : null}
         {selectedRun ? (
           <RunDetails run={selectedRun} onClose={() => setSelectedRunId(null)} />
         ) : null}
