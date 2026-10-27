@@ -26,13 +26,14 @@ let morphing = false;
 const FADE_MS = 70;
 const MOVE_MS = 220;
 const REVEAL_MS = 110;
+const BLUR_MS = 160;
 const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
 
 /**
  * Toggles full screen behind an empty panel frame that moves on the compositor (transform and
  * opacity only), so the chat re-laying out at its new size can block the main thread without a
- * dropped frame. The frame first fades in over the panel, then moves while the board behind is
- * blurred; the panel crossfades back in as it lands.
+ * dropped frame. The board blurs first and the frame fades in over the panel, then moves; the panel
+ * crossfades back in as it lands, and only then does the blur clear.
  */
 export async function morphPanel(panel: HTMLElement | null, maximize: boolean, update: () => void) {
   if (morphing) return;
@@ -56,12 +57,14 @@ export async function morphPanel(panel: HTMLElement | null, maximize: boolean, u
   const card = document.createElement("div");
   card.className = "board-panel-morph";
   const from = panel.getBoundingClientRect();
+  // Opening waits for the blur to settle before growing; closing starts shrinking at once.
+  const lead = maximize ? BLUR_MS : FADE_MS;
   const moves = Object.entries(parts).map(([part, place]) => {
     const element = document.createElement("div");
     element.dataset.part = part;
     card.append(element);
     return element.animate([{ transform: place(from) }, { transform: place(target) }], {
-      delay: FADE_MS,
+      delay: lead,
       duration: MOVE_MS,
       easing: "cubic-bezier(0.2, 0, 0, 1)",
       fill: "both",
@@ -71,21 +74,29 @@ export async function morphPanel(panel: HTMLElement | null, maximize: boolean, u
   backdrop.className = "board-panel-backdrop";
   document.body.append(backdrop, card);
   try {
-    const fadeIn = { duration: FADE_MS, fill: "forwards" } as const;
-    backdrop.animate([{ opacity: 0 }, { opacity: 1 }], fadeIn);
-    await card.animate([{ opacity: 0 }, { opacity: 1 }], fadeIn).finished;
+    backdrop.animate([{ opacity: 0 }, { opacity: 1 }], {
+      duration: maximize ? BLUR_MS : FADE_MS,
+      fill: "forwards",
+    });
+    await card.animate([{ opacity: 0 }, { opacity: 1 }], { duration: FADE_MS, fill: "forwards" })
+      .finished;
     // The frame now covers the panel, so it can vanish and change size unseen.
     const hide = panel.animate([{ opacity: 0 }, { opacity: 0 }], { duration: 1, fill: "forwards" });
     flushSync(update);
     await nextFrame();
     // At 90% of its time the eased move is within a few pixels of landing; reveal over the rest.
-    const left = FADE_MS + MOVE_MS * 0.9 - Number(moves[0]?.currentTime ?? 0);
+    const left = lead + MOVE_MS * 0.9 - Number(moves[0]?.currentTime ?? 0);
     if (left > 0) await new Promise((resolve) => setTimeout(resolve, left));
     // The panel shows whole under the frame, which shares its fill, so no board bleeds through.
     hide.cancel();
-    const fadeOut = { duration: REVEAL_MS, fill: "forwards" } as const;
-    if (!maximize) backdrop.animate([{ opacity: 1 }, { opacity: 0 }], fadeOut);
-    await card.animate([{ opacity: 1 }, { opacity: 0 }], fadeOut).finished;
+    await card.animate([{ opacity: 1 }, { opacity: 0 }], { duration: REVEAL_MS, fill: "forwards" })
+      .finished;
+    if (!maximize) {
+      await backdrop.animate([{ opacity: 1 }, { opacity: 0 }], {
+        duration: BLUR_MS,
+        fill: "forwards",
+      }).finished;
+    }
   } finally {
     card.remove();
     backdrop.remove();
