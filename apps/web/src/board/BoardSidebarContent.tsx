@@ -28,7 +28,8 @@ type Dialog =
 
 const FOLDED = 48;
 const MIN_OPEN = 180;
-const MAX_OPEN = 420;
+const DEFAULT_OPEN = 220;
+const MAX_OPEN = 320;
 const WIDTH_KEY = "board:sidebar-width";
 const OPEN_WIDTH_KEY = "board:sidebar-open-width";
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(value, max));
@@ -92,7 +93,7 @@ export function BoardSidebarPanel() {
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const close = () => setDialog(null);
   const navigate = useNavigate();
-  const [width, setWidth] = useState(() => readWidth(WIDTH_KEY, 240));
+  const [width, setWidth] = useState(() => readWidth(WIDTH_KEY, DEFAULT_OPEN));
   const [dragging, setDragging] = useState(false);
   const panel = useRef<HTMLElement>(null);
   const moved = useRef(false);
@@ -107,7 +108,7 @@ export function BoardSidebarPanel() {
     saveWidth(WIDTH_KEY, next);
     if (next > FOLDED) saveWidth(OPEN_WIDTH_KEY, next);
   };
-  const unfold = () => settle(readWidth(OPEN_WIDTH_KEY, 240));
+  const unfold = () => settle(readWidth(OPEN_WIDTH_KEY, DEFAULT_OPEN));
 
   // During a drag the width is written straight to the element; React only hears the final width.
   const startDrag = (event: PointerEvent<HTMLDivElement>) => {
