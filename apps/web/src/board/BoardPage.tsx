@@ -1,5 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import {
   applyNodeChanges,
   Background,
@@ -53,7 +52,6 @@ import {
   Button,
   SidebarInset,
   WorkspacePageHeader,
-  buildThreadRouteParams,
   isElectron,
   useEnvironmentIdentities,
   useThreadShells,
@@ -192,7 +190,6 @@ function harnessOf(instanceId: string): "codex" | "claude" | "neutral" {
 
 function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
   const { node } = data;
-  const navigate = useNavigate();
   const connectionOf = useNodeConnections();
   const environments = useEnvironmentIdentities();
   const peers = useBoardPeers();
@@ -228,11 +225,7 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
       slot: "chat",
       label: `Open ${node.name} thread`,
       icon: <MessageSquareIcon size={15} />,
-      onClick: () =>
-        void navigate({
-          to: "/$environmentId/$threadId",
-          params: buildThreadRouteParams(scopeThreadRef(node.environmentId, node.threadId)),
-        }),
+      onClick: () => openSettings(node.id),
     },
     {
       slot: "settings",

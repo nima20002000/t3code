@@ -132,9 +132,7 @@ export function NodeSettingsPanel(props: {
         <InfoLine label="Project" value={project?.title ?? "Unknown"} />
         <InfoLine
           label="Model"
-          value={
-            shell ? `${shell.modelSelection.instanceId} / ${shell.modelSelection.model}` : "Unknown"
-          }
+          value={`${node.modelSelection.instanceId} / ${node.modelSelection.model}`}
         />
         <details className="text-xs">
           <summary className="cursor-pointer text-muted-foreground">Role</summary>
@@ -164,7 +162,11 @@ export function NodeSettingsPanel(props: {
         </div>
       </div>
       <div className="relative isolate flex min-h-0 min-w-0 flex-1 [transform:translateZ(0)] flex-col overflow-hidden">
-        {connectedIds.includes(node.environmentId) ? (
+        {node.threadId === "" ? (
+          <p className="p-4 text-sm text-muted-foreground">
+            {node.name} has no chat yet. Its thread starts with the next run.
+          </p>
+        ) : connectedIds.includes(node.environmentId) ? (
           <ChatView
             environmentId={node.environmentId}
             threadId={node.threadId}
