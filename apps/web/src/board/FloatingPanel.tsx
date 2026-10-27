@@ -57,8 +57,8 @@ export async function morphPanel(panel: HTMLElement | null, maximize: boolean, u
   const card = document.createElement("div");
   card.className = "board-panel-morph";
   const from = panel.getBoundingClientRect();
-  // Opening waits for the blur to settle before growing; closing starts shrinking at once.
-  const lead = maximize ? BLUR_MS : FADE_MS;
+  // Opening blurs the board before growing; closing shrinks as soon as the frame hides the panel.
+  const lead = maximize ? BLUR_MS : FADE_MS + 20;
   const moves = Object.entries(parts).map(([part, place]) => {
     const element = document.createElement("div");
     element.dataset.part = part;
@@ -66,7 +66,8 @@ export async function morphPanel(panel: HTMLElement | null, maximize: boolean, u
     return element.animate([{ transform: place(from) }, { transform: place(target) }], {
       delay: lead,
       duration: MOVE_MS,
-      easing: "cubic-bezier(0.2, 0, 0, 1)",
+      // A long shrink that starts at full speed reads as a jump, so closing eases in as well.
+      easing: maximize ? "cubic-bezier(0.2, 0, 0, 1)" : "cubic-bezier(0.4, 0, 0.2, 1)",
       fill: "both",
     });
   });
@@ -80,13 +81,23 @@ export async function morphPanel(panel: HTMLElement | null, maximize: boolean, u
     });
     await card.animate([{ opacity: 0 }, { opacity: 1 }], { duration: FADE_MS, fill: "forwards" })
       .finished;
-    // The frame now covers the panel, so it can vanish and change size unseen.
+    // The frame now covers the panel, so it can vanish and re-lay out unseen. The re-layout blocks
+    // the main thread, which makes Chrome skip a running move ahead, so it runs while the frame
+    // stands still: before growing (during the blur), or after shrinking.
     const hide = panel.animate([{ opacity: 0 }, { opacity: 0 }], { duration: 1, fill: "forwards" });
-    flushSync(update);
-    await nextFrame();
-    // At 90% of its time the eased move is within a few pixels of landing; reveal over the rest.
-    const left = lead + MOVE_MS * 0.9 - Number(moves[0]?.currentTime ?? 0);
-    if (left > 0) await new Promise((resolve) => setTimeout(resolve, left));
+    if (maximize) {
+      flushSync(update);
+      await nextFrame();
+      // At 90% of its time the eased move is within a few pixels of landing; reveal over the rest.
+      const left = lead + MOVE_MS * 0.9 - Number(moves[0]?.currentTime ?? 0);
+      if (left > 0) await new Promise((resolve) => setTimeout(resolve, left));
+    } else {
+      await moves[0]?.finished;
+      flushSync(update);
+      // The chat re-renders once more when it observes its new size.
+      await nextFrame();
+      await nextFrame();
+    }
     // The panel shows whole under the frame, which shares its fill, so no board bleeds through.
     hide.cancel();
     await card.animate([{ opacity: 1 }, { opacity: 0 }], { duration: REVEAL_MS, fill: "forwards" })
