@@ -94,6 +94,7 @@ export function NodeSettingsPanel(props: {
   const panel = useRef<HTMLElement>(null);
   const tools = useChatTools(
     node.threadId === "" ? null : scopeThreadRef(node.environmentId, node.threadId),
+    panel,
   );
   const toggleMaximized = (next: boolean) =>
     void morphPanel(panel.current, next, () => setMaximized(next));
@@ -122,7 +123,6 @@ export function NodeSettingsPanel(props: {
 
   return (
     <>
-      {connectedIds.includes(node.environmentId) ? tools.view : null}
       <FloatingPanel
         storageKey="board:chat-panel"
         maximized={maximized}
@@ -223,6 +223,8 @@ export function NodeSettingsPanel(props: {
           )}
         </div>
       </FloatingPanel>
+      {/* After the chat, so it stacks above it like t3's browser view, which draws over the page. */}
+      {connectedIds.includes(node.environmentId) ? tools.view : null}
     </>
   );
 }

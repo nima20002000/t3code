@@ -156,9 +156,11 @@ export function FloatingPanel(props: {
   /** Fills the whole window; toggle it through `morphPanel` to animate the change. */
   readonly maximized?: boolean;
   readonly ref?: Ref<HTMLElement>;
+  /** Where it opens, over any spot kept from an earlier move. */
+  readonly openAt?: PanelPosition | null;
 }) {
   const { storageKey, ref } = props;
-  const [position, setPosition] = useState(() => readPanelPosition(storageKey));
+  const [position, setPosition] = useState(() => props.openAt ?? readPanelPosition(storageKey));
   const [size, setSize] = useState(() => readPanelSize(storageKey));
   const [seenReset, setSeenReset] = useState(props.resetKey ?? null);
   if ((props.resetKey ?? null) !== seenReset) {
