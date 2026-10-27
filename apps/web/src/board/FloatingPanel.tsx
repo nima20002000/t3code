@@ -70,10 +70,20 @@ export function FloatingPanel(props: {
   readonly className: string;
   readonly header: ReactNode;
   readonly children: ReactNode;
+  /** When this changes to a non-null value, the panel returns to its default place and size. */
+  readonly resetKey?: string | null;
 }) {
   const { storageKey } = props;
   const [position, setPosition] = useState(() => readPanelPosition(storageKey));
   const [size, setSize] = useState(() => readPanelSize(storageKey));
+  const [seenReset, setSeenReset] = useState(props.resetKey ?? null);
+  if ((props.resetKey ?? null) !== seenReset) {
+    setSeenReset(props.resetKey ?? null);
+    if (props.resetKey) {
+      setPosition(null);
+      setSize(null);
+    }
+  }
 
   // Drag by the header's empty space; the spot is kept per viewer.
   const startMove = (event: PointerEvent<HTMLDivElement>) => {

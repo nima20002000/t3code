@@ -10,6 +10,7 @@ import {
   type Node,
   type NodeChange,
   type NodeProps,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { MessageSquareIcon, XIcon } from "lucide-react";
@@ -33,6 +34,7 @@ import {
   type Workflow,
   useBoardPeers,
   type BoardNode,
+  activeRunOf,
 } from "./boardStore";
 import { AgentHandles } from "./foreman/AgentHandles";
 import {
@@ -369,6 +371,24 @@ function BoardCanvasPage() {
   const [editingName, setEditingName] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [kanban, setKanban] = useState(readKanbanOpen);
+  // When a run starts, the kanban returns to its band at the bottom and the agents are framed above it.
+  const flow = useRef<ReactFlowInstance<AgentFlowNode, Edge> | null>(null);
+  const canvas = useRef<HTMLDivElement>(null);
+  const runningId = activeRunOf(workflow)?.id ?? null;
+  // oxlint-disable-next-line t3code/react-effect-budget -- Frame React Flow's viewport when a run starts.
+  useEffect(() => {
+    if (!runningId) return;
+    const frame = requestAnimationFrame(() => {
+      const kanbanPanel = canvas.current?.querySelector("aside[aria-label=Kanban]");
+      const kanbanHeight = kanbanPanel?.getBoundingClientRect().height ?? 0;
+      void flow.current?.fitView({
+        padding: { top: "72px", bottom: `${Math.round(kanbanHeight) + 32}px`, x: "48px" },
+        maxZoom: 1,
+        duration: 300,
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [runningId]);
   const toggleKanban = (open: boolean) => {
     setKanban(open);
     try {
@@ -481,7 +501,10 @@ function BoardCanvasPage() {
       <WorkspacePageHeader electron={isElectron} className="border-b border-border">
         <BoardTitle editing={editingName} onEditingChange={setEditingName} />
       </WorkspacePageHeader>
-      <div className={`board-canvas relative min-h-0 flex-1${connecting ? " is-connecting" : ""}`}>
+      <div
+        ref={canvas}
+        className={`board-canvas relative min-h-0 flex-1${connecting ? " is-connecting" : ""}`}
+      >
         <div className="board-floating-controls">
           <BoardToolbar
             onRename={() => setEditingName(true)}
@@ -504,6 +527,9 @@ function BoardCanvasPage() {
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
               onNodeClick={onNodeClick}
+              onInit={(instance) => {
+                flow.current = instance;
+              }}
               onPaneClick={() => {
                 linkFrom.current = null;
               }}
@@ -524,6 +550,7 @@ function BoardCanvasPage() {
           <BoardKanban
             workflow={workflow}
             runId={selectedRun?.id ?? newestRunId(workflow)}
+            dockKey={runningId}
             onClose={() => toggleKanban(false)}
           />
         ) : null}

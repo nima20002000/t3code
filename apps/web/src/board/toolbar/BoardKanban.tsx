@@ -22,6 +22,8 @@ const LABELS: Record<KanbanStatus, string> = {
 export function BoardKanban(props: {
   readonly workflow: Workflow;
   readonly runId: string | null;
+  /** A new value (a run starting) returns the kanban to its band at the bottom. */
+  readonly dockKey: string | null;
   readonly onClose: () => void;
 }) {
   const allCards = useKanbanCards(props.workflow.id);
@@ -35,7 +37,8 @@ export function BoardKanban(props: {
     <FloatingPanel
       storageKey="board:kanban-panel"
       label="Kanban"
-      className="bottom-3 left-3 h-[42%] w-[min(56rem,calc(100%-1.5rem))]"
+      className="right-3 bottom-3 left-3 h-[32%]"
+      resetKey={props.dockKey}
       header={
         <>
           <LayoutGridIcon className="size-3.5 text-muted-foreground" />
