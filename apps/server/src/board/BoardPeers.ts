@@ -61,11 +61,9 @@ const make = Effect.gen(function* () {
               new URL("/api/auth/websocket-ticket/rpc", peer.url),
               { method: "POST", headers: { authorization: `Bearer ${peer.bearer}` } },
             );
-            yield* Schema.decodeUnknownEffect(Schema.toCodecJson(AuthWebSocketTicketResult))(
-              response,
-            );
+            yield* Schema.decodeEffect(Schema.toCodecJson(AuthWebSocketTicketResult))(response);
             return true;
-          }).pipe(Effect.catch(() => Effect.succeed(false)));
+          }).pipe(Effect.orElseSucceed(() => false));
           if (!checked) {
             yield* Effect.logWarning("Could not verify paired board machine", {
               environmentId: peer.environmentId,

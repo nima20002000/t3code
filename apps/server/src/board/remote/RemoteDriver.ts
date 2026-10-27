@@ -44,10 +44,11 @@ const reportStatus = (
   store: PeerStore,
   target: { readonly environmentId: BoardDriverThread["environmentId"] },
   status: "connected" | "error",
+  expectedPeer?: Peer,
 ) =>
   Effect.gen(function* () {
     if (!store.setStatus) return;
-    const peer = yield* store.get(target.environmentId);
+    const peer = expectedPeer ?? (yield* store.get(target.environmentId));
     if (peer) {
       yield* store.setStatus(
         peer,
@@ -66,9 +67,11 @@ const reportStatus = (
 const peerFor = Effect.fn("RemoteDriver.peerFor")(function* (
   store: PeerStore,
   thread: { readonly environmentId: BoardDriverThread["environmentId"] },
+  onPeer?: (peer: Peer) => void,
 ) {
   const peer = yield* store.get(thread.environmentId);
   if (!peer) return yield* new RemoteStateError({ reason: "Remote environment is not paired." });
+  onPeer?.(peer);
   const descriptor = yield* readDescriptor(peer.url);
   if (descriptor.environmentId !== peer.environmentId) {
     return yield* new RemoteStateError({
@@ -107,12 +110,15 @@ const useClient = <A, E>(
 ) =>
   Effect.suspend(() => {
     let warned = false;
+    let attemptPeer: Peer | undefined;
     return Effect.scoped(
       Effect.gen(function* () {
-        const peer = yield* peerFor(store, target);
+        const peer = yield* peerFor(store, target, (current) => {
+          attemptPeer = current;
+        });
         const client = yield* connect(peer);
         const result = yield* use(client);
-        yield* reportStatus(store, target, "connected");
+        yield* reportStatus(store, target, "connected", peer);
         return result;
       }),
     ).pipe(
@@ -125,7 +131,7 @@ const useClient = <A, E>(
       }),
       Effect.retry({ while: retryable, times: 3, schedule: Schedule.spaced("1 second") }),
       Effect.tapError((cause) =>
-        connectionFailure(cause) ? reportStatus(store, target, "error") : Effect.void,
+        connectionFailure(cause) ? reportStatus(store, target, "error", attemptPeer) : Effect.void,
       ),
     );
   });
@@ -247,6 +253,7 @@ export function make(store: PeerStore): NodeDriver {
         let afterSequence = input.afterSequence;
         let warned = false;
         let statusReported = false;
+        let attemptPeer: Peer | undefined;
         const delivered = new Map<string, BoardDriverSettled["status"]>();
         const convert = (
           item: OrchestrationV2ThreadStreamItem,
@@ -277,7 +284,9 @@ export function make(store: PeerStore): NodeDriver {
         };
         const source = Stream.unwrap(
           Effect.gen(function* () {
-            const peer = yield* peerFor(store, input.thread);
+            const peer = yield* peerFor(store, input.thread, (current) => {
+              attemptPeer = current;
+            });
             const client = yield* connect(peer);
             yield* projectionFor(client, input.thread);
             return client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
@@ -294,7 +303,7 @@ export function make(store: PeerStore): NodeDriver {
               });
               if (!statusReported) {
                 statusReported = true;
-                yield* reportStatus(store, input.thread, "connected");
+                yield* reportStatus(store, input.thread, "connected", attemptPeer);
               }
               return result;
             }),
@@ -307,7 +316,7 @@ export function make(store: PeerStore): NodeDriver {
             Stream.fromEffect(
               Effect.gen(function* () {
                 statusReported = false;
-                yield* reportStatus(store, input.thread, "error");
+                yield* reportStatus(store, input.thread, "error", attemptPeer);
                 if (!warned) {
                   warned = true;
                   yield* Effect.logWarning(
@@ -319,7 +328,7 @@ export function make(store: PeerStore): NodeDriver {
             ).pipe(Stream.drain),
           ),
           Stream.catchIf(connectionFailure, (cause) =>
-            Stream.fromEffect(reportStatus(store, input.thread, "error")).pipe(
+            Stream.fromEffect(reportStatus(store, input.thread, "error", attemptPeer)).pipe(
               Stream.drain,
               Stream.concat(Stream.fail(cause)),
             ),

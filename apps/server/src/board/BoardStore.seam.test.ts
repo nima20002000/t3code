@@ -89,9 +89,19 @@ it.effect("keeps core and board migration histories and board data across reopen
             assert.isDefined(yield* drivers.get(peer.environmentId));
             assert.isDefined(yield* drivers.get(EnvironmentId.make("hub")));
           }).pipe(Effect.provide(registry));
-          yield* PeerStore.makeBoard(store).remove(peer.environmentId);
+          const peers = PeerStore.makeBoard(store);
+          yield* peers.setStatus!(peer, "error", "Connection failed.");
+          assert.strictEqual((yield* store.snapshot()).peers[0]?.status, "error");
+          const replacement = { ...peer, bearer: "replacement-board-bearer" };
+          yield* peers.put(replacement);
+          yield* peers.setStatus!(peer, "error", "Stale connection failed.");
+          const afterRePairing = yield* store.snapshot();
+          assert.strictEqual(afterRePairing.sequence, 4);
+          assert.strictEqual(afterRePairing.peers[0]?.status, "connected");
+          assert.notInclude(JSON.stringify(afterRePairing), replacement.bearer);
+          yield* peers.remove(peer.environmentId);
           assert.deepStrictEqual(yield* store.listPeers(), []);
-          const deleted = yield* store.events(2).pipe(Stream.take(1), Stream.runCollect);
+          const deleted = yield* store.events(4).pipe(Stream.take(1), Stream.runCollect);
           assert.strictEqual(deleted[0]?.kind, "peer.deleted");
         }).pipe(Effect.provide(layer)),
       );
