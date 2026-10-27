@@ -272,6 +272,29 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
         Stream.take(1),
         Stream.runDrain,
       );
+      const queued = yield* driver.send({
+        thread,
+        commandId: CommandId.make("board-test-queued"),
+        messageId: MessageId.make("board-test-queued-message"),
+        text: "queued",
+      });
+      const queuedProjection = yield* client[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
+        threadId,
+      });
+      assert.equal(queuedProjection.runs.find((run) => run.id === queued.runId)?.status, "queued");
+      yield* driver.interrupt({
+        thread,
+        runId: queued.runId,
+        commandId: CommandId.make("board-test-cancel-queued"),
+      });
+      const [cancelled] = yield* driver
+        .subscribeSettled({ thread, afterSequence: queued.sequence })
+        .pipe(
+          Stream.filter((event) => event.runId === queued.runId),
+          Stream.take(1),
+          Stream.runCollect,
+        );
+      assert.equal(cancelled?.status, "cancelled");
       yield* driver.interrupt({
         thread,
         runId: held.runId,
