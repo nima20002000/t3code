@@ -33,14 +33,24 @@ jobs:
       - name: Check the fork boundary
         run: node scripts/fork-boundary.mjs
 
+      # tsc build info is keyed by file content, so an unchanged package is skipped across runs.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/t3-board-tsc
+          key: board-tsc-${{ github.sha }}
+          restore-keys: board-tsc-
+
       - name: Typecheck board core
-        run: vp run --filter @t3tools/board-core typecheck
+        working-directory: packages/board-core
+        run: vp exec tsc --noEmit --incremental --tsBuildInfoFile ~/.cache/t3-board-tsc/board-core.tsbuildinfo
 
       - name: Typecheck server
-        run: vp run --filter t3 typecheck
+        working-directory: apps/server
+        run: vp exec tsc --noEmit --incremental --tsBuildInfoFile ~/.cache/t3-board-tsc/server.tsbuildinfo
 
       - name: Typecheck web
-        run: vp run --filter @t3tools/web typecheck
+        working-directory: apps/web
+        run: vp exec tsc --noEmit --incremental --tsBuildInfoFile ~/.cache/t3-board-tsc/web.tsbuildinfo
 
       # Per-file passes keyed by content (scripts/board-test.mjs); a run executes only unproven files.
       - uses: actions/cache@v4
