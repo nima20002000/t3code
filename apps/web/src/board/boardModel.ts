@@ -167,7 +167,15 @@ export function migrateBoards(v2: unknown, v1: unknown, newId: () => string): Bo
   const id = newId();
   return {
     workflows: [
-      normalizeWorkflow({ ...legacy, id, name: "Workflow", runs: [], settings: undefined }),
+      normalizeWorkflow({
+        nodes: legacy.nodes ?? [],
+        edges: legacy.edges ?? [],
+        pending: legacy.pending ?? [],
+        log: legacy.log ?? [],
+        runQueue: legacy.runQueue ?? [],
+        id,
+        name: "Workflow",
+      }),
     ],
     currentId: id,
   };
@@ -256,9 +264,11 @@ export function applySnapshot(workflow: Workflow, snapshot: EditSnapshot): Workf
   const current = new Map(workflow.nodes.map((node) => [node.id, node]));
   const nodes = snapshot.nodes.map((node) => {
     const live = current.get(node.id);
-    return live === undefined
-      ? node
-      : { ...node, baselined: live.baselined, awaitingFirstReply: live.awaitingFirstReply };
+    if (live === undefined) return node;
+    const { awaitingFirstReply: _stale, ...rest } = node;
+    return live.awaitingFirstReply === undefined
+      ? { ...rest, baselined: live.baselined }
+      : { ...rest, baselined: live.baselined, awaitingFirstReply: live.awaitingFirstReply };
   });
   const ids = new Set(nodes.map((node) => node.id));
   return {
