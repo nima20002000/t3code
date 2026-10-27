@@ -331,8 +331,7 @@ export function make(store: PeerStore): NodeDriver {
               (yield* fullProjectionFor(client, input.thread)).runs.find(
                 (candidate) => candidate.id === run.id,
               );
-            if (!current || current.status === "queued")
-              return yield* Effect.fail(cancelled.failure);
+            if (!current || current.status === "queued") return yield* cancelled.failure;
             if (settled(current, input.thread, 0)) return;
           }
           yield* client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
