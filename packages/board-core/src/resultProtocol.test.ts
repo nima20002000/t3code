@@ -179,3 +179,16 @@ describe("helpers", () => {
     expect(text).toContain('"requestId": "r1"');
   });
 });
+
+describe("buildAgentInstructions machine", () => {
+  it("tells the agent which machine its commands run on", () => {
+    const text = buildAgentInstructions({
+      name: "Worker",
+      profile: "worker",
+      machine: "Italy VPS",
+      outgoing: [],
+      incoming: ["Home"],
+    });
+    expect(text).toContain('You run on the machine "Italy VPS"');
+  });
+});

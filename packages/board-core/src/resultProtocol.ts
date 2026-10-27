@@ -262,6 +262,8 @@ export function buildAgentInstructions(input: {
   readonly name: string;
   readonly profile: AgentProfile;
   readonly prompt?: string | undefined;
+  /** The machine the agent's thread runs on; its commands execute there. */
+  readonly machine?: string | undefined;
   readonly outgoing: ReadonlyArray<string>;
   readonly incoming: ReadonlyArray<string>;
   readonly kanban?: ReadonlyArray<KanbanCard> | undefined;
@@ -270,6 +272,11 @@ export function buildAgentInstructions(input: {
   const prompt = input.prompt?.trim() ?? "";
   return [
     `[Board] You are the agent "${input.name}" on a board with other agents. The board routes work between agents; it never reads your prose.`,
+    ...(input.machine
+      ? [
+          `You run on the machine "${input.machine}": every command you run executes there, in your workspace folder. Never connect to another machine (ssh or similar) to do your work; ask the agent on that machine instead.`,
+        ]
+      : []),
     "",
     prompt.length > 0 ? prompt : PROFILE_ROLE[input.profile],
     "",

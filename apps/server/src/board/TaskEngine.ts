@@ -1,5 +1,6 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Stable IDs must be derived synchronously when constructing checkpoints.
 import * as NodeCrypto from "node:crypto";
+import * as NodeOS from "node:os";
 import {
   BoardConflictError,
   BoardInternalError,
@@ -562,9 +563,11 @@ const make = Effect.gen(function* () {
     workflow: Workflow,
     node: BoardNode,
   ) {
+    const peer = yield* store.getPeer(node.environmentId);
     return buildAgentInstructions({
       name: node.name,
       profile: node.profile,
+      machine: peer?.name ?? NodeOS.hostname(),
       prompt: node.prompt,
       outgoing: connectedNodeNames(workflow.nodes, workflow.edges, node.id),
       incoming: incomingNodeNames(workflow.nodes, workflow.edges, node.id),
