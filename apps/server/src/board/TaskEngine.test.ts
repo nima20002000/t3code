@@ -174,6 +174,48 @@ it.effect("records an instruction delivery failure in the workflow", () =>
   }),
 );
 
+it.effect("removes schedules when their node or workflow is deleted", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const layer = BoardService.layer.pipe(
+      Layer.provideMerge(TaskEngine.layer),
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const board = yield* BoardService.BoardService;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(store.putWorkflow(setupWorkflow()));
+      for (const nodeId of ["root", "one"]) {
+        yield* board.createSchedule({
+          id: `schedule:${nodeId}`,
+          workflowId: "workflow",
+          nodeId,
+          task: "Work",
+          everyMs: 60_000,
+          enabled: true,
+        });
+      }
+      yield* board.deleteNode("workflow", "one");
+      assert.deepStrictEqual(
+        (yield* board.listSchedules()).map((entry) => entry.id),
+        ["schedule:root"],
+      );
+      yield* board.deleteWorkflow("workflow");
+      assert.deepStrictEqual(yield* board.listSchedules(), []);
+      const deleted = yield* store.events(0).pipe(
+        Stream.filter((event) => event.kind === "schedule.deleted"),
+        Stream.take(2),
+        Stream.runCollect,
+      );
+      assert.deepStrictEqual(
+        deleted.map((event) => event.kind === "schedule.deleted" && event.scheduleId),
+        ["schedule:one", "schedule:root"],
+      );
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 it.effect("joins all child returns before sending one combined message", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness;

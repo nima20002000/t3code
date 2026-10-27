@@ -102,27 +102,25 @@ const make = Effect.gen(function* () {
       const node = workflow.nodes.find((entry) => entry.id === nodeId);
       if (!node) continue;
       const key = `${encodeURIComponent(workflow.id)}:${sequence}:${encodeURIComponent(node.id)}`;
-      const send = node.projectId
-        ? drivers.get(node.environmentId).pipe(
-            Effect.flatMap((driver) =>
-              driver.send({
-                thread: {
-                  environmentId: node.environmentId,
-                  projectId: node.projectId!,
-                  threadId: node.threadId,
-                },
-                commandId: CommandId.make(`board:briefing:${key}`),
-                messageId: MessageId.make(`board:briefing:${key}`),
-                text: buildBoardInstructions(
-                  node.name,
-                  connectedNodeNames(workflow.nodes, workflow.edges, node.id),
-                  incomingNodeNames(workflow.nodes, workflow.edges, node.id),
-                ),
-              }),
-            ),
-          )
-        : Effect.fail(new BoardInvalidRequestError({ message: "Node project is missing." }));
-      const result = yield* send.pipe(Effect.result);
+      const result = yield* Effect.gen(function* () {
+        if (!node.projectId)
+          return yield* new BoardInvalidRequestError({ message: "Node project is missing." });
+        const driver = yield* drivers.get(node.environmentId);
+        return yield* driver.send({
+          thread: {
+            environmentId: node.environmentId,
+            projectId: node.projectId,
+            threadId: node.threadId,
+          },
+          commandId: CommandId.make(`board:briefing:${key}`),
+          messageId: MessageId.make(`board:briefing:${key}`),
+          text: buildBoardInstructions(
+            node.name,
+            connectedNodeNames(workflow.nodes, workflow.edges, node.id),
+            incomingNodeNames(workflow.nodes, workflow.edges, node.id),
+          ),
+        });
+      }).pipe(Effect.result);
       if (Result.isSuccess(result)) continue;
       yield* Effect.logWarning("Could not send updated board instructions", {
         workflowId: workflow.id,
@@ -155,6 +153,20 @@ const make = Effect.gen(function* () {
           new BoardConflictError({ message: "Stop the active run before changing the workflow." }),
         )
       : Effect.void;
+  const deleteSchedulesFor = Effect.fn("BoardService.deleteSchedulesFor")(function* (
+    workflowId: string,
+    nodeId?: string,
+  ) {
+    for (const schedule of yield* store.listSchedules()) {
+      if (
+        schedule.workflowId !== workflowId ||
+        (nodeId !== undefined && schedule.nodeId !== nodeId)
+      )
+        continue;
+      yield* store.deleteSchedule(schedule.id);
+      yield* store.appendEvent({ kind: "schedule.deleted", scheduleId: schedule.id });
+    }
+  });
   const create = Effect.fn("BoardService.createWorkflow")(function* (
     input: BoardCreateWorkflowInput,
   ) {
@@ -187,6 +199,7 @@ const make = Effect.gen(function* () {
         const workflow = yield* getWorkflow(id);
         yield* checkEditable(workflow);
         yield* store.deleteWorkflow(id);
+        yield* deleteSchedulesFor(id);
         yield* store.appendEvent({ kind: "workflow.deleted", workflowId: id });
       }),
     );
@@ -299,6 +312,7 @@ const make = Effect.gen(function* () {
         yield* checkEditable(workflow);
         if (!workflow.nodes.some((node) => node.id === nodeId))
           return yield* new BoardNotFoundError({ message: "Node not found." });
+        yield* deleteSchedulesFor(id, nodeId);
         yield* save({
           ...workflow,
           nodes: workflow.nodes.filter((node) => node.id !== nodeId),
