@@ -27,6 +27,13 @@ export {
 export { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
 export {
   Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarHeader,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
+  SidebarRail,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,

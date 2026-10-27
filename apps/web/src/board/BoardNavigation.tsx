@@ -1,6 +1,7 @@
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { WorkflowIcon } from "lucide-react";
 import { memo, type ComponentProps } from "react";
+import { BoardSidebarContent } from "./BoardSidebarContent";
 import {
   Sidebar,
   SidebarMenu,
@@ -17,8 +18,14 @@ export function boardHidesSidebar(pathname: string) {
 }
 
 export function BoardSidebar(props: ComponentProps<typeof Sidebar>) {
-  const hidden = useLocation({ select: (location) => boardHidesSidebar(location.pathname) });
-  return hidden ? null : <Sidebar {...props} />;
+  const onBoard = useLocation({ select: (location) => boardHidesSidebar(location.pathname) });
+  return onBoard ? (
+    <Sidebar {...props} aria-label="Board">
+      <BoardSidebarContent />
+    </Sidebar>
+  ) : (
+    <Sidebar {...props} />
+  );
 }
 
 function useOpenBoard() {

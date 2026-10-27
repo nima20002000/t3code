@@ -18,6 +18,8 @@ import {
   type History,
   type WorkflowSettings,
 } from "@t3tools/board-core/boardModel";
+import type { EnvironmentId } from "@t3tools/contracts";
+import type { KanbanCard } from "@t3tools/board-core/kanban";
 import { Atom } from "effect/reactivity";
 import { useEffect } from "react";
 
@@ -187,6 +189,16 @@ export function useCurrentWorkflow(): Workflow {
 }
 export const activeRunOf = (workflow: Workflow) =>
   workflow.runs.find((run) => run.status === "running" || run.status === "stopping");
+export function useBoardWorkspaces() {
+  return useBoardState().snapshot?.workspaces ?? [];
+}
+const NO_CARDS: ReadonlyArray<KanbanCard> = [];
+export function useKanbanCards(workflowId: string): ReadonlyArray<KanbanCard> {
+  return (
+    useBoardState().snapshot?.kanban.find((entry) => entry.workflowId === workflowId)?.cards ??
+    NO_CARDS
+  );
+}
 export function useBoardPeers(): ReadonlyArray<BoardPeer> {
   return useBoardState().snapshot?.peers ?? [];
 }
@@ -348,6 +360,67 @@ export function createNewWorkflow(name?: string, settings?: WorkflowSettings) {
     );
     setState({ currentId: workflow.id });
   });
+}
+export function createWorkflowIn(workspaceId: string, name: string) {
+  const id = randomUUID();
+  const finalName = uniqueWorkflowName(
+    getSnapshot()?.workflows.map((w) => w.name) ?? [],
+    name.trim() || "Workflow",
+  );
+  perform("Could not create workflow", async () => {
+    const workflow = await runBoardMutation((client) =>
+      client.createWorkflow({ headers: {}, payload: { id, name: finalName, workspaceId } }),
+    );
+    setCurrentWorkflow(workflow.id);
+  });
+}
+export function createWorkspace(name: string) {
+  perform("Could not create workspace", async () => {
+    const workspace = await runBoardMutation((client) =>
+      client.createWorkspace({ headers: {}, payload: { id: randomUUID(), name: name.trim() } }),
+    );
+    createWorkflowIn(workspace.id, "Workflow");
+  });
+}
+export function renameWorkspace(id: string, name: string) {
+  perform("Could not rename workspace", () =>
+    runBoardMutation((client) =>
+      client.updateWorkspace({
+        headers: {},
+        params: { workspaceId: id },
+        payload: { name: name.trim() },
+      }),
+    ),
+  );
+}
+export function removeWorkspace(id: string) {
+  perform("Could not delete workspace", () =>
+    runBoardMutation((client) =>
+      client.deleteWorkspace({ headers: {}, params: { workspaceId: id } }),
+    ),
+  );
+}
+export function addWorkspaceFolder(
+  workspaceId: string,
+  environmentId: EnvironmentId,
+  path?: string,
+) {
+  perform("Could not add folder", () =>
+    runBoardMutation((client) =>
+      client.addFolder({
+        headers: {},
+        params: { workspaceId },
+        payload: { environmentId, ...(path?.trim() ? { path: path.trim() } : {}) },
+      }),
+    ),
+  );
+}
+export function removeWorkspaceFolder(workspaceId: string, environmentId: EnvironmentId) {
+  perform("Could not remove folder", () =>
+    runBoardMutation((client) =>
+      client.deleteFolder({ headers: {}, params: { workspaceId, environmentId } }),
+    ),
+  );
 }
 export function duplicateWorkflow(id: string) {
   const source = getSnapshot()?.workflows.find((w) => w.id === id);
