@@ -17,7 +17,7 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { EdgeRunView, NodeRunView } from "@t3tools/board-core/runView";
 
 import { NodeSettingsPanel } from "./NodeSettingsPanel";
-import { AddAgentDialog } from "./AddAgentDialog";
+import { AgentDialog } from "./AddAgentDialog";
 import {
   addEdge,
   useBoardConnection,
@@ -524,7 +524,7 @@ function BoardCanvasPage() {
           />
         ) : null}
       </div>
-      {addingAgent ? <AddAgentDialog onClose={() => setAddingAgent(false)} /> : null}
+      {addingAgent ? <AgentDialog onClose={() => setAddingAgent(false)} /> : null}
     </SidebarInset>
   );
 }

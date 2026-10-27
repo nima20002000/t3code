@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   type BoardCreateNodeInput,
+  type BoardUpdateNodeInput,
   type BoardPeer,
   type BoardSchedule,
   type BoardSnapshot,
@@ -475,6 +476,19 @@ export async function createNode(workflowId: string, input: BoardCreateNodeInput
     client.createNode({ headers: {}, params: { workflowId }, payload: input }),
   );
   histories.set(workflowId, history);
+  changedHistory();
+}
+export async function configureNode(id: string, patch: BoardUpdateNodeInput) {
+  const workflow = getCurrentWorkflow();
+  const history = recordHistory(historyOf(workflow), snapshotOf(workflow));
+  await runBoardMutation((client) =>
+    client.updateNode({
+      headers: {},
+      params: { workflowId: workflow.id, nodeId: id },
+      payload: patch,
+    }),
+  );
+  histories.set(workflow.id, history);
   changedHistory();
 }
 function patchNode(id: string, patch: { name?: string; prompt?: string; x?: number; y?: number }) {

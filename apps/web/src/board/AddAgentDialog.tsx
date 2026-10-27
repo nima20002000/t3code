@@ -3,7 +3,14 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { useRef, useState } from "react";
 import * as Schema from "effect/Schema";
 
-import { createNode, nextNodePosition, useBoardWorkspaces, useCurrentWorkflow } from "./boardStore";
+import {
+  configureNode,
+  createNode,
+  nextNodePosition,
+  useBoardWorkspaces,
+  useCurrentWorkflow,
+  type BoardNode,
+} from "./boardStore";
 import { useBoardMachines } from "./useBoardMachines";
 import {
   Button,
@@ -29,30 +36,41 @@ const isProviderInstanceId = Schema.is(ProviderInstanceId);
 
 const FIELD_CLASS = "h-8 w-full rounded-md border bg-background px-2 text-sm";
 
-export function AddAgentDialog(props: { readonly onClose: () => void }) {
+/** Adds an agent, or with `node` edits one: profile, machine, model, name and role. */
+export function AgentDialog(props: {
+  readonly node?: BoardNode;
+  readonly onClose: () => void;
+  readonly onRemove?: () => void;
+  readonly onSendInstructions?: () => void;
+}) {
+  const { node } = props;
   const connected = useBoardMachines();
   const providersByEnvironment = useEnvironmentProviders();
-  const workspace = useBoardWorkspaces().find((item) => item.id === workflow.workspaceId);
   const workflow = useCurrentWorkflow();
+  const workspace = useBoardWorkspaces().find((item) => item.id === workflow.workspaceId);
   const { id: workflowId, settings } = workflow;
   const [environmentId, setEnvironmentId] = useState<EnvironmentId | "">(
-    connected[0]?.environmentId ?? "",
+    node?.environmentId ?? connected[0]?.environmentId ?? "",
   );
   const [manualProvider, setManualProvider] = useState(settings.defaultInstanceId);
   const [manualModel, setManualModel] = useState(settings.defaultModel);
   const [modelChoice, setModelChoice] = useState<{
     readonly environmentId: EnvironmentId;
     readonly selection: ModelSelection;
-  } | null>(null);
-  const [name, setName] = useState("");
-  const [role, setRole] = useState("");
+  } | null>(node ? { environmentId: node.environmentId, selection: node.modelSelection } : null);
+  const [name, setName] = useState(node?.name ?? "");
+  const [role, setRole] = useState(node?.prompt ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pendingId = useRef<string | null>(null);
 
   const folder = workspace?.folders.find((item) => item.environmentId === environmentId);
-  const hasOrchestrator = workflow.nodes.some((node) => node.profile === "orchestrator");
-  const [chosenProfile, setChosenProfile] = useState<"worker" | "orchestrator">("orchestrator");
+  const hasOrchestrator = workflow.nodes.some(
+    (other) => other.id !== node?.id && other.profile === "orchestrator",
+  );
+  const [chosenProfile, setChosenProfile] = useState<"worker" | "orchestrator">(
+    node?.profile ?? "orchestrator",
+  );
   const profile = hasOrchestrator ? "worker" : chosenProfile;
   const providers =
     (environmentId === "" ? undefined : providersByEnvironment.get(environmentId)) ??
@@ -82,6 +100,17 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
     setSubmitting(true);
     setError(null);
     try {
+      if (node) {
+        await configureNode(node.id, {
+          name: agentName,
+          profile,
+          environmentId,
+          modelSelection: selection,
+          prompt: role,
+        });
+        props.onClose();
+        return;
+      }
       const id = pendingId.current ?? randomUUID();
       pendingId.current = id;
       await createNode(workflowId, {
@@ -116,7 +145,7 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
           }}
         >
           <DialogHeader>
-            <DialogTitle>Add agent</DialogTitle>
+            <DialogTitle>{node ? `${node.name} settings` : "Add agent"}</DialogTitle>
             <DialogDescription>
               Each run starts a fresh {settings.runtimeMode} thread for this agent in the workspace
               folder.
@@ -160,7 +189,7 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
                 Folder
                 <p className="text-muted-foreground">
                   {folder
-                    ? folder.path
+                    ? folder.path || "The machine's existing t3 project"
                     : `${workspace?.name ?? "The workspace"} gets a folder on this machine when the agent first runs.`}
                 </p>
               </div>
@@ -222,11 +251,32 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
             </div>
           </DialogPanel>
           <DialogFooter>
+            {props.onRemove ? (
+              <Button
+                type="button"
+                variant="destructive-outline"
+                className="sm:mr-auto"
+                onClick={props.onRemove}
+              >
+                Remove
+              </Button>
+            ) : null}
+            {props.onSendInstructions ? (
+              <Button type="button" variant="outline" onClick={props.onSendInstructions}>
+                Send board instructions
+              </Button>
+            ) : null}
             <Button type="button" variant="outline" onClick={props.onClose}>
               Cancel
             </Button>
             <Button type="submit" disabled={!canSubmit}>
-              {submitting ? "Starting..." : "Start agent"}
+              {node
+                ? submitting
+                  ? "Saving..."
+                  : "Save"
+                : submitting
+                  ? "Starting..."
+                  : "Start agent"}
             </Button>
           </DialogFooter>
         </form>

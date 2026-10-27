@@ -1,15 +1,15 @@
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./upstream";
-import { XIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { SettingsIcon, XIcon } from "lucide-react";
+import { useEffect, useState, type PointerEvent } from "react";
 import { Link } from "@tanstack/react-router";
 
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { AgentDialog } from "./AddAgentDialog";
+import { IconButton } from "./toolbar/IconButton";
 import { useSendBoardInstructions } from "./useSendBoardInstructions";
 import {
   openNodeChat,
   removeNode,
   renameNode,
-  setNodeRole,
   useCurrentWorkflow,
   useBoardPeers,
   type BoardNode,
@@ -23,28 +23,30 @@ import {
   Button,
   ChatView,
   Input,
-  Textarea,
   useConnectedEnvironmentIds,
   useEnvironmentIdentities,
-  useProject,
   useRightPanelStore,
-  useThreadShells,
 } from "./upstream";
 
-function InfoLine({ label, value }: { readonly label: string; readonly value: string }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <div className="flex min-w-0 gap-1.5 text-xs text-muted-foreground">
-            <span className="shrink-0">{label}</span>
-            <span className="truncate text-foreground/80">{value}</span>
-          </div>
-        }
-      />
-      <TooltipPopup>{value}</TooltipPopup>
-    </Tooltip>
-  );
+const PANEL_POSITION_KEY = "board:chat-panel-position";
+type PanelPosition = { readonly x: number; readonly y: number };
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(value, max));
+function readPanelPosition(): PanelPosition | null {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(PANEL_POSITION_KEY) ?? "null");
+    return value && typeof value === "object" && "x" in value && "y" in value
+      ? { x: Number(value.x), y: Number(value.y) }
+      : null;
+  } catch {
+    return null;
+  }
+}
+function savePanelPosition(position: PanelPosition) {
+  try {
+    localStorage.setItem(PANEL_POSITION_KEY, JSON.stringify(position));
+  } catch {
+    // Storage can be unavailable; the panel just opens at its default spot next time.
+  }
 }
 
 /**
@@ -60,18 +62,15 @@ export function NodeSettingsPanel(props: {
   const environments = useEnvironmentIdentities();
   const connectedIds = useConnectedEnvironmentIds();
   const peers = useBoardPeers();
-  const threads = useThreadShells();
   const send = useSendBoardInstructions();
-  const shell = threads.find(
-    (thread) => thread.environmentId === node.environmentId && thread.id === node.threadId,
-  );
-  const project = useProject(shell ? scopeProjectRef(node.environmentId, shell.projectId) : null);
   const machine =
     environments.find((environment) => environment.environmentId === node.environmentId)?.label ??
     peers.find((peer) => peer.environmentId === node.environmentId)?.name ??
     "Unknown";
   const [name, setName] = useState(node.name);
-  const [role, setRole] = useState(node.prompt ?? "");
+  const [editingName, setEditingName] = useState(false);
+  const [configuring, setConfiguring] = useState(false);
+  const [position, setPosition] = useState(readPanelPosition);
 
   // The panel is too narrow for t3's right panel; start each node's chat with it closed.
   // oxlint-disable-next-line t3code/react-effect-budget -- Synchronize the external right-panel store with the active thread.
@@ -89,8 +88,8 @@ export function NodeSettingsPanel(props: {
   }, [onClose]);
 
   const commitName = () => {
-    if (name.trim() === "") setName(node.name);
-    else if (name.trim() !== node.name) renameNode(node.id, name);
+    setEditingName(false);
+    if (name.trim() !== "" && name.trim() !== node.name) renameNode(node.id, name);
   };
 
   const sendInstructions = async () => {
@@ -108,60 +107,97 @@ export function NodeSettingsPanel(props: {
     );
   };
 
+  // Drag by the header's empty space; the spot is kept per viewer.
+  const startMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (
+      event.button !== 0 ||
+      (event.target instanceof Element && event.target.closest("button, input, [role=menu]"))
+    )
+      return;
+    const panel = event.currentTarget.parentElement;
+    const board = panel?.offsetParent;
+    if (!panel || !(board instanceof HTMLElement)) return;
+    const startX = event.clientX - panel.offsetLeft;
+    const startY = event.clientY - panel.offsetTop;
+    const header = event.currentTarget;
+    header.setPointerCapture(event.pointerId);
+    let next = position;
+    const move = (moveEvent: globalThis.PointerEvent) => {
+      next = {
+        x: clamp(moveEvent.clientX - startX, 0, board.clientWidth - panel.offsetWidth),
+        y: clamp(moveEvent.clientY - startY, 0, board.clientHeight - 40),
+      };
+      setPosition(next);
+    };
+    const end = () => {
+      header.removeEventListener("pointermove", move);
+      header.removeEventListener("pointerup", end);
+      header.removeEventListener("pointercancel", end);
+      if (next) savePanelPosition(next);
+    };
+    header.addEventListener("pointermove", move);
+    header.addEventListener("pointerup", end);
+    header.addEventListener("pointercancel", end);
+  };
+
   return (
     <aside
-      aria-label={`${node.name} settings`}
+      aria-label={`${node.name} chat`}
       className="absolute top-16 right-3 bottom-auto z-20 flex h-[70%] w-[420px] max-w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-xl border bg-background shadow-lg"
+      style={position ? { left: position.x, top: position.y, right: "auto" } : undefined}
     >
-      <div className="flex shrink-0 flex-col gap-1.5 border-b p-2.5">
-        <div className="flex items-center gap-2">
+      <div
+        className="flex shrink-0 cursor-grab items-center gap-1 border-b py-1.5 pr-1.5 pl-2.5 active:cursor-grabbing"
+        onPointerDown={startMove}
+      >
+        {editingName ? (
           <Input
             size="sm"
             aria-label="Name"
+            autoFocus
             value={name}
             onChange={(event) => setName(event.target.value)}
             onBlur={commitName}
             onKeyDown={(event) => {
               if (event.key === "Enter") event.currentTarget.blur();
+              if (event.key === "Escape") {
+                event.stopPropagation();
+                setName(node.name);
+                setEditingName(false);
+              }
             }}
           />
-          <Button size="icon-sm" variant="ghost" aria-label="Close" onClick={onClose}>
-            <XIcon size={15} />
-          </Button>
-        </div>
-        <InfoLine label="Machine" value={machine} />
-        <InfoLine label="Project" value={project?.title ?? "Unknown"} />
-        <InfoLine
-          label="Model"
-          value={`${node.modelSelection.instanceId} / ${node.modelSelection.model}`}
-        />
-        <details className="text-xs">
-          <summary className="cursor-pointer text-muted-foreground">Role</summary>
-          <Textarea
-            className="mt-1.5 min-h-9"
-            rows={3}
-            placeholder="What is this agent for?"
-            value={role}
-            onChange={(event) => setRole(event.target.value)}
-            onBlur={() => setNodeRole(node.id, role)}
-          />
-        </details>
-        <div className="flex gap-2">
-          <Button size="xs" variant="outline" onClick={() => void sendInstructions()}>
-            Send board instructions
-          </Button>
-          <Button
-            size="xs"
-            variant="destructive-outline"
+        ) : (
+          <button
+            type="button"
+            className="min-w-0 truncate rounded px-1 text-left text-sm font-medium hover:bg-accent"
             onClick={() => {
-              removeNode(node.id);
-              onClose();
+              setName(node.name);
+              setEditingName(true);
             }}
           >
-            Remove
-          </Button>
-        </div>
+            {node.name}
+          </button>
+        )}
+        <div className="flex-1" />
+        <IconButton label={`${node.name} settings`} onClick={() => setConfiguring(true)}>
+          <SettingsIcon size={15} />
+        </IconButton>
+        <IconButton label="Close" onClick={onClose}>
+          <XIcon size={15} />
+        </IconButton>
       </div>
+      {configuring ? (
+        <AgentDialog
+          node={node}
+          onClose={() => setConfiguring(false)}
+          onSendInstructions={() => void sendInstructions()}
+          onRemove={() => {
+            removeNode(node.id);
+            onClose();
+          }}
+        />
+      ) : null}
       <div className="relative isolate flex min-h-0 min-w-0 flex-1 [transform:translateZ(0)] flex-col overflow-hidden">
         {node.threadId === "" ? (
           <div className="grid content-start gap-3 p-4 text-sm">
