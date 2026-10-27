@@ -20,8 +20,8 @@ import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$proje
 import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
-import { Route as ChatBoardRouteImport } from './routes/_chat.board'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
+import { Route as ChatBoardRouteImport } from './routes/_chat.board'
 import { Route as ChatSettingsWorktreesRouteImport } from './routes/_chat.settings.worktrees'
 import { Route as ChatSettingsThreadsRouteImport } from './routes/_chat.settings.threads'
 import { Route as ChatSettingsStorageRouteImport } from './routes/_chat.settings.storage'
@@ -104,14 +104,14 @@ const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   path: '/pull-requests',
   getParentRoute: () => ChatRoute,
 } as any)
-const ChatBoardRoute = ChatBoardRouteImport.update({
-  id: '/board',
-  path: '/board',
-  getParentRoute: () => ChatRoute,
-} as any)
 const ChatNewRoute = ChatNewRouteImport.update({
   id: '/new',
   path: '/new',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatBoardRoute = ChatBoardRouteImport.update({
+  id: '/board',
+  path: '/board',
   getParentRoute: () => ChatRoute,
 } as any)
 const ChatSettingsWorktreesRoute = ChatSettingsWorktreesRouteImport.update({
@@ -596,18 +596,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatPullRequestsRouteImport
       parentRoute: typeof ChatRoute
     }
-    '/_chat/board': {
-      id: '/_chat/board'
-      path: '/board'
-      fullPath: '/board'
-      preLoaderRoute: typeof ChatBoardRouteImport
-      parentRoute: typeof ChatRoute
-    }
     '/_chat/new': {
       id: '/_chat/new'
       path: '/new'
       fullPath: '/new'
       preLoaderRoute: typeof ChatNewRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/board': {
+      id: '/_chat/board'
+      path: '/board'
+      fullPath: '/board'
+      preLoaderRoute: typeof ChatBoardRouteImport
       parentRoute: typeof ChatRoute
     }
     '/_chat/settings/worktrees': {
