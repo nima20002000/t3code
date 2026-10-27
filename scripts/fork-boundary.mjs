@@ -70,6 +70,12 @@ for (const dir of BOARD_DIRS) {
   }
 }
 
+// An upstream merge rewrites AGENTS.md; the fork banner must survive it.
+if (!readFileSync("AGENTS.md", "utf8").includes("**This checkout is the board fork.**"))
+  problems.push(
+    "AGENTS.md: the board fork banner at the top is missing (lost in an upstream merge?)",
+  );
+
 if (problems.length) {
   console.error(`Fork boundary violations (base ${base.slice(0, 10)}):`);
   for (const problem of problems) console.error(`  ${problem}`);
