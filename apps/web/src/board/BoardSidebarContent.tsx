@@ -136,11 +136,13 @@ export function BoardSidebarPanel() {
       handle.removeEventListener("pointerup", end);
       handle.removeEventListener("pointercancel", end);
       if (!moved.current) return;
-      element.style.removeProperty("width");
-      element.style.removeProperty("--board-fade");
-      delete element.dataset.folded;
+      const next = current < (MIN_OPEN + FOLDED) / 2 ? FOLDED : Math.max(current, MIN_OPEN);
+      // Write the settled values too: React skips the style update when the width state is unchanged.
+      element.style.width = `${next}px`;
+      element.style.setProperty("--board-fade", String(fadeFor(next)));
+      element.dataset.folded = String(next <= FOLDED);
       setDragging(false);
-      settle(current < (MIN_OPEN + FOLDED) / 2 ? FOLDED : Math.max(current, MIN_OPEN));
+      settle(next);
     };
     handle.addEventListener("pointermove", move);
     handle.addEventListener("pointerup", end);
