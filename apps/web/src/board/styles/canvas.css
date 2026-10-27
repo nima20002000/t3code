@@ -391,6 +391,8 @@
     inset: 0;
     border: 2px solid var(--wave);
     border-radius: inherit;
+    /* Rings show only while they animate out; one a cue doesn't animate must not linger. */
+    opacity: 0;
     box-shadow:
       0 0 22px color-mix(in srgb, var(--wave) 55%, transparent),
       inset 0 0 18px color-mix(in srgb, var(--wave) 30%, transparent);

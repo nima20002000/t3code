@@ -35,3 +35,19 @@
 .board-chat-panel:not([data-full]) .messages-timeline-scroll::-webkit-scrollbar-track {
   margin-bottom: 8rem;
 }
+
+/* A board agent waits for work; t3's default composer prompt reads as an invitation to chat. */
+.board-chat-panel
+  div:has(> [data-composer-rich-text][aria-placeholder^="Ask anything"])
+  + .text-placeholder {
+  visibility: hidden;
+}
+
+.board-chat-panel
+  div:has(> [data-composer-rich-text][aria-placeholder^="Ask anything"])
+  + .text-placeholder::after {
+  content: "Waiting for your prompt";
+  position: absolute;
+  inset: 0;
+  visibility: visible;
+}
