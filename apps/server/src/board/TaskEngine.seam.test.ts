@@ -336,13 +336,20 @@ it.live("runs a board request and interrupts through the real server and orchest
         (yield* post("/api/board/workflows/workflow/runs/queued/stop", {})).status,
         200,
       );
-      const afterCancel = yield* client[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
+      const cancelled = yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
         threadId,
-      });
-      assert.strictEqual(
-        afterCancel.runs.find((run) => run.id === queuedRunId)?.status,
-        "cancelled",
+        afterSequence: queuedEvent.sequence,
+      }).pipe(
+        Stream.filter(
+          (item) =>
+            item.kind === "event" &&
+            item.event.type === "run.updated" &&
+            item.event.payload.id === queuedRunId &&
+            item.event.payload.status === "cancelled",
+        ),
+        Stream.runHead,
       );
+      assert.isTrue(Option.isSome(cancelled));
       assert.strictEqual(
         (yield* post("/api/board/workflows/workflow/runs/held/stop", {})).status,
         200,
