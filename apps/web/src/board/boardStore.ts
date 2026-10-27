@@ -49,6 +49,7 @@ interface BoardState {
   readonly currentId: string;
   readonly status: "loading" | "connected" | "offline";
   readonly error: string | null;
+  readonly importError: string | null;
   readonly historyVersion: number;
 }
 
@@ -57,6 +58,7 @@ export const boardStateAtom = Atom.make<BoardState>({
   currentId: "",
   status: "loading",
   error: null,
+  importError: null,
   historyVersion: 0,
 }).pipe(Atom.withLabel("board-hub-state"));
 const histories = new Map<string, History>();
@@ -73,6 +75,35 @@ function setSnapshot(snapshot: BoardSnapshot) {
   setState({ snapshot, currentId, status: "connected", error: null });
 }
 
+async function importToHub(snapshot: BoardSnapshot, signal?: AbortSignal) {
+  await importLocalWorkflows({
+    storage: localStorage,
+    origin: new URL(resolvePrimaryEnvironmentHttpUrl("/")).origin,
+    snapshot,
+    newId: randomUUID,
+    projectIdForNode: (node) =>
+      readThreadShells().find(
+        (shell) => shell.environmentId === node.environmentId && shell.id === node.threadId,
+      )?.projectId,
+    send: (workflows) =>
+      runBoardMutation(
+        (client) => client.importWorkflows({ headers: {}, payload: { workflows } }),
+        signal,
+      ),
+  });
+}
+
+export async function retryBoardImport() {
+  const snapshot = getSnapshot();
+  if (!snapshot) return;
+  try {
+    await importToHub(snapshot);
+    setState({ importError: null });
+  } catch (error) {
+    setState({ importError: error instanceof Error ? error.message : String(error) });
+  }
+}
+
 export function useBoardConnection() {
   // oxlint-disable-next-line t3code/react-effect-budget -- Keep the hub stream connected while the board is open.
   useEffect(() => {
@@ -84,17 +115,13 @@ export function useBoardConnection() {
           (client) => client.getSnapshot({ headers: {} }),
           controller.signal,
         );
-        await importLocalWorkflows({
-          storage: localStorage,
-          origin: new URL(resolvePrimaryEnvironmentHttpUrl("/")).origin,
-          snapshot,
-          newId: randomUUID,
-          send: (workflows) =>
-            runBoardApi(
-              (client) => client.importWorkflows({ headers: {}, payload: { workflows } }),
-              controller.signal,
-            ),
-        });
+        try {
+          await importToHub(snapshot, controller.signal);
+          if (!controller.signal.aborted) setState({ importError: null });
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          setState({ importError: error instanceof Error ? error.message : String(error) });
+        }
         snapshot = await runBoardApi(
           (client) => client.getSnapshot({ headers: {} }),
           controller.signal,
@@ -147,6 +174,9 @@ export function useBoardState() {
 export function useBoards() {
   const { snapshot, currentId } = useBoardState();
   return { workflows: snapshot?.workflows ?? [], currentId };
+}
+export function getWorkflow(id: string): Workflow | undefined {
+  return getSnapshot()?.workflows.find((workflow) => workflow.id === id);
 }
 export function getCurrentWorkflow(): Workflow {
   const { snapshot, currentId } = getState();
@@ -369,7 +399,6 @@ export async function createNode(workflowId: string, input: BoardCreateNodeInput
 function patchNode(
   id: string,
   patch: { name?: string; role?: string; x?: number; y?: number },
-  record = true,
 ) {
   const action = (workflow: Workflow) =>
     runBoardMutation((client) =>
@@ -379,11 +408,23 @@ function patchNode(
         payload: patch,
       }),
     );
-  if (record) edit(action);
-  else perform("Could not update agent", () => action(getCurrentWorkflow()));
+  edit(action);
 }
-export function updateNode(id: string, patch: { x: number; y: number }) {
-  patchNode(id, patch, false);
+export async function updateNode(id: string, patch: { x: number; y: number }) {
+  const workflow = getCurrentWorkflow();
+  try {
+    await runBoardMutation((client) =>
+      client.updateNode({
+        headers: {},
+        params: { workflowId: workflow.id, nodeId: id },
+        payload: patch,
+      }),
+    );
+    return true;
+  } catch (error) {
+    reportError("Could not update agent", error);
+    return false;
+  }
 }
 export function renameNode(id: string, name: string) {
   if (name.trim()) patchNode(id, { name: name.trim() });

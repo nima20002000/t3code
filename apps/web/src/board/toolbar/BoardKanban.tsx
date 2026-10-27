@@ -9,7 +9,7 @@ const COLUMNS: ReadonlyArray<{ readonly status: NodeStatus; readonly label: stri
   { status: "idle", label: "Idle" },
   { status: "working", label: "Working" },
   { status: "waiting", label: "Waiting for return" },
-  { status: "disconnected", label: "Disconnected" },
+  { status: "disconnected", label: "Chat not connected" },
 ];
 
 /** Foreman-style kanban of the workflow's agents by status; a card opens its thread. */

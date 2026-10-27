@@ -1,5 +1,6 @@
 import { MAX_LOG, migrateBoards } from "@t3tools/board-core/boardModel";
 import { BoardWorkflowSchema, type BoardSnapshot } from "@t3tools/board-core/http";
+import type { ProjectId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 type Workflow = typeof BoardWorkflowSchema.Type;
@@ -10,6 +11,7 @@ export async function importLocalWorkflows(input: {
   readonly origin: string;
   readonly snapshot: BoardSnapshot;
   readonly newId: () => string;
+  readonly projectIdForNode: (node: Workflow["nodes"][number]) => ProjectId | undefined;
   readonly send: (workflows: ReadonlyArray<Workflow>) => Promise<unknown>;
 }) {
   const storageKey = `t3.board.imported.v2:${input.origin}`;
@@ -42,15 +44,25 @@ export async function importLocalWorkflows(input: {
         (workflow) => !input.snapshot.workflows.some((existing) => existing.id === workflow.id),
       )
       .map((workflow): Workflow => {
+        const nodes = workflow.nodes.map((node) => {
+          const projectId = node.projectId ?? input.projectIdForNode(node);
+          if (!projectId) {
+            throw new Error(
+              `Connect the machine for ${node.name} in Settings → Connections, then retry the import.`,
+            );
+          }
+          return { ...node, projectId };
+        });
         if (
           !workflow.pending.length &&
           !workflow.runQueue.length &&
           !workflow.runs.some((run) => run.status === "running")
         )
-          return workflow;
+          return { ...workflow, nodes };
         const at = new Date().toISOString();
         return {
           ...workflow,
+          nodes,
           pending: [],
           runQueue: [],
           runs: workflow.runs.map((run) =>

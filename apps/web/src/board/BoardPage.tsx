@@ -1,6 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { ProjectId, ThreadId, type EnvironmentId } from "@t3tools/contracts";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   applyNodeChanges,
   Background,
@@ -32,12 +32,15 @@ import {
   useBoardConnection,
   useBoardState,
   getCurrentWorkflow,
+  getWorkflow,
   isThreadOnBoard,
   recordHistoryStep,
   removeEdge,
   removeNode,
+  retryBoardImport,
   updateNode,
   useCurrentWorkflow,
+  useBoardPeers,
   type BoardNode,
 } from "./boardStore";
 import { AgentHandles } from "./foreman/AgentHandles";
@@ -50,6 +53,7 @@ import { randomUUID } from "../lib/utils";
 import { useBoardMachines } from "./useBoardMachines";
 import { BoardKanban } from "./toolbar/BoardKanban";
 import { RunDetails } from "./toolbar/RunDetails";
+import { useBoardPending } from "./boardApi";
 
 const ACTIVE_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 
@@ -202,6 +206,7 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
   const navigate = useNavigate();
   const connectedIds = useConnectedEnvironmentIds();
   const environments = useEnvironmentIdentities();
+  const peers = useBoardPeers();
   const threads = useThreadShells();
   const openSettings = useContext(OpenSettingsContext);
 
@@ -210,6 +215,7 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
   );
   const machine =
     environments.find((environment) => environment.environmentId === node.environmentId)?.label ??
+    peers.find((peer) => peer.environmentId === node.environmentId)?.name ??
     "Unknown";
   const status = !connectedIds.includes(node.environmentId)
     ? "disconnected"
@@ -244,7 +250,9 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
       harnessLabel={shell ? instanceId : "Thread not found"}
       model={shell?.modelSelection.model ?? null}
       machine={machine}
-      statusLabel={status === "working" ? "Working" : status === "idle" ? "Idle" : "Disconnected"}
+      statusLabel={
+        status === "working" ? "Working" : status === "idle" ? "Idle" : "Chat not connected"
+      }
       state={status === "working" ? "running" : status === "disconnected" ? "unavailable" : "idle"}
       selected={selected}
       actions={actions}
@@ -264,7 +272,11 @@ const EDGE_TYPES = { signal: SignalEdge };
 
 function toFlowNode(node: BoardNode, previous?: AgentFlowNode): AgentFlowNode {
   return previous
-    ? { ...previous, position: { x: node.x, y: node.y }, data: { node } }
+    ? {
+        ...previous,
+        position: previous.dragging ? previous.position : { x: node.x, y: node.y },
+        data: { node },
+      }
     : {
         id: node.id,
         type: "agent",
@@ -294,6 +306,8 @@ export function BoardPage() {
 
 function BoardCanvasPage() {
   const workflow = useCurrentWorkflow();
+  const { importError } = useBoardState();
+  const pending = useBoardPending();
   const { nodes, edges } = workflow;
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [kanban, setKanban] = useState(false);
@@ -338,7 +352,14 @@ function BoardCanvasPage() {
     setFlowNodes((previous) => applyNodeChanges(changes, previous));
     for (const change of changes) {
       if (change.type === "position" && change.position && change.dragging === false) {
-        updateNode(change.id, { x: change.position.x, y: change.position.y });
+        void updateNode(change.id, { x: change.position.x, y: change.position.y }).then((saved) => {
+          if (saved) return;
+          const persisted = getWorkflow(workflow.id)?.nodes.find((node) => node.id === change.id);
+          if (persisted)
+            setFlowNodes((previous) =>
+              previous.map((node) => (node.id === change.id ? toFlowNode(persisted, node) : node)),
+            );
+        });
       } else if (change.type === "remove") {
         removeNode(change.id);
       }
@@ -418,6 +439,19 @@ function BoardCanvasPage() {
           selectedEdgeCount={selectedEdgeIds.size}
           onDeleteSelectedEdges={deleteSelectedEdges}
         />
+        {importError ? (
+          <div className="absolute top-16 left-4 z-20 grid max-w-md gap-2 rounded-lg border bg-background p-3 text-sm shadow-lg">
+            <p role="alert">Local workflows have not been imported. {importError}</p>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={() => void retryBoardImport()} disabled={pending}>
+                Retry import
+              </Button>
+              <Button size="sm" variant="outline" render={<Link to="/settings/connections" />}>
+                Connections
+              </Button>
+            </div>
+          </div>
+        ) : null}
         {selectedRun ? (
           <RunDetails run={selectedRun} onClose={() => setSelectedRunId(null)} />
         ) : null}

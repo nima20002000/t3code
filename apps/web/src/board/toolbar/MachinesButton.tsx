@@ -3,12 +3,14 @@ import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
+import { usePrimaryEnvironment } from "../../state/environments";
 import { runBoardMutation } from "../boardApi";
 import { useBoardPeers } from "../boardStore";
 import { ToolbarPopover } from "./ToolbarPopover";
 
 export function MachinesButton() {
   const peers = useBoardPeers();
+  const primary = usePrimaryEnvironment();
   const [name, setName] = useState("");
   const [link, setLink] = useState("");
   const [busy, setBusy] = useState(false);
@@ -45,8 +47,11 @@ export function MachinesButton() {
   return (
     <ToolbarPopover label="Machines" icon={<MonitorIcon />}>
       <div className="grid gap-2">
+        <p className="text-xs text-muted-foreground">
+          Pair machines here for the hub. Connect them in Settings → Connections to use their chats.
+        </p>
         <div>
-          This machine <span className="text-muted-foreground">· hub</span>
+          {primary?.label ?? "Hub"} <span className="text-muted-foreground">· hub</span>
         </div>
         {peers.map((peer) => (
           <div key={peer.id} className="flex items-center justify-between gap-2">

@@ -1,12 +1,13 @@
 import { XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Link } from "@tanstack/react-router";
 
 import ChatView from "../components/ChatView";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { useProject, useThreadShells } from "../state/entities";
-import { useEnvironmentIdentities } from "../state/environments";
+import { useConnectedEnvironmentIds, useEnvironmentIdentities } from "../state/environments";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useRightPanelStore } from "../rightPanelStore";
 import { useSendBoardInstructions } from "./useSendBoardInstructions";
@@ -15,6 +16,7 @@ import {
   renameNode,
   setNodeRole,
   useCurrentWorkflow,
+  useBoardPeers,
   type BoardNode,
 } from "./boardStore";
 import {
@@ -43,6 +45,8 @@ export function NodeSettingsPanel(props: {
   const { node, onClose } = props;
   const { nodes, edges } = useCurrentWorkflow();
   const environments = useEnvironmentIdentities();
+  const connectedIds = useConnectedEnvironmentIds();
+  const peers = useBoardPeers();
   const threads = useThreadShells();
   const send = useSendBoardInstructions();
   const shell = threads.find(
@@ -51,6 +55,7 @@ export function NodeSettingsPanel(props: {
   const project = useProject(shell ? scopeProjectRef(node.environmentId, shell.projectId) : null);
   const machine =
     environments.find((environment) => environment.environmentId === node.environmentId)?.label ??
+    peers.find((peer) => peer.environmentId === node.environmentId)?.name ??
     "Unknown";
   const [name, setName] = useState(node.name);
   const [role, setRole] = useState(node.role ?? "");
@@ -136,7 +141,18 @@ export function NodeSettingsPanel(props: {
         </div>
       </div>
       <div className="relative isolate flex min-h-0 min-w-0 flex-1 [transform:translateZ(0)] flex-col overflow-hidden">
-        <ChatView environmentId={node.environmentId} threadId={node.threadId} routeKind="server" />
+        {connectedIds.includes(node.environmentId) ? (
+          <ChatView environmentId={node.environmentId} threadId={node.threadId} routeKind="server" />
+        ) : (
+          <div className="grid content-start gap-3 p-4 text-sm">
+            <p>Connect {machine} in Connections to view and use this thread.</p>
+            <div>
+              <Button size="sm" variant="outline" render={<Link to="/settings/connections" />}>
+                Connections
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </aside>
   );

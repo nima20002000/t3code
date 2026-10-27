@@ -1,5 +1,6 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { createWorkflow } from "@t3tools/board-core/boardModel";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
@@ -52,13 +53,35 @@ it("shows Board in the chat layout, hides the sidebar and mounts the node's real
         y: 40,
         baselined: true,
       },
+      {
+        id: "remote",
+        name: "Remote agent",
+        environmentId: EnvironmentId.make("remote-environment"),
+        threadId: ThreadId.make("remote-thread"),
+        x: 340,
+        y: 40,
+        baselined: true,
+      },
     ],
   };
   let eventController: ReadableStreamDefaultController<Uint8Array> | undefined;
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if (url.pathname === "/api/board/snapshot") {
-      return Response.json({ sequence: 0, workflows: [workflow], peers: [], schedules: [] });
+      return Response.json({
+        sequence: 0,
+        workflows: [workflow],
+        peers: [
+          {
+            id: "remote-peer",
+            name: "Remote machine",
+            environmentId: "remote-environment",
+            url: "https://remote.example",
+            status: "connected",
+          },
+        ],
+        schedules: [],
+      });
     }
     if (url.pathname === "/api/board/events") {
       return new Response(
@@ -102,5 +125,12 @@ it("shows Board in the chat layout, hides the sidebar and mounts the node's real
   await expect.element(panel).toBeVisible();
   await expect
     .element(panel.getByText("Answer 0 for board-seam-thread.", { exact: false }))
+    .toBeVisible();
+  await userEvent.click(panel.getByRole("button", { name: "Close" }));
+  await userEvent.hover(screen.getByText("Remote agent", { exact: true }));
+  await userEvent.click(screen.getByRole("button", { name: "Remote agent settings" }));
+  const remotePanel = screen.getByRole("complementary", { name: "Remote agent settings" });
+  await expect
+    .element(remotePanel.getByText("Connect Remote machine in Connections to view and use this thread."))
     .toBeVisible();
 });

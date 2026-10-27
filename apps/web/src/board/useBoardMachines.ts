@@ -10,7 +10,7 @@ export function useBoardMachines() {
         {
           environmentId: primaryId,
           label:
-            identities.find((item) => item.environmentId === primaryId)?.label ?? "This machine",
+            identities.find((item) => item.environmentId === primaryId)?.label ?? "Hub",
         },
       ]
     : [];

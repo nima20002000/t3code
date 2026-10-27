@@ -1,4 +1,5 @@
 import { createWorkflow, type Workflow } from "@t3tools/board-core/boardModel";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import type { BoardSnapshot } from "@t3tools/board-core/http";
 import { expect, it } from "vite-plus/test";
 
@@ -35,6 +36,7 @@ it("only marks a local import after it succeeds and skips IDs already on the hub
     origin: "https://hub.example",
     snapshot: { ...snapshot, workflows: [first] },
     newId: () => "unused",
+    projectIdForNode: () => undefined,
   };
   await expect(
     importLocalWorkflows({
@@ -94,6 +96,7 @@ it("does not leave old in-flight runs or queued work looking active after import
     origin: "https://hub.example",
     snapshot,
     newId: () => "unused",
+    projectIdForNode: () => undefined,
     send: async (workflows) => {
       imported = workflows[0];
     },
@@ -102,4 +105,52 @@ it("does not leave old in-flight runs or queued work looking active after import
   expect(imported?.runQueue).toEqual([]);
   expect(imported?.runs[0]?.status).toBe("stopped");
   expect(imported?.log[0]?.text).toContain("stopped during import");
+});
+
+it("resolves legacy node projects before importing and keeps unresolved workflows for retry", async () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
+  } as Storage;
+  const node = {
+    id: "node",
+    name: "Scout",
+    environmentId: EnvironmentId.make("peer"),
+    threadId: ThreadId.make("thread"),
+    x: 0,
+    y: 0,
+    baselined: true,
+  };
+  const workflow = { ...createWorkflow("legacy", "Legacy"), nodes: [node] };
+  const raw = JSON.stringify({ currentId: workflow.id, workflows: [workflow] });
+  values.set("t3.board.v2", raw);
+  let imported: ReadonlyArray<Workflow> = [];
+  const input = {
+    storage,
+    origin: "https://hub.example",
+    snapshot,
+    newId: () => "unused",
+    send: async (workflows: ReadonlyArray<Workflow>) => {
+      imported = workflows;
+    },
+  };
+  await expect(
+    importLocalWorkflows({ ...input, projectIdForNode: () => undefined }),
+  ).rejects.toThrow("Connect the machine for Scout");
+  expect(imported).toEqual([]);
+  expect(values.get("t3.board.v2")).toBe(raw);
+  expect(values.has("t3.board.imported.v2:https://hub.example")).toBe(false);
+
+  await importLocalWorkflows({
+    ...input,
+    projectIdForNode: (candidate) =>
+      candidate.environmentId === node.environmentId && candidate.threadId === node.threadId
+        ? ProjectId.make("project")
+        : undefined,
+  });
+  expect(imported[0]?.nodes[0]?.projectId).toBe(ProjectId.make("project"));
+  expect(values.get("t3.board.imported.v2:https://hub.example")).toBe("1");
 });
