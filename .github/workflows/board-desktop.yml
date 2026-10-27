@@ -1,0 +1,34 @@
+# Fork-only: builds the Linux desktop AppImage from a board/** branch and
+# uploads it as a workflow artifact. Run it manually from the Actions tab or
+# with `gh workflow run board-desktop.yml --ref board/mvp`.
+name: Board Desktop Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  appimage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Linux build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config
+          rustup target add x86_64-unknown-linux-gnu
+
+      - uses: ./.github/actions/setup-ci-deps
+
+      - name: Build AppImage
+        run: vp run dist:desktop:linux
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: t3code-board-appimage
+          path: release/*.AppImage
+          if-no-files-found: error
