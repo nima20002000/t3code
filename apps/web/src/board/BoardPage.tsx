@@ -346,7 +346,9 @@ export function BoardPage() {
             {status === "offline"
               ? `Board unavailable: ${error}`
               : status === "connected"
-                ? "This board is empty."
+                ? snapshot?.workspaces.length
+                  ? "No workflow yet. Create one in a workspace from the left menu."
+                  : "No workspace yet. Create one from the left menu, then add a workflow to it."
                 : "Connecting to board…"}
           </p>
           <div>

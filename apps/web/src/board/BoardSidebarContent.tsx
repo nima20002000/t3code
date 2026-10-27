@@ -171,9 +171,11 @@ export function BoardSidebarPanel() {
       </div>
       <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-x-hidden overflow-y-auto px-2">
         {workspaces.length === 0 ? (
-          <p className="truncate px-2 py-2 text-xs text-muted-foreground opacity-(--board-fade)">
-            No workspaces yet.
-          </p>
+          <Row
+            icon={<PlusIcon className="size-4" />}
+            label="New workspace"
+            onClick={() => (folded ? unfold() : setDialog({ kind: "new-workspace" }))}
+          />
         ) : null}
         {workspaces.map((workspace) => (
           <div key={workspace.id} className="flex flex-col gap-0.5">
@@ -229,6 +231,14 @@ export function BoardSidebarPanel() {
               }
             />
             <div className="flex flex-col gap-0.5 [[data-folded=true]_&]:hidden">
+              {workflows.some((workflow) => workflow.workspaceId === workspace.id) ? null : (
+                <Row
+                  indent
+                  icon={<PlusIcon className="size-3.5" />}
+                  label="New workflow"
+                  onClick={() => setDialog({ kind: "new-workflow", workspaceId: workspace.id })}
+                />
+              )}
               {workflows
                 .filter((workflow) => workflow.workspaceId === workspace.id)
                 .map((workflow) => (

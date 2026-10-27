@@ -24,12 +24,7 @@ import type { KanbanCard } from "@t3tools/board-core/kanban";
 import { Atom } from "effect/reactivity";
 import { useEffect } from "react";
 
-import {
-  readBoardHubEnvironmentId,
-  runBoardApi,
-  runBoardMutation,
-  streamBoardEvents,
-} from "./boardApi";
+import { runBoardApi, runBoardMutation, streamBoardEvents } from "./boardApi";
 import { applyBoardEvent, workflowView, type Workflow } from "./boardState";
 
 export type { BoardNode, Workflow } from "./boardState";
@@ -43,13 +38,7 @@ export type {
   RunStatus,
   WorkflowSettings,
 } from "@t3tools/board-core/boardModel";
-import {
-  appAtomRegistry,
-  environmentSession,
-  randomUUID,
-  readEnvironmentScope,
-  toastManager,
-} from "./upstream";
+import { appAtomRegistry, randomUUID, toastManager } from "./upstream";
 
 interface BoardState {
   readonly snapshot: BoardSnapshot | null;
@@ -92,53 +81,10 @@ export function useBoardConnection() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const connect = async () => {
       try {
-        let snapshot = await runBoardApi(
+        const snapshot = await runBoardApi(
           (client) => client.getSnapshot({ headers: {} }),
           controller.signal,
         );
-        const hubId = readBoardHubEnvironmentId();
-        const canMutate = () =>
-          hubId !== null && readEnvironmentScope(hubId, "orchestration:operate");
-        // Creates the default workspace and workflow; runs once the scope allows writes.
-        const prepare = async (current: BoardSnapshot) => {
-          if (current.workflows.length) return current;
-          const workspaceId =
-            current.workspaces[0]?.id ??
-            (
-              await runBoardApi(
-                (client) =>
-                  client.createWorkspace({
-                    headers: {},
-                    payload: { id: randomUUID(), name: "Default workspace" },
-                  }),
-                controller.signal,
-              )
-            ).id;
-          await runBoardApi(
-            (client) =>
-              client.createWorkflow({
-                headers: {},
-                payload: { id: randomUUID(), name: "Workflow", workspaceId },
-              }),
-            controller.signal,
-          );
-          return runBoardApi((client) => client.getSnapshot({ headers: {} }), controller.signal);
-        };
-        if (canMutate()) snapshot = await prepare(snapshot);
-        else if (hubId !== null) {
-          // Writes are impossible until the session scope loads; prepare then, and the stream delivers the result.
-          const unsubscribe = appAtomRegistry.subscribe(
-            environmentSession.sessionStateAtom(hubId),
-            () => {
-              if (!canMutate()) return;
-              unsubscribe();
-              void prepare(getSnapshot() ?? snapshot).catch((error: unknown) => {
-                if (!controller.signal.aborted) reportError("Could not prepare the board", error);
-              });
-            },
-          );
-          controller.signal.addEventListener("abort", unsubscribe, { once: true });
-        }
         if (controller.signal.aborted) return;
         setSnapshot(snapshot);
         await streamBoardEvents(
@@ -342,17 +288,8 @@ export function createNewWorkflow(name?: string, settings?: WorkflowSettings) {
     name?.trim() || "Workflow",
   );
   perform("Could not create workflow", async () => {
-    const workspaceId =
-      getCurrentWorkflow()?.workspaceId ??
-      getSnapshot()?.workspaces[0]?.id ??
-      (
-        await runBoardMutation((client) =>
-          client.createWorkspace({
-            headers: {},
-            payload: { id: randomUUID(), name: "Default workspace" },
-          }),
-        )
-      ).id;
+    const workspaceId = getCurrentWorkflow()?.workspaceId ?? getSnapshot()?.workspaces[0]?.id;
+    if (!workspaceId) throw new Error("Create a workspace first.");
     const workflow = await runBoardMutation((client) =>
       client.createWorkflow({
         headers: {},
