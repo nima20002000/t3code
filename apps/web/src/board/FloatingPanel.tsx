@@ -222,6 +222,13 @@ export function FloatingPanel(props: {
       }`}
       style={style}
     >
+      {props.maximized ? (
+        <div
+          aria-hidden
+          className="h-(--native-titlebar-height) shrink-0"
+          style={{ WebkitAppRegion: "drag" } as CSSProperties}
+        />
+      ) : null}
       {props.maximized
         ? null
         : RESIZE_HANDLES.map((handle) => (
