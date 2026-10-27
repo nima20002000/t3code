@@ -11,17 +11,25 @@ import { newMessageId, randomUUID } from "../lib/utils";
 import { threadEnvironment, useEnvironmentThread } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import {
+  activeRunOf,
   addPending,
+  addRunRequest,
   appendLog,
   canRequest,
   clearRunRequest,
-  getBoardState,
+  endRun,
+  findWorkflowOfNode,
+  getWorkflow,
   isProcessed,
   markProcessed,
   removePending,
+  startRun,
+  stopWorkflowRun,
   updateNode,
-  useBoardState,
+  updateRunRequest,
+  useWorkflows,
   type BoardNode,
+  type Workflow,
 } from "./boardStore";
 import {
   buildCorrectionMessage,
@@ -58,7 +66,11 @@ export function useSendToBoardNode(): SendToNode {
   return useCallback(async (node, text) => {
     const info = nodeThreadInfo.get(node.id);
     if (!info) {
-      appendLog("info", `Could not send to ${node.name}: thread is not loaded yet.`);
+      appendLog(
+        "info",
+        `Could not send to ${node.name}: thread is not loaded yet.`,
+        findWorkflowOfNode(node.id)?.id,
+      );
       return false;
     }
     const result = await startRef.current({
@@ -73,44 +85,64 @@ export function useSendToBoardNode(): SendToNode {
       },
     });
     if (result._tag === "Failure") {
-      appendLog("info", `Sending to ${node.name} failed.`);
+      appendLog("info", `Sending to ${node.name} failed.`, findWorkflowOfNode(node.id)?.id);
       return false;
     }
     return true;
   }, []);
 }
 
-// Run id per entry node, so its `finish` can be logged as the end of the run (in memory, MVP).
-const runByEntryNode = new Map<string, string>();
 // Nodes that already got one correction message for their current invalid reply.
 const correctedNodes = new Set<string>();
+// Nodes interrupted by Stop while running: their cut-off reply must not be parsed or corrected.
+const stoppedNodes = new Set<string>();
 
 function truncate(text: string, max = 200): string {
   return text.length > max ? `${text.slice(0, max)}...` : text;
 }
 
-function handleInvalid(node: BoardNode, reason: string, send: SendToNode) {
+function buildHandoffExhaustedMessage(targetName: string, limit: number): string {
+  return `[Board] Work handoff limit reached: you may send at most ${limit} request(s) to ${targetName} per run and that is used up, so the request was not delivered. Do not send more requests to ${targetName}; continue with what you have and end your reply with a valid result block.`;
+}
+
+function handleInvalid(workflowId: string, node: BoardNode, reason: string, send: SendToNode) {
   if (correctedNodes.has(node.id)) {
     correctedNodes.delete(node.id);
     appendLog(
       "error",
       `${node.name}: still no valid result block (${reason}); giving up this turn.`,
+      workflowId,
     );
     return;
   }
   correctedNodes.add(node.id);
-  appendLog("error", `${node.name}: invalid result (${reason}); asked for a correction.`);
+  appendLog(
+    "error",
+    `${node.name}: invalid result (${reason}); asked for a correction.`,
+    workflowId,
+  );
   void send(node, buildCorrectionMessage(reason));
 }
 
-function routeReturn(node: BoardNode, pendingId: string, result: BoardResult, send: SendToNode) {
-  const board = getBoardState();
-  const pending = board.pending.find((entry) => entry.id === pendingId);
+function routeReturn(
+  workflow: Workflow,
+  node: BoardNode,
+  pendingId: string,
+  result: BoardResult,
+  send: SendToNode,
+) {
+  const pending = workflow.pending.find((entry) => entry.id === pendingId);
   if (!pending) return;
-  removePending(pending.id);
-  const requester = board.nodes.find((candidate) => candidate.id === pending.from);
+  removePending(workflow.id, pending.id);
+  updateRunRequest(workflow.id, pending.id, {
+    status: "returned",
+    returnedAt: new Date().toISOString(),
+    returnSummary: result.summary,
+    returnData: result.data,
+  });
+  const requester = workflow.nodes.find((candidate) => candidate.id === pending.from);
   if (!requester) {
-    appendLog("info", `${node.name} returned, but the requester no longer exists.`);
+    appendLog("info", `${node.name} returned, but the requester no longer exists.`, workflow.id);
     return;
   }
   void send(
@@ -122,13 +154,25 @@ function routeReturn(node: BoardNode, pendingId: string, result: BoardResult, se
       data: result.data,
     }),
   ).then((sent) => {
-    if (sent) appendLog("result", `${node.name} -> ${requester.name}: ${truncate(result.summary)}`);
+    if (sent) {
+      appendLog(
+        "result",
+        `${node.name} -> ${requester.name}: ${truncate(result.summary)}`,
+        workflow.id,
+      );
+    }
   });
 }
 
-function handleResult(node: BoardNode, result: BoardResult, send: SendToNode): string | null {
-  const board = getBoardState();
-  const incoming = board.pending.filter((entry) => entry.to === node.id);
+function handleResult(
+  workflowId: string,
+  node: BoardNode,
+  result: BoardResult,
+  send: SendToNode,
+): string | null {
+  const workflow = getWorkflow(workflowId);
+  if (!workflow) return null;
+  const incoming = workflow.pending.filter((entry) => entry.to === node.id);
   const { routing } = result;
 
   if (routing.kind === "return" || routing.kind === "finish") {
@@ -145,28 +189,29 @@ function handleResult(node: BoardNode, result: BoardResult, send: SendToNode): s
         : "requestId is required because several requests are pending";
     }
     if (match) {
-      routeReturn(node, match, result, send);
+      routeReturn(workflow, node, match, result, send);
       return null;
     }
-    const runId = runByEntryNode.get(node.id);
-    if (runId) {
-      runByEntryNode.delete(node.id);
+    const run = activeRunOf(workflow);
+    if (run && run.nodeId === node.id) {
+      endRun(workflow.id, run.id, "finished", { summary: result.summary, data: result.data });
       appendLog(
         "run",
-        `Run ${runId.slice(0, 8)} finished by ${node.name}: ${result.summary} ${truncate(JSON.stringify(result.data), 400)}`,
+        `Run ${run.id.slice(0, 8)} finished by ${node.name}: ${result.summary} ${truncate(JSON.stringify(result.data), 400)}`,
+        workflow.id,
       );
     } else {
-      appendLog("info", `${node.name} finished: ${truncate(result.summary)}`);
+      appendLog("info", `${node.name} finished: ${truncate(result.summary)}`, workflow.id);
     }
     return null;
   }
 
   // Validate every target first so a bad request sends nothing.
+  const reachable = workflow.nodes.filter(
+    (candidate) => candidate.id !== node.id && canRequest(node.id, candidate.id),
+  );
   const targets: Array<{ target: BoardNode; request: WorkRequest }> = [];
   for (const request of routing.requests) {
-    const reachable = board.nodes.filter(
-      (candidate) => candidate.id !== node.id && canRequest(node.id, candidate.id),
-    );
     const name = matchNodeName(
       reachable.map((candidate) => candidate.name),
       request.to,
@@ -175,24 +220,76 @@ function handleResult(node: BoardNode, result: BoardResult, send: SendToNode): s
     if (!target) return `"${request.to}" is not a node you can send requests to`;
     targets.push({ target, request });
   }
+
+  const run = activeRunOf(workflow);
+  const cap = workflow.settings.maxHandoffsPerEdge;
+  const used = new Map<string, number>();
+  const countUsed = (targetId: string) =>
+    used.get(targetId) ??
+    run?.requests.filter(
+      (entry) => entry.fromId === node.id && entry.toId === targetId && entry.status !== "denied",
+    ).length ??
+    0;
+  const exhausted = new Set<string>();
+
   for (const { target, request } of targets) {
     const requestId = randomUUID();
-    addPending({ id: requestId, from: node.id, to: target.id });
+    const record = {
+      id: requestId,
+      fromId: node.id,
+      toId: target.id,
+      from: node.name,
+      to: target.name,
+      at: new Date().toISOString(),
+      task: request.task,
+      input: request.input,
+    };
+    if (cap !== null && countUsed(target.id) >= cap) {
+      exhausted.add(target.name);
+      if (run) addRunRequest(workflow.id, run.id, { ...record, status: "denied" });
+      appendLog(
+        "info",
+        `${node.name} -> ${target.name} denied: handoff limit (${cap}) reached.`,
+        workflow.id,
+      );
+      continue;
+    }
+    used.set(target.id, countUsed(target.id) + 1);
+    if (run) addRunRequest(workflow.id, run.id, { ...record, status: "pending" });
+    addPending(workflow.id, { id: requestId, from: node.id, to: target.id });
     void send(
       target,
       buildRequestMessage({ requestId, from: node.name, task: request.task, input: request.input }),
     ).then((sent) => {
-      if (sent) appendLog("wake", `${node.name} -> ${target.name}: ${truncate(request.task)}`);
-      else removePending(requestId);
+      if (sent) {
+        appendLog("wake", `${node.name} -> ${target.name}: ${truncate(request.task)}`, workflow.id);
+      } else {
+        removePending(workflow.id, requestId);
+        updateRunRequest(workflow.id, requestId, { status: "dropped" });
+      }
     });
+  }
+  if (cap !== null) {
+    for (const targetName of exhausted) {
+      void send(node, buildHandoffExhaustedMessage(targetName, cap));
+    }
   }
   return null;
 }
 
-function handleSettledThread(node: BoardNode, data: ThreadData, send: SendToNode) {
+function handleSettledThread(
+  workflowId: string,
+  node: BoardNode,
+  data: ThreadData,
+  send: SendToNode,
+) {
   const assistantMessages = data.messages.filter(
     (message) => message.role === "assistant" && !message.streaming,
   );
+  if (stoppedNodes.delete(node.id)) {
+    markProcessed(assistantMessages.map((message) => message.id));
+    return;
+  }
   if (node.awaitingFirstReply) {
     // Board-started agent: wait for the reply to its setup prompt, then skip it.
     if (assistantMessages.length === 0) return;
@@ -212,19 +309,23 @@ function handleSettledThread(node: BoardNode, data: ThreadData, send: SendToNode
 
   const parsed = parseResult(latest.text);
   if (!parsed.ok) {
-    handleInvalid(node, parsed.reason, send);
+    handleInvalid(workflowId, node, parsed.reason, send);
     return;
   }
-  const problem = handleResult(node, parsed.result, send);
+  const problem = handleResult(workflowId, node, parsed.result, send);
   if (problem) {
-    handleInvalid(node, problem, send);
+    handleInvalid(workflowId, node, problem, send);
     return;
   }
   correctedNodes.delete(node.id);
 }
 
-function NodeWatcher(props: { readonly node: BoardNode; readonly send: SendToNode }) {
-  const { node, send } = props;
+function NodeWatcher(props: {
+  readonly workflowId: string;
+  readonly node: BoardNode;
+  readonly send: SendToNode;
+}) {
+  const { workflowId, node, send } = props;
   const state = useEnvironmentThread(node.environmentId, node.threadId);
   const data = Option.getOrNull(state.data);
   const sendRef = useRef(send);
@@ -241,48 +342,92 @@ function NodeWatcher(props: { readonly node: BoardNode; readonly send: SendToNod
       interactionMode: data.thread.interactionMode,
     });
     if (running || state.status !== "live") return;
-    handleSettledThread(nodeRef.current, data, sendRef.current);
-  }, [data, state.status]);
+    handleSettledThread(workflowId, nodeRef.current, data, sendRef.current);
+  }, [data, state.status, workflowId]);
 
   return null;
 }
 
+/**
+ * Stop for one workflow: marks the run stopped and drops its pending requests, then interrupts
+ * every node thread with t3's interrupt-turn command (the thread view's stop button).
+ */
+export function useStopWorkflow(): (workflowId: string) => Promise<void> {
+  const interruptTurn = useOrchestrationCommand(threadEnvironment.interruptTurn, {
+    reportFailure: false,
+  });
+  const interruptRef = useRef(interruptTurn);
+  interruptRef.current = interruptTurn;
+  return useCallback(async (workflowId) => {
+    const workflow = getWorkflow(workflowId);
+    if (!workflow) return;
+    for (const node of workflow.nodes) {
+      if (nodeThreadInfo.get(node.id)?.running) stoppedNodes.add(node.id);
+      correctedNodes.delete(node.id);
+    }
+    stopWorkflowRun(workflowId);
+    appendLog("run", "Run stopped: interrupting every agent.", workflowId);
+    const results = await Promise.all(
+      workflow.nodes.map((node) =>
+        interruptRef.current({
+          environmentId: node.environmentId,
+          input: { threadId: node.threadId },
+        }),
+      ),
+    );
+    const failed = results.filter((result) => result._tag === "Failure").length;
+    if (failed > 0) appendLog("error", `${failed} agent(s) could not be interrupted.`, workflowId);
+  }, []);
+}
+
 /** Mounted in the chat layout so board nodes keep working while the Board page is closed. */
 export function BoardEngine() {
-  const { nodes, runQueue } = useBoardState();
+  const workflows = useWorkflows();
   const send = useSendToBoardNode();
   const sendRef = useRef(send);
   sendRef.current = send;
   const startedRuns = useRef(new Set<string>());
 
   useEffect(() => {
-    for (const run of runQueue) {
-      if (startedRuns.current.has(run.id)) continue;
-      startedRuns.current.add(run.id);
-      const node = getBoardState().nodes.find((candidate) => candidate.id === run.nodeId);
-      if (!node) {
-        appendLog("error", "Run skipped: the entry node no longer exists.");
-        clearRunRequest(run.id);
-        continue;
-      }
-      runByEntryNode.set(node.id, run.id);
-      void sendRef.current(node, buildStartMessage(run.id, run.task)).then((sent) => {
-        appendLog(
-          sent ? "run" : "error",
-          sent
-            ? `Run ${run.id.slice(0, 8)} started at ${node.name}.`
-            : `Run could not start at ${node.name}.`,
+    for (const workflow of workflows) {
+      for (const run of workflow.runQueue) {
+        if (startedRuns.current.has(run.id)) continue;
+        startedRuns.current.add(run.id);
+        const workflowId = workflow.id;
+        const node = getWorkflow(workflowId)?.nodes.find(
+          (candidate) => candidate.id === run.nodeId,
         );
-        if (!sent) runByEntryNode.delete(node.id);
-        clearRunRequest(run.id);
-      });
+        if (!node) {
+          appendLog("error", "Run skipped: the entry node no longer exists.", workflowId);
+          clearRunRequest(workflowId, run.id);
+          continue;
+        }
+        const current = getWorkflow(workflowId);
+        if (current && activeRunOf(current)) {
+          appendLog("error", "Run skipped: a run is already active.", workflowId);
+          clearRunRequest(workflowId, run.id);
+          continue;
+        }
+        startRun(workflowId, { id: run.id, nodeId: node.id, nodeName: node.name, task: run.task });
+        void sendRef.current(node, buildStartMessage(run.id, run.task)).then((sent) => {
+          if (sent) {
+            appendLog("run", `Run ${run.id.slice(0, 8)} started at ${node.name}.`, workflowId);
+          } else {
+            endRun(workflowId, run.id, "failed", { summary: `Could not start at ${node.name}.` });
+            appendLog("error", `Run could not start at ${node.name}.`, workflowId);
+          }
+          clearRunRequest(workflowId, run.id);
+        });
+      }
     }
-  }, [runQueue]);
+  }, [workflows]);
   return (
     <>
-      {nodes.map((node) => (
-        <NodeWatcher key={node.id} node={node} send={send} />
-      ))}
+      {workflows.flatMap((workflow) =>
+        workflow.nodes.map((node) => (
+          <NodeWatcher key={node.id} workflowId={workflow.id} node={node} send={send} />
+        )),
+      )}
     </>
   );
 }

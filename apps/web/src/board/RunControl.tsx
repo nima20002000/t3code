@@ -2,11 +2,11 @@ import { PlayIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../components/ui/button";
-import { appendLog, requestRun, useBoardState } from "./boardStore";
+import { appendLog, requestRun, useCurrentWorkflow } from "./boardStore";
 
 /** Foreman-style Run control: pick the entry node, type a task, queue the run. */
 export function RunControl() {
-  const { nodes } = useBoardState();
+  const { nodes } = useCurrentWorkflow();
   const [open, setOpen] = useState(false);
   const [nodeId, setNodeId] = useState("");
   const [task, setTask] = useState("");

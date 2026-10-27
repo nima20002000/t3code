@@ -29,11 +29,11 @@ import {
   addEdge,
   addNode,
   appendLog,
-  getBoardState,
+  getCurrentWorkflow,
   removeEdge,
   removeNode,
   updateNode,
-  useBoardState,
+  useCurrentWorkflow,
   type BoardNode,
 } from "./boardStore";
 import { AgentHandles } from "./foreman/AgentHandles";
@@ -135,7 +135,7 @@ function harnessOf(instanceId: string): "codex" | "claude" | "neutral" {
 function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
   const { node } = data;
   const navigate = useNavigate();
-  const { nodes, edges } = useBoardState();
+  const { nodes, edges } = useCurrentWorkflow();
   const connectedIds = useConnectedEnvironmentIds();
   const environments = useEnvironmentIdentities();
   const threads = useThreadShells();
@@ -246,7 +246,7 @@ function BackButton() {
 }
 
 export function BoardPage() {
-  const { nodes, edges, pending } = useBoardState();
+  const { nodes, edges, pending } = useCurrentWorkflow();
   const send = useSendToBoardNode();
   const [flowNodes, setFlowNodes] = useState<AgentFlowNode[]>(() =>
     nodes.map((n) => toFlowNode(n)),
@@ -303,7 +303,7 @@ export function BoardPage() {
           return next;
         });
       } else if (change.type === "remove") {
-        const edge = getBoardState().edges.find(
+        const edge = getCurrentWorkflow().edges.find(
           (candidate) => `${candidate.a}:${candidate.b}` === change.id,
         );
         if (edge) removeEdge(edge.a, edge.b);
@@ -313,7 +313,7 @@ export function BoardPage() {
 
   const onConnect = (connection: Connection) => {
     if (!addEdge(connection.source, connection.target)) return;
-    const board = getBoardState();
+    const board = getCurrentWorkflow();
     for (const id of [connection.source, connection.target]) {
       const node = board.nodes.find((candidate) => candidate.id === id);
       if (!node) continue;

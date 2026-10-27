@@ -1,4 +1,9 @@
-import { type EnvironmentId, type ModelSelection, type ProjectId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type ModelSelection,
+  ProviderInstanceId,
+  type ProjectId,
+} from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { useState } from "react";
 
@@ -30,7 +35,7 @@ import {
 import { EMPTY_SERVER_PROVIDERS } from "../state/server";
 import { threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
-import { addNode, appendLog } from "./boardStore";
+import { addNode, appendLog, useCurrentWorkflow } from "./boardStore";
 import { buildAgentFirstPrompt } from "./resultProtocol";
 
 const FIELD_CLASS = "h-8 w-full rounded-md border bg-background px-2 text-sm";
@@ -45,6 +50,7 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
   const connectedIds = useConnectedEnvironmentIds();
   const providersByEnvironment = useEnvironmentProviders();
   const projects = useProjects();
+  const { id: workflowId, settings } = useCurrentWorkflow();
   const createThread = useOrchestrationCommand(threadEnvironment.create, { reportFailure: false });
   const startTurn = useOrchestrationCommand(threadEnvironment.startTurn, { reportFailure: false });
 
@@ -77,7 +83,13 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
   const selection: ModelSelection | null =
     modelChoice !== null && modelChoice.environmentId === environmentId
       ? modelChoice.selection
-      : resolveDefaultProviderModelSelection(providers, project?.defaultModelSelection);
+      : resolveDefaultProviderModelSelection(
+          providers,
+          createModelSelection(
+            ProviderInstanceId.make(settings.defaultInstanceId),
+            settings.defaultModel,
+          ),
+        );
   const environmentLabel =
     connected.find((environment) => environment.environmentId === environmentId)?.label ?? "";
   const agentName = name.trim() || environmentLabel || "Agent";
@@ -95,7 +107,7 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
         projectId: project.id,
         title: agentName,
         modelSelection: selection,
-        runtimeMode: "full-access",
+        runtimeMode: settings.runtimeMode,
         interactionMode: "default",
         branch: null,
         worktreePath: null,
@@ -118,7 +130,7 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
         },
         modelSelection: selection,
         titleSeed: agentName,
-        runtimeMode: "full-access",
+        runtimeMode: settings.runtimeMode,
         interactionMode: "default",
       },
     });
@@ -127,14 +139,17 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
       setError("The thread was created but its first turn failed to start.");
       return;
     }
-    addNode({
-      name: agentName,
-      environmentId,
-      threadId,
-      baselined: true,
-      awaitingFirstReply: true,
-    });
-    appendLog("info", `Started agent ${agentName} on ${environmentLabel}.`);
+    addNode(
+      {
+        name: agentName,
+        environmentId,
+        threadId,
+        baselined: true,
+        awaitingFirstReply: true,
+      },
+      workflowId,
+    );
+    appendLog("info", `Started agent ${agentName} on ${environmentLabel}.`, workflowId);
     props.onClose();
   };
 
@@ -156,7 +171,7 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
           <DialogHeader>
             <DialogTitle>Add agent</DialogTitle>
             <DialogDescription>
-              Starts a new full-access thread and tells it how the board works.
+              Starts a new {settings.runtimeMode} thread and tells it how the board works.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
