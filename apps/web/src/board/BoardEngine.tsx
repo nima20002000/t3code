@@ -79,6 +79,13 @@ function handleSettledThread(node: BoardNode, data: ThreadData, send: SendToNode
   const assistantMessages = data.messages.filter(
     (message) => message.role === "assistant" && !message.streaming,
   );
+  if (node.awaitingFirstReply) {
+    // Board-started agent: wait for the reply to its setup prompt, then skip it.
+    if (assistantMessages.length === 0) return;
+    markProcessed(assistantMessages.map((message) => message.id));
+    updateNode(node.id, { awaitingFirstReply: false });
+    return;
+  }
   if (!node.baselined) {
     markProcessed(assistantMessages.map((message) => message.id));
     updateNode(node.id, { baselined: true });

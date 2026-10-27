@@ -17,6 +17,8 @@ export interface BoardNode {
   readonly y: number;
   /** True once the messages that existed when the node was added were marked processed. */
   readonly baselined: boolean;
+  /** Set for agents the board started: their first reply answers the setup prompt and is skipped. */
+  readonly awaitingFirstReply?: boolean;
 }
 
 export interface BoardEdge {
@@ -117,19 +119,26 @@ function nextFreeSlot(nodes: ReadonlyArray<BoardNode>): { x: number; y: number }
   }
 }
 
-export function addNode(input: Pick<BoardNode, "name" | "environmentId" | "threadId">) {
+export function addNode(
+  input: Pick<BoardNode, "name" | "environmentId" | "threadId"> &
+    Partial<Pick<BoardNode, "baselined" | "awaitingFirstReply">>,
+): string {
   const { x, y } = nextFreeSlot(state.nodes);
   const node: BoardNode = {
+    baselined: false,
     ...input,
     id: randomUUID(),
     x,
     y,
-    baselined: false,
   };
   setState({ ...state, nodes: [...state.nodes, node] });
+  return node.id;
 }
 
-export function updateNode(id: string, patch: Partial<Pick<BoardNode, "x" | "y" | "baselined">>) {
+export function updateNode(
+  id: string,
+  patch: Partial<Pick<BoardNode, "x" | "y" | "baselined" | "awaitingFirstReply">>,
+) {
   setState({
     ...state,
     nodes: state.nodes.map((node) => (node.id === id ? { ...node, ...patch } : node)),
@@ -149,6 +158,22 @@ export function areConnected(a: string, b: string): boolean {
   return state.edges.some(
     (edge) => (edge.a === a && edge.b === b) || (edge.a === b && edge.b === a),
   );
+}
+
+export function addEdge(a: string, b: string): boolean {
+  if (a === b || areConnected(a, b)) return false;
+  setState({ ...state, edges: [...state.edges, { a, b }] });
+  return true;
+}
+
+export function removeEdge(a: string, b: string) {
+  if (!areConnected(a, b)) return;
+  setState({
+    ...state,
+    edges: state.edges.filter(
+      (edge) => !((edge.a === a && edge.b === b) || (edge.a === b && edge.b === a)),
+    ),
+  });
 }
 
 export function toggleEdge(a: string, b: string) {

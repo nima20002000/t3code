@@ -23,7 +23,10 @@ export function matchNodeName(names: ReadonlyArray<string>, name: string): strin
   return names.find((candidate) => candidate.trim().toLowerCase() === wanted) ?? null;
 }
 
-export function buildBoardInstructions(name: string, connectedNames: ReadonlyArray<string>): string {
+export function buildBoardInstructions(
+  name: string,
+  connectedNames: ReadonlyArray<string>,
+): string {
   const peers =
     connectedNames.length > 0 ? connectedNames.map((peer) => `- ${peer}`).join("\n") : "(none yet)";
   return [
@@ -47,4 +50,28 @@ export function buildTaskMessage(from: string, task: string): string {
 
 export function buildResultMessage(from: string, text: string): string {
   return `[Board] Result from ${from}:\n\n${text}`;
+}
+
+/** Names of the nodes joined to `nodeId` by an edge, in edge order. */
+export function connectedNodeNames(
+  nodes: ReadonlyArray<{ readonly id: string; readonly name: string }>,
+  edges: ReadonlyArray<{ readonly a: string; readonly b: string }>,
+  nodeId: string,
+): ReadonlyArray<string> {
+  return edges.flatMap((edge) => {
+    const peerId = edge.a === nodeId ? edge.b : edge.b === nodeId ? edge.a : null;
+    const peer = nodes.find((candidate) => candidate.id === peerId);
+    return peer ? [peer.name] : [];
+  });
+}
+
+/** First message of an agent the board starts: its role, then the board instructions. */
+export function buildAgentFirstPrompt(
+  name: string,
+  role: string,
+  connectedNames: ReadonlyArray<string>,
+): string {
+  const instructions = buildBoardInstructions(name, connectedNames);
+  const trimmed = role.trim();
+  return trimmed.length > 0 ? `${trimmed}\n\n${instructions}` : instructions;
 }

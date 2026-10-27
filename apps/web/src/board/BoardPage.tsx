@@ -1,28 +1,46 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useRef, useState, type PointerEvent } from "react";
+import {
+  applyNodeChanges,
+  Background,
+  Controls,
+  ConnectionMode,
+  Handle,
+  MiniMap,
+  Position,
+  ReactFlow,
+  type Connection,
+  type Edge,
+  type EdgeChange,
+  type Node,
+  type NodeChange,
+  type NodeProps,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import { useEffect, useState } from "react";
 
 import { SidebarInset } from "../components/ui/sidebar";
 import { Button } from "../components/ui/button";
 import { useThreadShells } from "../state/entities";
 import { useConnectedEnvironmentIds, useEnvironmentIdentities } from "../state/environments";
 import { buildThreadRouteParams } from "../threadRoutes";
+import { AddAgentDialog } from "./AddAgentDialog";
 import { useSendToBoardNode } from "./BoardEngine";
 import {
+  addEdge,
   addNode,
   appendLog,
-  areConnected,
+  getBoardState,
+  removeEdge,
   removeNode,
-  toggleEdge,
   updateNode,
   useBoardState,
   type BoardNode,
 } from "./boardStore";
-import { buildBoardInstructions } from "./wakeProtocol";
+import { buildBoardInstructions, connectedNodeNames } from "./wakeProtocol";
 
 const CARD_WIDTH = 260;
-const CARD_HEIGHT = 190;
 const ACTIVE_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 const FIELD_CLASS = "h-8 rounded-md border bg-background px-2 text-sm";
 
@@ -94,19 +112,16 @@ function AddNodeForm() {
   );
 }
 
-function NodeCard(props: {
-  readonly node: BoardNode;
-  readonly connectFrom: string | null;
-  readonly onConnectClick: (nodeId: string) => void;
-}) {
-  const { node, connectFrom, onConnectClick } = props;
+type AgentFlowNode = Node<{ readonly node: BoardNode }, "agent">;
+
+function AgentCard({ data }: NodeProps<AgentFlowNode>) {
+  const { node } = data;
   const navigate = useNavigate();
   const { nodes, edges } = useBoardState();
   const connectedIds = useConnectedEnvironmentIds();
   const environments = useEnvironmentIdentities();
   const threads = useThreadShells();
   const send = useSendToBoardNode();
-  const drag = useRef<{ dx: number; dy: number } | null>(null);
 
   const shell = threads.find(
     (thread) => thread.environmentId === node.environmentId && thread.id === node.threadId,
@@ -119,27 +134,8 @@ function NodeCard(props: {
     : shell && ACTIVE_STATUSES.has(shell.source.status)
       ? "working"
       : "idle";
-
-  const peerNames = edges.flatMap((edge) => {
-    const peerId = edge.a === node.id ? edge.b : edge.b === node.id ? edge.a : null;
-    const peer = nodes.find((candidate) => candidate.id === peerId);
-    return peer ? [peer.name] : [];
-  });
-
-  const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    drag.current = { dx: event.clientX - node.x, dy: event.clientY - node.y };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-  const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    if (!drag.current) return;
-    updateNode(node.id, {
-      x: Math.max(0, event.clientX - drag.current.dx),
-      y: Math.max(0, event.clientY - drag.current.dy),
-    });
-  };
-  const onPointerUp = () => {
-    drag.current = null;
-  };
+  const model = shell ? `${shell.modelSelection.instanceId} / ${shell.modelSelection.model}` : null;
+  const peerNames = connectedNodeNames(nodes, edges, node.id);
 
   const sendInstructions = async () => {
     const sent = await send(node, buildBoardInstructions(node.name, peerNames));
@@ -151,31 +147,34 @@ function NodeCard(props: {
 
   return (
     <div
-      className="absolute flex flex-col gap-1.5 rounded-lg border bg-card p-2 text-sm shadow-sm"
-      style={{ left: node.x, top: node.y, width: CARD_WIDTH, height: CARD_HEIGHT }}
+      className="flex flex-col gap-1.5 rounded-lg border bg-card p-2 text-sm text-card-foreground shadow-sm"
+      style={{ width: CARD_WIDTH }}
     >
-      <div
-        className="cursor-grab touch-none font-medium active:cursor-grabbing"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-      >
-        {node.name}
+      <Handle type="target" position={Position.Left} />
+      <Handle type="source" position={Position.Right} />
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate font-medium">{node.name}</span>
+        <span
+          className={`shrink-0 rounded px-1.5 text-xs ${
+            status === "working"
+              ? "bg-info/16 text-info-foreground"
+              : status === "disconnected"
+                ? "bg-destructive/16 text-destructive-foreground"
+                : "bg-muted text-muted-foreground"
+          }`}
+        >
+          {status}
+        </span>
       </div>
       <div className="truncate text-xs text-muted-foreground">{environmentLabel}</div>
+      {model ? <div className="truncate text-xs text-muted-foreground">{model}</div> : null}
       <div className="truncate text-xs">{shell?.title ?? "Thread not found"}</div>
-      <div className="text-xs text-muted-foreground">Status: {status}</div>
-      <div className="mt-auto flex flex-wrap gap-1">
-        <Button
-          size="xs"
-          variant={connectFrom === node.id ? "default" : "outline"}
-          onClick={() => onConnectClick(node.id)}
-        >
-          {connectFrom === null ? "Connect" : connectFrom === node.id ? "Cancel" : "Connect here"}
-        </Button>
-        <Button size="xs" variant="outline" onClick={sendInstructions}>
-          Send board instructions
-        </Button>
+      {peerNames.length > 0 ? (
+        <div className="truncate text-xs text-muted-foreground">
+          Connected: {peerNames.join(", ")}
+        </div>
+      ) : null}
+      <div className="nodrag flex flex-wrap gap-1">
         <Button
           size="xs"
           variant="outline"
@@ -188,85 +187,149 @@ function NodeCard(props: {
         >
           Open thread
         </Button>
+        <Button size="xs" variant="outline" onClick={sendInstructions}>
+          Send board instructions
+        </Button>
         <Button size="xs" variant="ghost-destructive" onClick={() => removeNode(node.id)}>
           Remove
         </Button>
       </div>
-      {peerNames.length > 0 ? (
-        <div className="absolute top-full mt-1 w-full truncate text-xs text-muted-foreground">
-          Connected: {peerNames.join(", ")}
-        </div>
-      ) : null}
     </div>
   );
 }
 
-export function BoardPage() {
-  const { nodes, edges, log, pending } = useBoardState();
-  const [connectFrom, setConnectFrom] = useState<string | null>(null);
+const NODE_TYPES = { agent: AgentCard };
 
-  const onConnectClick = (nodeId: string) => {
-    if (connectFrom === null) {
-      setConnectFrom(nodeId);
-      return;
+function toFlowNode(node: BoardNode, previous?: AgentFlowNode): AgentFlowNode {
+  return previous
+    ? { ...previous, data: { node } }
+    : { id: node.id, type: "agent", position: { x: node.x, y: node.y }, data: { node } };
+}
+
+export function BoardPage() {
+  const { nodes, edges, pending } = useBoardState();
+  const send = useSendToBoardNode();
+  const [flowNodes, setFlowNodes] = useState<AgentFlowNode[]>(() =>
+    nodes.map((n) => toFlowNode(n)),
+  );
+  const [selectedEdgeIds, setSelectedEdgeIds] = useState<ReadonlySet<string>>(new Set());
+  const [addingAgent, setAddingAgent] = useState(false);
+
+  // Store -> canvas: keep React Flow's own state (size, selection) for nodes that already exist.
+  useEffect(() => {
+    setFlowNodes((previous) =>
+      nodes.map((node) =>
+        toFlowNode(
+          node,
+          previous.find((candidate) => candidate.id === node.id),
+        ),
+      ),
+    );
+  }, [nodes]);
+
+  const flowEdges: Edge[] = edges.map((edge) => {
+    const id = `${edge.a}:${edge.b}`;
+    return { id, source: edge.a, target: edge.b, selected: selectedEdgeIds.has(id) };
+  });
+
+  // Canvas -> store: positions and deletions.
+  const onNodesChange = (changes: NodeChange<AgentFlowNode>[]) => {
+    setFlowNodes((previous) => applyNodeChanges(changes, previous));
+    for (const change of changes) {
+      if (change.type === "position" && change.position) {
+        updateNode(change.id, { x: change.position.x, y: change.position.y });
+      } else if (change.type === "remove") {
+        removeNode(change.id);
+      }
     }
-    if (connectFrom !== nodeId && !areConnected(connectFrom, nodeId))
-      toggleEdge(connectFrom, nodeId);
-    setConnectFrom(null);
+  };
+
+  const onEdgesChange = (changes: EdgeChange[]) => {
+    for (const change of changes) {
+      if (change.type === "select") {
+        setSelectedEdgeIds((previous) => {
+          const next = new Set(previous);
+          if (change.selected) next.add(change.id);
+          else next.delete(change.id);
+          return next;
+        });
+      } else if (change.type === "remove") {
+        const edge = getBoardState().edges.find(
+          (candidate) => `${candidate.a}:${candidate.b}` === change.id,
+        );
+        if (edge) removeEdge(edge.a, edge.b);
+      }
+    }
+  };
+
+  const onConnect = (connection: Connection) => {
+    if (!addEdge(connection.source, connection.target)) return;
+    const board = getBoardState();
+    for (const id of [connection.source, connection.target]) {
+      const node = board.nodes.find((candidate) => candidate.id === id);
+      if (!node) continue;
+      void send(
+        node,
+        buildBoardInstructions(node.name, connectedNodeNames(board.nodes, board.edges, id)),
+      ).then((sent) => {
+        appendLog(
+          "info",
+          sent
+            ? `Sent updated board instructions to ${node.name}.`
+            : `Updated instructions to ${node.name} failed.`,
+        );
+      });
+    }
+  };
+
+  const deleteSelectedEdges = () => {
+    for (const id of selectedEdgeIds) {
+      const edge = edges.find((candidate) => `${candidate.a}:${candidate.b}` === id);
+      if (edge) removeEdge(edge.a, edge.b);
+    }
+    setSelectedEdgeIds(new Set());
   };
 
   return (
     <SidebarInset className="h-dvh">
       <header className="flex shrink-0 flex-wrap items-center gap-3 border-b px-4 py-2">
         <h1 className="text-sm font-medium">Board</h1>
-        <AddNodeForm />
+        <Button size="sm" onClick={() => setAddingAgent(true)}>
+          Add agent
+        </Button>
+        <details className="text-sm">
+          <summary className="cursor-pointer text-muted-foreground">Add existing thread</summary>
+          <div className="pt-2">
+            <AddNodeForm />
+          </div>
+        </details>
+        {selectedEdgeIds.size > 0 ? (
+          <Button size="sm" variant="outline" onClick={deleteSelectedEdges}>
+            Delete selected edge
+          </Button>
+        ) : null}
         <span className="text-xs text-muted-foreground">{pending.length} pending</span>
       </header>
-      <div className="flex min-h-0 flex-1">
-        <div className="relative min-w-0 flex-1 overflow-auto">
-          <svg className="pointer-events-none absolute inset-0 h-full min-h-[2000px] w-full min-w-[3000px]">
-            {edges.map((edge) => {
-              const a = nodes.find((node) => node.id === edge.a);
-              const b = nodes.find((node) => node.id === edge.b);
-              if (!a || !b) return null;
-              return (
-                <line
-                  key={`${edge.a}:${edge.b}`}
-                  x1={a.x + CARD_WIDTH / 2}
-                  y1={a.y + CARD_HEIGHT / 2}
-                  x2={b.x + CARD_WIDTH / 2}
-                  y2={b.y + CARD_HEIGHT / 2}
-                  stroke="currentColor"
-                  strokeWidth={2}
-                  className="text-muted-foreground"
-                />
-              );
-            })}
-          </svg>
-          {nodes.map((node) => (
-            <NodeCard
-              key={node.id}
-              node={node}
-              connectFrom={connectFrom}
-              onConnectClick={onConnectClick}
-            />
-          ))}
-        </div>
-        <aside className="flex w-72 shrink-0 flex-col border-l">
-          <div className="border-b px-3 py-2 text-sm font-medium">Activity</div>
-          <div className="min-h-0 flex-1 space-y-2 overflow-auto p-3 text-xs">
-            {log.length === 0 ? <p className="text-muted-foreground">No activity yet.</p> : null}
-            {log.map((entry) => (
-              <div key={entry.id}>
-                <div className="text-muted-foreground">
-                  {new Date(entry.at).toLocaleTimeString()} · {entry.kind}
-                </div>
-                <div className="line-clamp-4 whitespace-pre-wrap">{entry.text}</div>
-              </div>
-            ))}
-          </div>
-        </aside>
+      <div className="relative min-h-0 flex-1">
+        <ReactFlow
+          nodes={flowNodes}
+          edges={flowEdges}
+          nodeTypes={NODE_TYPES}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          connectionMode={ConnectionMode.Loose}
+          colorMode="system"
+          deleteKeyCode={["Backspace", "Delete"]}
+          fitView
+          minZoom={0.2}
+        >
+          <Background />
+          <Controls />
+          <MiniMap pannable zoomable />
+        </ReactFlow>
       </div>
+      {addingAgent ? <AddAgentDialog onClose={() => setAddingAgent(false)} /> : null}
     </SidebarInset>
   );
 }

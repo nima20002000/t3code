@@ -156,6 +156,29 @@ function SidebarUtilityItem({
   );
 }
 
+/** Labeled entry to the Board page, shown near the top of the main sidebar. */
+export const SidebarBoardLink = memo(function SidebarBoardLink() {
+  const navigate = useNavigate();
+  const { isMobile, setOpenMobile } = useSidebar();
+  const active = useLocation({ select: (location) => location.pathname === "/board" });
+  return (
+    <SidebarMenu className="mt-1">
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          isActive={active}
+          onClick={() => {
+            if (isMobile) setOpenMobile(false);
+            void navigate({ to: "/board" });
+          }}
+        >
+          <WorkflowIcon />
+          <span>Board</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  );
+});
+
 const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
