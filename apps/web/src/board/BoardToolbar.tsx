@@ -1,4 +1,4 @@
-import { useNavigate, useRouter } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
   CheckIcon,
@@ -71,17 +71,9 @@ function Collapsible(props: {
 }
 
 function BackButton() {
-  const router = useRouter();
   const navigate = useNavigate();
   return (
-    <Button
-      size="sm"
-      variant="outline"
-      onClick={() => {
-        if (router.state.location.state.__TSR_index > 0) router.history.back();
-        else void navigate({ to: "/" });
-      }}
-    >
+    <Button size="sm" variant="outline" onClick={() => void navigate({ to: "/" })}>
       <ArrowLeftIcon />
       Back
     </Button>

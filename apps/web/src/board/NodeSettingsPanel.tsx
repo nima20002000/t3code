@@ -1,6 +1,6 @@
-import { Maximize2Icon, SettingsIcon, XIcon } from "lucide-react";
+import { Maximize2Icon, Minimize2Icon, SettingsIcon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { AgentDialog } from "./AddAgentDialog";
@@ -24,7 +24,6 @@ import {
   Button,
   ChatView,
   Input,
-  buildThreadRouteParams,
   useConnectedEnvironmentIds,
   useEnvironmentIdentities,
   useRightPanelStore,
@@ -83,7 +82,7 @@ export function NodeSettingsPanel(props: {
   const [name, setName] = useState(node.name);
   const [editingName, setEditingName] = useState(false);
   const [configuring, setConfiguring] = useState(false);
-  const navigate = useNavigate();
+  const [maximized, setMaximized] = useState(false);
 
   // The panel is too narrow for t3's right panel; start each node's chat with it closed.
   // oxlint-disable-next-line t3code/react-effect-budget -- Synchronize the external right-panel store with the active thread.
@@ -94,11 +93,13 @@ export function NodeSettingsPanel(props: {
   // oxlint-disable-next-line t3code/react-effect-budget -- Subscribe to the window keyboard event.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape") return;
+      if (maximized) setMaximized(false);
+      else onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, maximized]);
 
   const commitName = () => {
     setEditingName(false);
@@ -108,6 +109,7 @@ export function NodeSettingsPanel(props: {
   return (
     <FloatingPanel
       storageKey="board:chat-panel"
+      maximized={maximized}
       label={`${node.name} chat`}
       className="top-16 right-3 h-[70%] w-[420px] max-w-[calc(100%-1.5rem)]"
       header={
@@ -144,15 +146,10 @@ export function NodeSettingsPanel(props: {
           <div className="flex-1" />
           {node.threadId === "" ? null : (
             <IconButton
-              label="Open full screen"
-              onClick={() =>
-                void navigate({
-                  to: "/$environmentId/$threadId",
-                  params: buildThreadRouteParams(scopeThreadRef(node.environmentId, node.threadId)),
-                })
-              }
+              label={maximized ? "Minimize" : "Full screen"}
+              onClick={() => setMaximized(!maximized)}
             >
-              <Maximize2Icon size={15} />
+              {maximized ? <Minimize2Icon size={15} /> : <Maximize2Icon size={15} />}
             </IconButton>
           )}
           <IconButton label={`${node.name} settings`} onClick={() => setConfiguring(true)}>

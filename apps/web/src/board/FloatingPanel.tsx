@@ -1,4 +1,11 @@
-import { useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
 
 type PanelPosition = { readonly x: number; readonly y: number };
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(value, max));
@@ -72,6 +79,8 @@ export function FloatingPanel(props: {
   readonly children: ReactNode;
   /** When this changes to a non-null value, the panel returns to its default place and size. */
   readonly resetKey?: string | null;
+  /** Fills the whole window, animating from and back to the floating spot. */
+  readonly maximized?: boolean;
 }) {
   const { storageKey } = props;
   const [position, setPosition] = useState(() => readPanelPosition(storageKey));
@@ -84,6 +93,31 @@ export function FloatingPanel(props: {
       setSize(null);
     }
   }
+
+  const panel = useRef<HTMLElement>(null);
+  const lastRect = useRef<DOMRect | null>(null);
+  const wasMaximized = useRef(props.maximized ?? false);
+  // oxlint-disable-next-line t3code/react-effect-budget -- Measure the panel to animate between its floating and full-window rects.
+  useLayoutEffect(() => {
+    const element = panel.current;
+    if (!element) return;
+    const next = element.getBoundingClientRect();
+    const from = lastRect.current;
+    if ((props.maximized ?? false) !== wasMaximized.current && from) {
+      wasMaximized.current = props.maximized ?? false;
+      element.animate(
+        [
+          {
+            transformOrigin: "0 0",
+            transform: `translate(${from.left - next.left}px, ${from.top - next.top}px) scale(${from.width / next.width}, ${from.height / next.height})`,
+          },
+          { transformOrigin: "0 0", transform: "none" },
+        ],
+        { duration: 200, easing: "ease-out" },
+      );
+    }
+    lastRect.current = next;
+  });
 
   // Drag by the header's empty space; the spot is kept per viewer.
   const startMove = (event: PointerEvent<HTMLDivElement>) => {
@@ -170,25 +204,34 @@ export function FloatingPanel(props: {
     handle.addEventListener("pointercancel", end);
   };
 
-  const style: CSSProperties = {
-    ...(position ? { left: position.x, top: position.y, right: "auto", bottom: "auto" } : {}),
-    ...(size ? { width: size.w, height: size.h, maxWidth: "none" } : {}),
-  };
+  const style: CSSProperties = props.maximized
+    ? {}
+    : {
+        ...(position ? { left: position.x, top: position.y, right: "auto", bottom: "auto" } : {}),
+        ...(size ? { width: size.w, height: size.h, maxWidth: "none" } : {}),
+      };
 
   return (
     <aside
+      ref={panel}
       aria-label={props.label}
-      className={`board-chat-panel absolute z-20 flex flex-col rounded-xl border bg-background shadow-lg ${props.className}`}
+      className={`board-chat-panel flex flex-col border bg-background shadow-lg ${
+        props.maximized
+          ? "fixed inset-0 z-50 rounded-none"
+          : `absolute z-20 rounded-xl ${props.className}`
+      }`}
       style={style}
     >
-      {RESIZE_HANDLES.map((handle) => (
-        <div
-          key={handle.className}
-          aria-hidden
-          className={`absolute z-30 ${handle.className}`}
-          onPointerDown={startResize(handle.edges)}
-        />
-      ))}
+      {props.maximized
+        ? null
+        : RESIZE_HANDLES.map((handle) => (
+            <div
+              key={handle.className}
+              aria-hidden
+              className={`absolute z-30 ${handle.className}`}
+              onPointerDown={startResize(handle.edges)}
+            />
+          ))}
       <div
         className="flex shrink-0 cursor-grab items-center gap-1 border-b py-1.5 pr-1.5 pl-2.5 active:cursor-grabbing"
         onPointerDown={startMove}
