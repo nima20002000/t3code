@@ -1,14 +1,9 @@
-import {
-  type EnvironmentId,
-  type ModelSelection,
-  ProviderInstanceId,
-  ProjectId,
-} from "@t3tools/contracts";
+import { type EnvironmentId, type ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { useRef, useState } from "react";
 import * as Schema from "effect/Schema";
 
-import { createNode, nextNodePosition, useCurrentWorkflow } from "./boardStore";
+import { createNode, nextNodePosition, useBoardWorkspaces, useCurrentWorkflow } from "./boardStore";
 import { useBoardMachines } from "./useBoardMachines";
 import {
   Button,
@@ -28,7 +23,6 @@ import {
   resolveDefaultProviderModelSelection,
   sortProviderInstanceEntries,
   useEnvironmentProviders,
-  useProjects,
 } from "./upstream";
 
 const isProviderInstanceId = Schema.is(ProviderInstanceId);
@@ -38,14 +32,12 @@ const FIELD_CLASS = "h-8 w-full rounded-md border bg-background px-2 text-sm";
 export function AddAgentDialog(props: { readonly onClose: () => void }) {
   const connected = useBoardMachines();
   const providersByEnvironment = useEnvironmentProviders();
-  const projects = useProjects();
+  const workspace = useBoardWorkspaces().find((item) => item.id === workflow.workspaceId);
   const workflow = useCurrentWorkflow();
   const { id: workflowId, settings } = workflow;
   const [environmentId, setEnvironmentId] = useState<EnvironmentId | "">(
     connected[0]?.environmentId ?? "",
   );
-  const [projectChoice, setProjectChoice] = useState<ProjectId | "">("");
-  const [manualProject, setManualProject] = useState("");
   const [manualProvider, setManualProvider] = useState(settings.defaultInstanceId);
   const [manualModel, setManualModel] = useState(settings.defaultModel);
   const [modelChoice, setModelChoice] = useState<{
@@ -58,11 +50,10 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const pendingId = useRef<string | null>(null);
 
-  const environmentProjects = projects.filter((project) => project.environmentId === environmentId);
-  const project =
-    environmentProjects.find((candidate) => candidate.id === projectChoice) ??
-    environmentProjects[0] ??
-    null;
+  const folder = workspace?.folders.find((item) => item.environmentId === environmentId);
+  const hasOrchestrator = workflow.nodes.some((node) => node.profile === "orchestrator");
+  const [chosenProfile, setChosenProfile] = useState<"worker" | "orchestrator">("orchestrator");
+  const profile = hasOrchestrator ? "worker" : chosenProfile;
   const providers =
     (environmentId === "" ? undefined : providersByEnvironment.get(environmentId)) ??
     EMPTY_SERVER_PROVIDERS;
@@ -96,9 +87,7 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
       await createNode(workflowId, {
         id,
         name: agentName,
-        profile: workflow.nodes.some((node) => node.profile === "orchestrator")
-          ? "worker"
-          : "orchestrator",
+        profile,
         environmentId,
         modelSelection: selection,
         ...(role.trim() ? { prompt: role } : {}),
@@ -136,14 +125,27 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
           <DialogPanel>
             <div className="flex flex-col gap-3 text-sm">
               <label className="flex flex-col gap-1">
+                Profile
+                <select
+                  className={FIELD_CLASS}
+                  value={profile}
+                  onChange={(event) =>
+                    setChosenProfile(event.target.value as "worker" | "orchestrator")
+                  }
+                >
+                  <option value="worker">Worker</option>
+                  <option value="orchestrator" disabled={hasOrchestrator}>
+                    Orchestrator{hasOrchestrator ? " (this workflow already has one)" : ""}
+                  </option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1">
                 Machine
                 <select
                   className={FIELD_CLASS}
                   value={environmentId}
                   onChange={(event) => {
                     setEnvironmentId(event.target.value as EnvironmentId | "");
-                    setProjectChoice("");
-                    setManualProject("");
                   }}
                 >
                   <option value="">Select...</option>
@@ -154,29 +156,14 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
                   ))}
                 </select>
               </label>
-              <label className="flex flex-col gap-1">
-                Project
-                {environmentProjects.length ? (
-                  <select
-                    className={FIELD_CLASS}
-                    value={project?.id ?? ""}
-                    onChange={(event) => setProjectChoice(event.target.value as ProjectId)}
-                  >
-                    {environmentProjects.map((candidate) => (
-                      <option key={candidate.id} value={candidate.id}>
-                        {candidate.title}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <Input
-                    aria-label="Project ID"
-                    placeholder="Project ID on this machine"
-                    value={manualProject}
-                    onChange={(event) => setManualProject(event.target.value)}
-                  />
-                )}
-              </label>
+              <div className="flex flex-col gap-1">
+                Folder
+                <p className="text-muted-foreground">
+                  {folder
+                    ? folder.path
+                    : `${workspace?.name ?? "The workspace"} gets a folder on this machine when the agent first runs.`}
+                </p>
+              </div>
               <div className="flex flex-col gap-1">
                 Provider and model
                 <div>

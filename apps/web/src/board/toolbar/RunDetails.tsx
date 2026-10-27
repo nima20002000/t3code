@@ -1,6 +1,9 @@
-import { XIcon } from "lucide-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useNavigate } from "@tanstack/react-router";
+import { MessageSquareIcon, XIcon } from "lucide-react";
 
 import type { RunRecord } from "../boardStore";
+import { buildThreadRouteParams } from "../upstream";
 import { IconButton } from "./IconButton";
 import { formatJson, formatRunTime, RUN_STATUS_DOT, RUN_STATUS_LABELS } from "./runPresentation";
 
@@ -21,6 +24,11 @@ function JsonBlock(props: { readonly label: string; readonly value: unknown }) {
 /** Details of one past (or live) run: task, every request/return with its JSON, and the final result. */
 export function RunDetails(props: { readonly run: RunRecord; readonly onClose: () => void }) {
   const { run } = props;
+  const navigate = useNavigate();
+  const threads = run.definition.nodes.flatMap((node) => {
+    const thread = run.threads[node.id];
+    return thread ? [{ node, thread }] : [];
+  });
   return (
     <aside
       className="board-run-details flex flex-col rounded-xl border border-border bg-card text-sm text-foreground shadow-lg"
@@ -50,6 +58,33 @@ export function RunDetails(props: { readonly run: RunRecord; readonly onClose: (
           <p className="break-words">
             <strong>{run.nodeName}</strong>: {run.task}
           </p>
+        </section>
+        <section>
+          <h3 className={SECTION_HEADING}>Threads ({threads.length})</h3>
+          {threads.length === 0 ? (
+            <p className="text-2xs text-muted-foreground">No agent has started a thread yet.</p>
+          ) : null}
+          <ul className="grid gap-1">
+            {threads.map(({ node, thread }) => (
+              <li key={node.id}>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left text-xs hover:bg-accent"
+                  onClick={() =>
+                    void navigate({
+                      to: "/$environmentId/$threadId",
+                      params: buildThreadRouteParams(
+                        scopeThreadRef(thread.environmentId, thread.threadId),
+                      ),
+                    })
+                  }
+                >
+                  <MessageSquareIcon size={13} aria-hidden="true" />
+                  <span className="truncate">{node.name}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
         </section>
         <section>
           <h3 className={SECTION_HEADING}>Requests ({run.requests.length})</h3>

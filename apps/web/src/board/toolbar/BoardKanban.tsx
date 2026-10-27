@@ -1,75 +1,57 @@
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../upstream";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { useNavigate } from "@tanstack/react-router";
+import { KANBAN_STATUSES, type KanbanStatus } from "@t3tools/board-core/kanban";
 
-import type { Workflow } from "../boardStore";
-import type { NodeRunState } from "@t3tools/board-core/runView";
-import { useNodeCards } from "./useNodeStatuses";
-import { buildThreadRouteParams } from "../upstream";
+import { useKanbanCards, type Workflow } from "../boardStore";
 
-const COLUMNS: ReadonlyArray<{
-  readonly status: string;
-  readonly label: string;
-  readonly states: ReadonlyArray<NodeRunState>;
-}> = [
-  { status: "working", label: "Working", states: ["running", "queued"] },
-  { status: "waiting", label: "Waiting", states: ["waiting"] },
-  { status: "done", label: "Done", states: ["completed"] },
-  { status: "failed", label: "Failed", states: ["failed"] },
-  { status: "idle", label: "Idle", states: ["idle"] },
-  { status: "disconnected", label: "Offline", states: ["unavailable"] },
-];
+const LABELS: Record<KanbanStatus, string> = {
+  todo: "To do",
+  doing: "Doing",
+  blocked: "Blocked",
+  done: "Done",
+};
 
-/** Foreman-style kanban of the workflow's agents by status; a card opens its thread. */
+/** The workflow's persisted kanban: cards the orchestrator maintains, by status. */
 export function BoardKanban(props: { readonly workflow: Workflow }) {
-  const navigate = useNavigate();
-  const cards = useNodeCards(props.workflow);
+  const cards = useKanbanCards(props.workflow.id);
+  const nameOf = (nodeId: string | undefined) =>
+    props.workflow.nodes.find((node) => node.id === nodeId)?.name;
   return (
     <section
       className="absolute inset-0 box-border bg-background px-4 pt-19 pb-4"
       aria-label="Kanban"
     >
       <div className="grid h-full auto-cols-fr grid-flow-col gap-2">
-        {COLUMNS.map((column) => {
-          const columnCards = cards.filter((card) => column.states.includes(card.view.state));
+        {KANBAN_STATUSES.map((status) => {
+          const column = cards.filter((card) => card.status === status);
           return (
             <div
-              key={column.status}
+              key={status}
               className="board-kanban-column flex min-h-0 min-w-0 flex-col gap-2 overflow-auto rounded-lg p-2.5"
-              data-status={column.status}
+              data-status={status}
             >
               <h3 className="text-sm break-words">
-                {column.label}{" "}
-                <small className="font-normal text-muted-foreground">{columnCards.length}</small>
+                {LABELS[status]}{" "}
+                <small className="font-normal text-muted-foreground">{column.length}</small>
               </h3>
-              {columnCards.map(({ node, view, machine, model, instanceId }) => (
-                <Tooltip key={node.id}>
-                  <TooltipTrigger
-                    render={
-                      <button
-                        type="button"
-                        className="grid gap-0.5 rounded-lg border border-border bg-card px-2.5 py-2 text-left text-xs text-foreground hover:border-ring"
-                        onClick={() =>
-                          void navigate({
-                            to: "/$environmentId/$threadId",
-                            params: buildThreadRouteParams(
-                              scopeThreadRef(node.environmentId, node.threadId),
-                            ),
-                          })
-                        }
-                      >
-                        <strong>{node.name}</strong>
-                        <span className="break-words text-muted-foreground">{view.label}</span>
-                        <span className="break-words text-muted-foreground">{machine}</span>
-                        <small className="break-words text-muted-foreground">
-                          {[instanceId, model].filter(Boolean).join(" / ") || "Thread not found"}
-                        </small>
-                      </button>
-                    }
-                  />
-                  <TooltipPopup>{`Open ${node.name} thread`}</TooltipPopup>
-                </Tooltip>
-              ))}
+              {column.map((card) => {
+                const assignee = nameOf(card.assigneeNodeId);
+                return (
+                  <article
+                    key={card.id}
+                    className="grid gap-1 rounded-lg border border-border bg-card px-2.5 py-2 text-xs text-foreground"
+                  >
+                    <strong className="break-words">{card.title}</strong>
+                    {card.body ? (
+                      <p className="break-words whitespace-pre-wrap text-muted-foreground">
+                        {card.body}
+                      </p>
+                    ) : null}
+                    {card.status === "blocked" && card.reason ? (
+                      <p className="break-words text-destructive-foreground">{card.reason}</p>
+                    ) : null}
+                    {assignee ? <small className="text-muted-foreground">{assignee}</small> : null}
+                  </article>
+                );
+              })}
             </div>
           );
         })}
