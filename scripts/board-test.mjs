@@ -134,7 +134,7 @@ function keyOf(test) {
     const file = stack.pop();
     if (seen.has(file)) continue;
     seen.add(file);
-    if (!/\.(m?[jt]sx?)$/.test(file) || !NodeFS.existsSync(file)) continue;
+    if (!/\.(m?[jt]sx?|css)$/.test(file) || !NodeFS.existsSync(file)) continue;
     let deps = depsCache.get(file);
     if (!deps) depsCache.set(file, (deps = dependencies(file)));
     for (const dep of deps) stack.push(dep);
