@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { FolderIcon, MoreHorizontalIcon, PlusIcon, SettingsIcon, WorkflowIcon } from "lucide-react";
-import { useState, type PointerEvent } from "react";
+import { useState } from "react";
 
 import {
   createWorkflowIn,
@@ -31,7 +31,6 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
-  SidebarRail,
   useSidebar,
 } from "./upstream";
 
@@ -53,21 +52,6 @@ export function BoardSidebarContent() {
   const close = () => setDialog(null);
   const navigate = useNavigate();
   const { open, setOpen } = useSidebar();
-  // Folded, the rail is a toggle; dragging it outward also unfolds it, as in Foreman.
-  const expandOnDrag = (event: PointerEvent<HTMLButtonElement>) => {
-    const startX = event.clientX;
-    const move = (moveEvent: globalThis.PointerEvent) => {
-      if (moveEvent.clientX - startX < 24) return;
-      setOpen(true);
-      stop();
-    };
-    const stop = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", stop);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop);
-  };
   const settingsWorkspace =
     dialog?.kind === "workspace-settings"
       ? workspaces.find((workspace) => workspace.id === dialog.id)
@@ -223,7 +207,6 @@ export function BoardSidebarContent() {
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
-      <SidebarRail onPointerDown={open ? undefined : expandOnDrag} />
       {dialog?.kind === "new-workspace" ? (
         <NameDialog
           title="New workspace"
