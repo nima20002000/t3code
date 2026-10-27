@@ -72,3 +72,5 @@ export { readPreparedConnection, readEnvironmentScope } from "../state/session";
 export { environmentThreadDetails, threadEnvironment } from "../state/threads";
 export { useOrchestrationCommand } from "../state/use-orchestration-command";
 export { buildThreadRouteParams } from "../threadRoutes";
+export { WorkspacePageHeader } from "../components/WorkspacePageHeader";
+export { isElectron } from "../env";

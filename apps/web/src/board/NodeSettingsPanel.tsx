@@ -91,7 +91,7 @@ export function NodeSettingsPanel(props: {
   return (
     <aside
       aria-label={`${node.name} settings`}
-      className="absolute top-14 right-3 bottom-auto z-20 flex h-[70%] w-[420px] max-w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-xl border bg-background shadow-lg"
+      className="absolute top-3 right-3 bottom-auto z-20 flex h-[70%] w-[420px] max-w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-xl border bg-background shadow-lg"
     >
       <div className="flex shrink-0 flex-col gap-1.5 border-b p-2.5">
         <div className="flex items-center gap-2">

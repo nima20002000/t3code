@@ -75,7 +75,7 @@ export function BoardToolbar(props: {
   const name = useRef<WorkflowNameHandle>(null);
 
   return (
-    <div className="board-topbar" style={{ left: "max(1.25rem, var(--workspace-controls-left))" }}>
+    <div className="board-topbar">
       <div className="board-topbar-start">
         <BackButton />
         <div className="board-title">

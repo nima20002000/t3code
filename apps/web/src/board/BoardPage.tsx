@@ -59,7 +59,9 @@ import { useBoardPending } from "./boardApi";
 import {
   Button,
   SidebarInset,
+  WorkspacePageHeader,
   buildThreadRouteParams,
+  isElectron,
   randomUUID,
   useConnectedEnvironmentIds,
   useEnvironmentIdentities,
@@ -510,6 +512,21 @@ function BoardCanvasPage() {
 
   return (
     <SidebarInset className="h-dvh">
+      <WorkspacePageHeader electron={isElectron} className="board-header border-b border-border">
+        <BoardToolbar
+          selectedRunId={selectedRun?.id ?? null}
+          onSelectRun={setSelectedRunId}
+          kanban={kanban}
+          onToggleKanban={() => setKanban((value) => !value)}
+          onAddAgent={() => {
+            setAddingAgent(true);
+            setAddingThread(false);
+          }}
+          onAddThread={() => setAddingThread((value) => !value)}
+          selectedEdgeCount={selectedEdgeIds.size}
+          onDeleteSelectedEdges={deleteSelectedEdges}
+        />
+      </WorkspacePageHeader>
       <div className={`board-canvas relative min-h-0 flex-1${connecting ? " is-connecting" : ""}`}>
         {kanban ? (
           <BoardKanban workflow={workflow} />
@@ -542,21 +559,8 @@ function BoardCanvasPage() {
             </OpenActivityContext.Provider>
           </OpenSettingsContext.Provider>
         )}
-        <BoardToolbar
-          selectedRunId={selectedRun?.id ?? null}
-          onSelectRun={setSelectedRunId}
-          kanban={kanban}
-          onToggleKanban={() => setKanban((value) => !value)}
-          onAddAgent={() => {
-            setAddingAgent(true);
-            setAddingThread(false);
-          }}
-          onAddThread={() => setAddingThread((value) => !value)}
-          selectedEdgeCount={selectedEdgeIds.size}
-          onDeleteSelectedEdges={deleteSelectedEdges}
-        />
         {importError ? (
-          <div className="absolute top-16 left-4 z-20 grid max-w-md gap-2 rounded-lg border bg-background p-3 text-sm shadow-lg">
+          <div className="absolute top-3 left-4 z-20 grid max-w-md gap-2 rounded-lg border bg-background p-3 text-sm shadow-lg">
             <p role="alert">Local workflows have not been imported. {importError}</p>
             <div className="flex gap-2">
               <Button size="sm" onClick={() => void retryBoardImport()} disabled={pending}>

@@ -3,22 +3,12 @@
    Foreman's tokens are replaced by t3's theme variables so popovers (portaled) look right too. */
 
 .board-topbar {
-  position: absolute;
-  z-index: 5;
-  top: 1rem;
-  right: 1rem;
-  left: 1rem;
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
+  flex: 1;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  box-sizing: border-box;
-  pointer-events: none;
-}
-.board-topbar > * {
-  pointer-events: auto;
 }
 .board-topbar-start {
   display: flex;
@@ -66,7 +56,7 @@
 }
 .board-control-cluster {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   gap: 0.5rem;
 }
@@ -77,8 +67,7 @@
   padding: 0.25rem;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--card) 94%, transparent);
-  box-shadow: 0 8px 24px #0000001f;
+  background: var(--card);
 }
 .board-saved {
   display: inline-flex;
@@ -432,4 +421,7 @@
 .board-kanban-card small {
   color: var(--muted-foreground);
   overflow-wrap: anywhere;
+}
+.board-header .board-bar {
+  padding: 1px;
 }
