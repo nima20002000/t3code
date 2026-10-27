@@ -1,15 +1,15 @@
 import { BaseEdge } from "@xyflow/react";
-import { useState, type CSSProperties } from "react";
+import { type CSSProperties } from "react";
 
 import type { EdgeSignal } from "@t3tools/board-core/runView";
 import type { FloatingCurve } from "./signalEdge";
 
-/** One fact in flight; `startsAt` is a performance.now() time and may be in the past or future. */
+/** One fact in flight, delayed relative to its mount. */
 export interface EdgePulse {
   readonly key: string;
   readonly signal: EdgeSignal;
   readonly reversed: boolean;
-  readonly startsAt: number;
+  readonly delay: number;
 }
 
 const PULSE_WORDS: Record<EdgeSignal, string> = {
@@ -21,7 +21,6 @@ const PULSE_WORDS: Record<EdgeSignal, string> = {
 /** Copied from Foreman Code: a comet carrying its word, with a charging wire behind it. The delay
  * is fixed at mount so re-renders never restart it. */
 function PulseFlight({ path, pulse }: { path: string; pulse: EdgePulse }) {
-  const [delay] = useState(() => pulse.startsAt - performance.now());
   const word = PULSE_WORDS[pulse.signal];
   const width = Math.round(word.length * 7.8 + 24);
   return (
@@ -29,7 +28,7 @@ function PulseFlight({ path, pulse }: { path: string; pulse: EdgePulse }) {
       className="n-signal-edge-flight"
       data-signal={pulse.signal}
       data-reversed={pulse.reversed || undefined}
-      style={{ "--flight-delay": `${Math.round(delay)}ms` } as CSSProperties}
+      style={{ "--flight-delay": `${Math.round(pulse.delay)}ms` } as CSSProperties}
     >
       <path className="n-signal-edge-charge" d={path} pathLength={1} />
       {[5, 3.4, 2.2].map((radius, index) => (

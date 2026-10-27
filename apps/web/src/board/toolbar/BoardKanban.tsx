@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../upstream";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
 
@@ -34,27 +35,32 @@ export function BoardKanban(props: { readonly workflow: Workflow }) {
                 {column.label} <small>{columnCards.length}</small>
               </h3>
               {columnCards.map(({ node, view, machine, model, instanceId }) => (
-                <button
-                  key={node.id}
-                  type="button"
-                  className="board-kanban-card"
-                  title={`Open ${node.name} thread`}
-                  onClick={() =>
-                    void navigate({
-                      to: "/$environmentId/$threadId",
-                      params: buildThreadRouteParams(
-                        scopeThreadRef(node.environmentId, node.threadId),
-                      ),
-                    })
-                  }
-                >
-                  <strong>{node.name}</strong>
-                  <span>{view.label}</span>
-                  <span>{machine}</span>
-                  <small>
-                    {[instanceId, model].filter(Boolean).join(" / ") || "Thread not found"}
-                  </small>
-                </button>
+                <Tooltip key={node.id}>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        className="board-kanban-card"
+                        onClick={() =>
+                          void navigate({
+                            to: "/$environmentId/$threadId",
+                            params: buildThreadRouteParams(
+                              scopeThreadRef(node.environmentId, node.threadId),
+                            ),
+                          })
+                        }
+                      >
+                        <strong>{node.name}</strong>
+                        <span>{view.label}</span>
+                        <span>{machine}</span>
+                        <small>
+                          {[instanceId, model].filter(Boolean).join(" / ") || "Thread not found"}
+                        </small>
+                      </button>
+                    }
+                  />
+                  <TooltipPopup>{`Open ${node.name} thread`}</TooltipPopup>
+                </Tooltip>
               ))}
             </div>
           );

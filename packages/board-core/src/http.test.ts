@@ -11,13 +11,19 @@ import {
   BoardWorkflowSettingsSchema,
 } from "./http.ts";
 
+const decodeSyncBoardEvent = Schema.decodeSync(BoardEvent);
+const decodeSyncBoardEventsQuery = Schema.decodeSync(BoardEventsQuery);
+const decodeSyncBoardRunRequestRecordSchema = Schema.decodeSync(BoardRunRequestRecordSchema);
+const decodeSyncBoardStartRunInput = Schema.decodeSync(BoardStartRunInput);
+const decodeSyncBoardWorkflowSettingsSchema = Schema.decodeSync(BoardWorkflowSettingsSchema);
+const decodeUnknownSyncBoardCreateNodeInput = Schema.decodeUnknownSync(BoardCreateNodeInput);
+const decodeUnknownSyncBoardPeerSchema = Schema.decodeUnknownSync(BoardPeerSchema);
+
 describe("board wire contract", () => {
   it("validates run, node, and cap input", () => {
+    expect(() => decodeSyncBoardStartRunInput({ id: "r", nodeId: "n", task: "  " })).toThrow();
     expect(() =>
-      Schema.decodeSync(BoardStartRunInput)({ id: "r", nodeId: "n", task: "  " }),
-    ).toThrow();
-    expect(() =>
-      Schema.decodeSync(BoardWorkflowSettingsSchema)({
+      decodeSyncBoardWorkflowSettingsSchema({
         defaultInstanceId: "codex",
         defaultModel: "gpt-6-luna",
         runtimeMode: "full-access",
@@ -25,7 +31,7 @@ describe("board wire contract", () => {
       }),
     ).toThrow();
     expect(() =>
-      Schema.decodeUnknownSync(BoardCreateNodeInput)({
+      decodeUnknownSyncBoardCreateNodeInput({
         kind: "bind",
         id: "n",
         name: "Node",
@@ -49,16 +55,15 @@ describe("board wire contract", () => {
       failureReason: "interrupted",
     };
     expect(
-      Schema.decodeSync(BoardRunRequestRecordSchema)({ ...request, status: "failed" })
-        .failureReason,
+      decodeSyncBoardRunRequestRecordSchema({ ...request, status: "failed" }).failureReason,
     ).toBe("interrupted");
-    expect(
-      Schema.decodeSync(BoardRunRequestRecordSchema)({ ...request, status: "stopped" }).status,
-    ).toBe("stopped");
+    expect(decodeSyncBoardRunRequestRecordSchema({ ...request, status: "stopped" }).status).toBe(
+      "stopped",
+    );
   });
 
   it("keeps peer credentials out of the wire type and decodes events", () => {
-    const peer = Schema.decodeUnknownSync(BoardPeerSchema)({
+    const peer = decodeUnknownSyncBoardPeerSchema({
       id: "p",
       name: "Peer",
       environmentId: "env",
@@ -67,21 +72,19 @@ describe("board wire contract", () => {
       bearer: "secret",
     });
     expect(peer).not.toHaveProperty("bearer");
-    expect(Schema.decodeSync(BoardEvent)({ kind: "peer.upserted", sequence: 1, peer })).toEqual({
+    expect(decodeSyncBoardEvent({ kind: "peer.upserted", sequence: 1, peer })).toEqual({
       kind: "peer.upserted",
       sequence: 1,
       peer,
     });
-    expect(() =>
-      Schema.decodeSync(BoardEvent)({ kind: "peer.upserted", sequence: -1, peer }),
-    ).toThrow();
+    expect(() => decodeSyncBoardEvent({ kind: "peer.upserted", sequence: -1, peer })).toThrow();
   });
 
   it("decodes a resumable event cursor from the URL", () => {
-    expect(Schema.decodeSync(BoardEventsQuery)({ afterSequence: "12" })).toEqual({
+    expect(decodeSyncBoardEventsQuery({ afterSequence: "12" })).toEqual({
       afterSequence: 12,
     });
-    expect(() => Schema.decodeSync(BoardEventsQuery)({ afterSequence: "-1" })).toThrow();
+    expect(() => decodeSyncBoardEventsQuery({ afterSequence: "-1" })).toThrow();
   });
 
   it("defines authenticated board routes including a typed event stream", () => {

@@ -1,57 +1,58 @@
-import { useImperativeHandle, useRef, useState, type Ref } from "react";
-
-export interface WorkflowNameHandle {
-  begin(): void;
-}
+import { useState } from "react";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../upstream";
 
 /** The workflow name as a heading; click (or Rename in the actions menu) to edit it in place. */
 export function WorkflowName(props: {
   readonly name: string;
   readonly onRename: (name: string) => void;
-  readonly ref?: Ref<WorkflowNameHandle>;
+  readonly editing: boolean;
+  readonly onEditingChange: (editing: boolean) => void;
 }) {
-  const [draft, setDraft] = useState<string | null>(null);
-  const input = useRef<HTMLInputElement>(null);
-  useImperativeHandle(props.ref, () => ({
-    begin: () => {
-      setDraft(props.name);
-      requestAnimationFrame(() => input.current?.select());
-    },
-  }));
+  const [draft, setDraft] = useState(props.name);
 
   const commit = () => {
-    if (draft !== null && draft.trim() !== "" && draft.trim() !== props.name) {
+    if (draft.trim() !== "" && draft.trim() !== props.name) {
       props.onRename(draft.trim());
     }
-    setDraft(null);
+    setDraft(props.name);
+    props.onEditingChange(false);
   };
 
   return (
     <div className="board-name">
-      {draft === null ? (
-        <button
-          type="button"
-          className="board-name-button"
-          title="Rename workflow"
-          onClick={() => {
-            setDraft(props.name);
-            requestAnimationFrame(() => input.current?.select());
-          }}
-        >
-          {props.name}
-        </button>
+      {!props.editing ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                className="board-name-button"
+                onClick={() => {
+                  setDraft(props.name);
+                  props.onEditingChange(true);
+                }}
+              >
+                {props.name}
+              </button>
+            }
+          />
+          <TooltipPopup>Rename workflow</TooltipPopup>
+        </Tooltip>
       ) : (
         <input
-          ref={input}
           className="board-name-field"
           aria-label="Workflow name"
           value={draft}
           autoFocus
+          onFocus={(event) => event.currentTarget.select()}
           onChange={(event) => setDraft(event.target.value)}
           onBlur={commit}
           onKeyDown={(event) => {
             if (event.key === "Enter") commit();
-            else if (event.key === "Escape") setDraft(null);
+            else if (event.key === "Escape") {
+              setDraft(props.name);
+              props.onEditingChange(false);
+            }
           }}
         />
       )}

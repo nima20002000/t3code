@@ -13,7 +13,7 @@ import {
   RotateCcwIcon,
   Undo2Icon,
 } from "lucide-react";
-import { useState, type RefObject } from "react";
+import { useState } from "react";
 
 import {
   discardChanges,
@@ -35,10 +35,10 @@ import { MachinesButton } from "./toolbar/MachinesButton";
 import { RunsSelector } from "./toolbar/RunsSelector";
 import { ScheduleButton } from "./toolbar/ScheduleButton";
 import { WorkflowMenu } from "./toolbar/WorkflowMenu";
-import { WorkflowName, type WorkflowNameHandle } from "./toolbar/WorkflowName";
+import { WorkflowName } from "./toolbar/WorkflowName";
 import { WorkflowSettings } from "./toolbar/WorkflowSettings";
 import "./toolbar/boardToolbar.css";
-import { Button } from "./upstream";
+import { Button, Tooltip, TooltipPopup, TooltipTrigger } from "./upstream";
 
 const COLLAPSED_KEY = "board:controls-collapsed";
 
@@ -69,14 +69,19 @@ function BackButton() {
 }
 
 /** Back and the workflow name; lives in the window header. */
-export function BoardTitle(props: { readonly nameRef: RefObject<WorkflowNameHandle | null> }) {
+export function BoardTitle(props: {
+  readonly editing: boolean;
+  readonly onEditingChange: (editing: boolean) => void;
+}) {
   const workflow = useCurrentWorkflow();
   return (
     <div className="board-topbar-start">
       <BackButton />
       <div className="board-title">
         <WorkflowName
-          ref={props.nameRef}
+          key={workflow.name}
+          editing={props.editing}
+          onEditingChange={props.onEditingChange}
           name={workflow.name}
           onRename={(next) => renameWorkflow(workflow.id, next)}
         />
@@ -87,7 +92,7 @@ export function BoardTitle(props: { readonly nameRef: RefObject<WorkflowNameHand
 
 /** Foreman-style clusters of board controls, floating at the board's top right. */
 export function BoardToolbar(props: {
-  readonly nameRef: RefObject<WorkflowNameHandle | null>;
+  readonly onRename: () => void;
   readonly selectedRunId: string | null;
   readonly onSelectRun: (runId: string | null) => void;
   readonly kanban: boolean;
@@ -159,14 +164,16 @@ export function BoardToolbar(props: {
         >
           <RotateCcwIcon />
         </IconButton>
-        <span
-          className="board-saved"
-          role="status"
-          aria-label={savedLabel}
-          title={error ?? savedLabel}
-        >
-          <SavedIcon aria-hidden="true" />
-        </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="board-saved" role="status" aria-label={savedLabel}>
+                <SavedIcon aria-hidden="true" />
+              </span>
+            }
+          />
+          <TooltipPopup>{error ?? savedLabel}</TooltipPopup>
+        </Tooltip>
       </div>
       <div className="board-bar" role="toolbar" aria-label="Board controls">
         <RunsSelector
@@ -176,9 +183,7 @@ export function BoardToolbar(props: {
         />
       </div>
       <div className="board-bar" role="toolbar" aria-label="Workflow controls">
-        <WorkflowMenu
-          onRename={() => window.setTimeout(() => props.nameRef.current?.begin(), 150)}
-        />
+        <WorkflowMenu onRename={() => window.setTimeout(props.onRename, 150)} />
         <IconButton label="Add agent" onClick={props.onAddAgent}>
           <PlusIcon />
         </IconButton>

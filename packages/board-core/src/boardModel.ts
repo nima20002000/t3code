@@ -196,9 +196,6 @@ export function uniqueWorkflowName(names: ReadonlyArray<string>, base: string): 
   }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Undo history
-
 export const MAX_HISTORY = 100;
 
 /** Undoable part of a workflow. */

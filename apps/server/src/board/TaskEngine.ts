@@ -1,5 +1,5 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Stable IDs must be derived synchronously when constructing checkpoints.
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import {
   BoardConflictError,
   BoardInternalError,
@@ -80,7 +80,7 @@ export class TaskEngine extends Context.Service<
 >()("t3/board/TaskEngine") {}
 
 const stableId = (taskId: string, purpose: string) =>
-  `board:${createHash("sha256").update(taskId).update("\0").update(purpose).digest("hex")}`;
+  `board:${NodeCrypto.createHash("sha256").update(taskId).update("\0").update(purpose).digest("hex")}`;
 const MAX_FINISHED_RUNS = 50;
 const isActive = (run: RunRecord) => run.status === "running" || run.status === "stopping";
 const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));

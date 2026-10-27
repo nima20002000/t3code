@@ -1,5 +1,4 @@
 import { runToShow, runViews, type NodeRunView } from "@t3tools/board-core/runView";
-import { useMemo } from "react";
 
 import { useBoardPeers, type BoardNode, type Workflow } from "../boardStore";
 import { useConnectedEnvironmentIds, useEnvironmentIdentities, useThreadShells } from "../upstream";
@@ -18,19 +17,15 @@ export interface NodeCardInfo {
 export function useNodeRunViews(workflow: Pick<Workflow, "nodes" | "edges" | "runs">) {
   const connectedIds = useConnectedEnvironmentIds();
   const threads = useThreadShells();
-  return useMemo(
-    () =>
-      runViews(runToShow(workflow.runs), workflow.nodes, workflow.edges, (node) => {
-        const shell = threads.find(
-          (thread) => thread.environmentId === node.environmentId && thread.id === node.threadId,
-        );
-        return {
-          connected: connectedIds.includes(node.environmentId),
-          turnActive: shell !== undefined && ACTIVE_STATUSES.has(shell.source.status),
-        };
-      }),
-    [workflow.runs, workflow.nodes, workflow.edges, threads, connectedIds],
-  );
+  return runViews(runToShow(workflow.runs), workflow.nodes, workflow.edges, (node) => {
+    const shell = threads.find(
+      (thread) => thread.environmentId === node.environmentId && thread.id === node.threadId,
+    );
+    return {
+      connected: connectedIds.includes(node.environmentId),
+      turnActive: shell !== undefined && ACTIVE_STATUSES.has(shell.source.status),
+    };
+  });
 }
 
 export function useNodeCards(workflow: Pick<Workflow, "nodes" | "edges" | "runs">): NodeCardInfo[] {

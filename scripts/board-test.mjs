@@ -1,26 +1,22 @@
 #!/usr/bin/env node
-// Runs board-owned tests with a per-file proof cache (Foreman's CI proof cache, scaled down).
-// A test file's key hashes its text, every repository file it reaches through imports (workspace
-// packages count whole), the setup files and configs, and the lockfile. A pass is stored per key,
-// so a run executes only files without a proof at their current inputs.
-//
-//   node scripts/board-test.mjs            run files without a proof
-//   node scripts/board-test.mjs --full     run every board test
-//   node scripts/board-test.mjs <files>    run the named files, ignoring proofs
-import { execFileSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+// Cache each board test pass against its imports, configuration, and lockfile.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
-const root = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+const root = NodeChildProcess.execFileSync("git", ["rev-parse", "--show-toplevel"], {
+  encoding: "utf8",
+}).trim();
 process.chdir(root);
-const cacheDir = process.env.BOARD_TEST_CACHE ?? join(homedir(), ".cache", "t3-board-tests");
-const proofsFile = join(cacheDir, "proofs.json");
+const cacheDir =
+  process.env.BOARD_TEST_CACHE ?? NodePath.join(NodeOS.homedir(), ".cache", "t3-board-tests");
+const proofsFile = NodePath.join(cacheDir, "proofs.json");
 const BOARD_DIRS = ["packages/board-core", "apps/server/src/board", "apps/web/src/board"];
 const isTest = (file) => /\.test\.tsx?$/.test(file);
 
-const tracked = execFileSync("git", ["ls-files", "-co", "--exclude-standard"], {
+const tracked = NodeChildProcess.execFileSync("git", ["ls-files", "-co", "--exclude-standard"], {
   encoding: "utf8",
   maxBuffer: 64 << 20,
 })
@@ -31,8 +27,8 @@ const trackedSet = new Set(tracked);
 const packageDirs = new Map();
 for (const file of tracked) {
   if (!file.endsWith("/package.json")) continue;
-  const name = JSON.parse(readFileSync(file, "utf8")).name;
-  if (name) packageDirs.set(name, dirname(file));
+  const name = JSON.parse(NodeFS.readFileSync(file, "utf8")).name;
+  if (name) packageDirs.set(name, NodePath.dirname(file));
 }
 const packageFileCache = new Map();
 const packageFiles = (dir) => {
@@ -61,12 +57,14 @@ const SPECIFIER =
 
 // Returns repository files a file depends on; whole workspace packages for bare `@t3tools/*` imports.
 function dependencies(file) {
-  const text = readFileSync(file, "utf8");
+  const text = NodeFS.readFileSync(file, "utf8");
   const found = [];
   for (const match of text.matchAll(SPECIFIER)) {
     const specifier = match[1] ?? match[2] ?? match[3] ?? match[4];
     if (specifier.startsWith(".")) {
-      const target = resolveFile(relative(root, resolve(dirname(file), specifier)));
+      const target = resolveFile(
+        NodePath.relative(root, NodePath.resolve(NodePath.dirname(file), specifier)),
+      );
       if (target) found.push(target);
     } else if (specifier.startsWith("~/")) {
       const target = resolveFile(`apps/web/src/${specifier.slice(2)}`);
@@ -119,7 +117,9 @@ const blobHash = new Map();
 const hashOf = (file) => {
   let hash = blobHash.get(file);
   if (hash === undefined) {
-    hash = existsSync(file) ? createHash("sha256").update(readFileSync(file)).digest("hex") : "-";
+    hash = NodeFS.existsSync(file)
+      ? NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(file)).digest("hex")
+      : "-";
     blobHash.set(file, hash);
   }
   return hash;
@@ -134,12 +134,12 @@ function keyOf(test) {
     const file = stack.pop();
     if (seen.has(file)) continue;
     seen.add(file);
-    if (!/\.(m?[jt]sx?)$/.test(file) || !existsSync(file)) continue;
+    if (!/\.(m?[jt]sx?)$/.test(file) || !NodeFS.existsSync(file)) continue;
     let deps = depsCache.get(file);
     if (!deps) depsCache.set(file, (deps = dependencies(file)));
     for (const dep of deps) stack.push(dep);
   }
-  const hash = createHash("sha256").update(`v1\0${process.version}\0${test}\0`);
+  const hash = NodeCrypto.createHash("sha256").update(`v1\0${process.version}\0${test}\0`);
   for (const file of [...seen].sort()) hash.update(`${file}\0${hashOf(file)}\0`);
   return hash.digest("hex");
 }
@@ -151,13 +151,19 @@ const tests = named.length
   ? named
   : tracked.filter((file) => isTest(file) && BOARD_DIRS.some((dir) => file.startsWith(`${dir}/`)));
 for (const test of tests) {
-  if (!BOARD_DIRS.some((dir) => test.startsWith(`${dir}/`)) || !isTest(test) || !existsSync(test)) {
+  if (
+    !BOARD_DIRS.some((dir) => test.startsWith(`${dir}/`)) ||
+    !isTest(test) ||
+    !NodeFS.existsSync(test)
+  ) {
     console.error(`Not a board-owned test: ${test}`);
     process.exit(2);
   }
 }
 
-const proofs = existsSync(proofsFile) ? JSON.parse(readFileSync(proofsFile, "utf8")) : {};
+const proofs = NodeFS.existsSync(proofsFile)
+  ? JSON.parse(NodeFS.readFileSync(proofsFile, "utf8"))
+  : {};
 const keys = new Map(tests.map((test) => [test, keyOf(test)]));
 const toRun = tests.filter((test) => full || named.length || !proofs[keys.get(test)]);
 const cached = tests.filter((test) => !toRun.includes(test));
@@ -171,19 +177,19 @@ const COMMANDS = {
   web: { cwd: "apps/web", args: ["--project", "unit"] },
   browser: { cwd: "apps/web", args: ["--project", "browser"] },
 };
-mkdirSync(cacheDir, { recursive: true });
+NodeFS.mkdirSync(cacheDir, { recursive: true });
 let failed = false;
 for (const [project, command] of Object.entries(COMMANDS)) {
   const files = toRun.filter((test) => projectOf(test) === project);
   if (!files.length) continue;
   if (project === "browser" && process.env.CI === "true") {
-    spawnSync("vp", ["exec", "playwright", "install", "--with-deps", "chromium"], {
+    NodeChildProcess.spawnSync("vp", ["exec", "playwright", "install", "--with-deps", "chromium"], {
       cwd: command.cwd,
       stdio: "inherit",
     });
   }
-  const report = join(cacheDir, `report-${process.pid}-${project}.json`);
-  const result = spawnSync(
+  const report = NodePath.join(cacheDir, `report-${process.pid}-${project}.json`);
+  const result = NodeChildProcess.spawnSync(
     "vp",
     [
       "test",
@@ -192,21 +198,21 @@ for (const [project, command] of Object.entries(COMMANDS)) {
       "--reporter=default",
       "--reporter=json",
       `--outputFile.json=${report}`,
-      ...files.map((file) => relative(command.cwd, file)),
+      ...files.map((file) => NodePath.relative(command.cwd, file)),
     ],
     { cwd: command.cwd, stdio: "inherit" },
   );
   if (result.status !== 0) failed = true;
-  if (!existsSync(report)) continue;
-  for (const fileResult of JSON.parse(readFileSync(report, "utf8")).testResults ?? []) {
-    const test = relative(root, fileResult.name);
+  if (!NodeFS.existsSync(report)) continue;
+  for (const fileResult of JSON.parse(NodeFS.readFileSync(report, "utf8")).testResults ?? []) {
+    const test = NodePath.relative(root, fileResult.name);
     const passed =
       fileResult.status === "passed" &&
       fileResult.assertionResults.length > 0 &&
       fileResult.assertionResults.every((assertion) => assertion.status === "passed");
     if (passed && keys.has(test)) proofs[keys.get(test)] = { test, at: new Date().toISOString() };
   }
-  rmSync(report, { force: true });
+  NodeFS.rmSync(report, { force: true });
 }
-writeFileSync(proofsFile, `${JSON.stringify(proofs, null, 1)}\n`);
+NodeFS.writeFileSync(proofsFile, `${JSON.stringify(proofs, null, 1)}\n`);
 process.exit(failed ? 1 : 0);

@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./upstream";
 import { XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
@@ -31,10 +32,17 @@ import {
 
 function InfoLine({ label, value }: { readonly label: string; readonly value: string }) {
   return (
-    <div className="flex min-w-0 gap-1.5 text-xs text-muted-foreground" title={value}>
-      <span className="shrink-0">{label}</span>
-      <span className="truncate text-foreground/80">{value}</span>
-    </div>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <div className="flex min-w-0 gap-1.5 text-xs text-muted-foreground">
+            <span className="shrink-0">{label}</span>
+            <span className="truncate text-foreground/80">{value}</span>
+          </div>
+        }
+      />
+      <TooltipPopup>{value}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -65,10 +73,12 @@ export function NodeSettingsPanel(props: {
   const [role, setRole] = useState(node.role ?? "");
 
   // The panel is too narrow for t3's right panel; start each node's chat with it closed.
+  // oxlint-disable-next-line t3code/react-effect-budget -- Synchronize the external right-panel store with the active thread.
   useEffect(() => {
     useRightPanelStore.getState().close(scopeThreadRef(node.environmentId, node.threadId));
   }, [node.environmentId, node.threadId]);
 
+  // oxlint-disable-next-line t3code/react-effect-budget -- Subscribe to the window keyboard event.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();

@@ -15,7 +15,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ActivityIcon, MessageSquareIcon, SettingsIcon, XIcon } from "lucide-react";
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useState } from "react";
 import type { EdgeRunView, NodeRunView } from "@t3tools/board-core/runView";
 
 import { NodeSettingsPanel } from "./NodeSettingsPanel";
@@ -50,7 +50,6 @@ import { AGENT_NODE_SIZE, useFloatingCurve } from "./foreman/signalEdge";
 import { useHoverControls } from "./foreman/useHoverControls";
 import "./foreman/foreman.css";
 import { BoardTitle, BoardToolbar } from "./BoardToolbar";
-import type { WorkflowNameHandle } from "./toolbar/WorkflowName";
 import { useBoardMachines } from "./useBoardMachines";
 import { BoardKanban } from "./toolbar/BoardKanban";
 import { useNodeRunViews } from "./toolbar/useNodeStatuses";
@@ -243,28 +242,26 @@ const TRAVEL_GAP_MS = 180;
 
 /** Crossings that appear after the edge mounted fly once; older ones are history and do not. */
 function useEdgePulses(view: EdgeRunView | undefined): EdgePulse[] {
-  const [initial] = useState(() => new Set(view?.crossings.map((crossing) => crossing.key)));
-  // Get-or-set cache of start times, so a re-render never restarts a flight.
-  const [starts] = useState(() => new Map<string, number>());
-  const now = performance.now();
-  const fresh = view?.crossings.filter((crossing) => !initial.has(crossing.key)) ?? [];
-  return fresh.flatMap((crossing, index) => {
-    let startsAt = starts.get(crossing.key);
-    if (startsAt === undefined) {
-      startsAt = now + index * TRAVEL_GAP_MS;
-      starts.set(crossing.key, startsAt);
-    }
-    return startsAt > now - 4_000
-      ? [
-          {
-            key: crossing.key,
-            signal: crossing.signal,
-            reversed: crossing.signal !== "task",
-            startsAt,
-          },
-        ]
-      : [];
-  });
+  const [state, setState] = useState(() => ({
+    seen: new Set(view?.crossings.map((crossing) => crossing.key)),
+    pulses: [] as EdgePulse[],
+  }));
+  const fresh = view?.crossings.filter((crossing) => !state.seen.has(crossing.key)) ?? [];
+  if (fresh.length > 0) {
+    setState({
+      seen: new Set([...state.seen, ...fresh.map((crossing) => crossing.key)]),
+      pulses: [
+        ...state.pulses,
+        ...fresh.map((crossing, index) => ({
+          key: crossing.key,
+          signal: crossing.signal,
+          reversed: crossing.signal !== "task",
+          delay: index * TRAVEL_GAP_MS,
+        })),
+      ].slice(-20),
+    });
+  }
+  return state.pulses;
 }
 
 type AgentFlowNode = Node<{ readonly node: BoardNode }, "agent">;
@@ -443,7 +440,7 @@ function BoardCanvasPage() {
   const pending = useBoardPending();
   const { nodes, edges } = workflow;
   const views = useNodeRunViews(workflow);
-  const workflowName = useRef<WorkflowNameHandle>(null);
+  const [editingName, setEditingName] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [kanban, setKanban] = useState(false);
   const selectedRun = workflow.runs.find((run) => run.id === selectedRunId) ?? null;
@@ -468,17 +465,12 @@ function BoardCanvasPage() {
   const [settingsNodeId, setSettingsNodeId] = useState<string | null>(null);
   const settingsNode = nodes.find((n) => n.id === settingsNodeId) ?? null;
 
-  // Store -> canvas: keep React Flow's own state (size, selection) for nodes that already exist.
-  useEffect(() => {
-    setFlowNodes((previous) =>
-      nodes.map((node) =>
-        toFlowNode(
-          node,
-          previous.find((candidate) => candidate.id === node.id),
-        ),
-      ),
-    );
-  }, [nodes]);
+  const displayedNodes = nodes.map((node) =>
+    toFlowNode(
+      node,
+      flowNodes.find((candidate) => candidate.id === node.id),
+    ),
+  );
 
   const flowEdges: Edge[] = edges.map((edge) => {
     const id = `${edge.a}:${edge.b}`;
@@ -495,7 +487,17 @@ function BoardCanvasPage() {
 
   // Canvas -> store: positions and deletions.
   const onNodesChange = (changes: NodeChange<AgentFlowNode>[]) => {
-    setFlowNodes((previous) => applyNodeChanges(changes, previous));
+    setFlowNodes((previous) =>
+      applyNodeChanges(
+        changes,
+        nodes.map((node) =>
+          toFlowNode(
+            node,
+            previous.find((item) => item.id === node.id),
+          ),
+        ),
+      ),
+    );
     for (const change of changes) {
       if (change.type === "position" && change.position && change.dragging === false) {
         void updateNode(change.id, { x: change.position.x, y: change.position.y }).then((saved) => {
@@ -537,12 +539,12 @@ function BoardCanvasPage() {
   return (
     <SidebarInset className="h-dvh">
       <WorkspacePageHeader electron={isElectron} className="board-header border-b border-border">
-        <BoardTitle nameRef={workflowName} />
+        <BoardTitle editing={editingName} onEditingChange={setEditingName} />
       </WorkspacePageHeader>
       <div className={`board-canvas relative min-h-0 flex-1${connecting ? " is-connecting" : ""}`}>
         <div className="board-floating-controls">
           <BoardToolbar
-            nameRef={workflowName}
+            onRename={() => setEditingName(true)}
             selectedRunId={selectedRun?.id ?? null}
             onSelectRun={setSelectedRunId}
             kanban={kanban}
@@ -562,7 +564,7 @@ function BoardCanvasPage() {
               <RunViewsContext.Provider value={views}>
                 <ReactFlow
                   className="absolute! inset-0"
-                  nodes={flowNodes}
+                  nodes={displayedNodes}
                   edges={flowEdges}
                   nodeTypes={NODE_TYPES}
                   edgeTypes={EDGE_TYPES}

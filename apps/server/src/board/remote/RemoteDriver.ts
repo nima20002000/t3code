@@ -50,13 +50,13 @@ const error = (operation: NodeDriverError["operation"], cause: unknown) =>
     cause,
   });
 
-const reportStatus = (
-  store: PeerStore,
-  target: { readonly environmentId: BoardDriverThread["environmentId"] },
-  status: "connected" | "error",
-  expectedPeer?: Peer,
-) =>
-  Effect.gen(function* () {
+const reportStatus = Effect.fn("RemoteDriver.reportStatus")(
+  function* (
+    store: PeerStore,
+    target: { readonly environmentId: BoardDriverThread["environmentId"] },
+    status: "connected" | "error",
+    expectedPeer?: Peer,
+  ) {
     if (!store.setStatus) return;
     const peer = expectedPeer ?? (yield* store.get(target.environmentId));
     if (peer) {
@@ -66,13 +66,16 @@ const reportStatus = (
         status === "error" ? "Could not reach or authenticate this machine." : undefined,
       );
     }
-  }).pipe(
-    Effect.catch(() =>
-      Effect.logWarning("Could not update board machine status", {
-        environmentId: target.environmentId,
-      }),
+  },
+  (effect, _store, target) =>
+    effect.pipe(
+      Effect.catch(() =>
+        Effect.logWarning("Could not update board machine status", {
+          environmentId: target.environmentId,
+        }),
+      ),
     ),
-  );
+);
 
 const peerFor = Effect.fn("RemoteDriver.peerFor")(function* (
   store: PeerStore,

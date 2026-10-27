@@ -29,6 +29,8 @@ export class BoardPeers extends Context.Service<
   }
 >()("t3/board/BoardPeers") {}
 
+const decodeTicket = Schema.decodeEffect(Schema.toCodecJson(AuthWebSocketTicketResult));
+
 const make = Effect.gen(function* () {
   const store = yield* BoardStore.BoardStore;
   const drivers = yield* DriverRegistry.DriverRegistry;
@@ -60,7 +62,7 @@ const make = Effect.gen(function* () {
               new URL("/api/auth/websocket-ticket/rpc", peer.url),
               { method: "POST", headers: { authorization: `Bearer ${peer.bearer}` } },
             );
-            yield* Schema.decodeEffect(Schema.toCodecJson(AuthWebSocketTicketResult))(response);
+            yield* decodeTicket(response);
             return true;
           }).pipe(Effect.orElseSucceed(() => false));
           if (!checked) {

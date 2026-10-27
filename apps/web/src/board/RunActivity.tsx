@@ -3,7 +3,7 @@ import { runToShow } from "@t3tools/board-core/runView";
 import { XIcon } from "lucide-react";
 
 import { formatRunTime } from "./toolbar/runPresentation";
-import { Button } from "./upstream";
+import { Button, Tooltip, TooltipPopup, TooltipTrigger } from "./upstream";
 
 export type ActivityTarget =
   | { readonly kind: "node"; readonly nodeId: string }
@@ -29,13 +29,23 @@ function RequestRow({ request }: { readonly request: RunRequestRecord }) {
           {STATUS_WORDS[request.status]} · {formatRunTime(request.returnedAt ?? request.at)}
         </span>
       </div>
-      <p className="line-clamp-3 text-xs text-foreground/80" title={request.task}>
-        {request.task}
-      </p>
+      <Tooltip>
+        <TooltipTrigger
+          render={<p className="line-clamp-3 text-xs text-foreground/80">{request.task}</p>}
+        />
+        <TooltipPopup>{request.task}</TooltipPopup>
+      </Tooltip>
       {request.returnSummary ? (
-        <p className="line-clamp-3 text-xs text-muted-foreground" title={request.returnSummary}>
-          ↩ {request.returnSummary}
-        </p>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <p className="line-clamp-3 text-xs text-muted-foreground">
+                ↩ {request.returnSummary}
+              </p>
+            }
+          />
+          <TooltipPopup>{request.returnSummary}</TooltipPopup>
+        </Tooltip>
       ) : request.failureReason ? (
         <p className="text-xs text-destructive">{request.failureReason}</p>
       ) : null}

@@ -3,11 +3,11 @@
 // 1. a file outside the board folders changed and is not a touch point listed in FORK.md;
 // 2. board source imports upstream code anywhere but its folder's upstream.ts gateway.
 // Tests and testkits are exempt from 2: seam tests drive real upstream harnesses on purpose.
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
-const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
+const git = (...args) => NodeChildProcess.execFileSync("git", args, { encoding: "utf8" }).trim();
 const root = git("rev-parse", "--show-toplevel");
 process.chdir(root);
 
@@ -15,7 +15,7 @@ const BOARD_DIRS = ["packages/board-core", "apps/server/src/board", "apps/web/sr
 const inBoard = (file) => BOARD_DIRS.some((dir) => file.startsWith(`${dir}/`));
 const problems = [];
 
-const forkMd = readFileSync("FORK.md", "utf8");
+const forkMd = NodeFS.readFileSync("FORK.md", "utf8");
 const touchSection = forkMd
   .split(/^## /m)
   .find((section) => section.startsWith("Upstream touch points"));
@@ -53,12 +53,12 @@ for (const dir of BOARD_DIRS) {
     .split("\n")
     .filter((file) => /\.tsx?$/.test(file) && !isTest(file) && file !== `${dir}/upstream.ts`);
   for (const file of files) {
-    for (const match of readFileSync(file, "utf8").matchAll(SPECIFIER)) {
+    for (const match of NodeFS.readFileSync(file, "utf8").matchAll(SPECIFIER)) {
       const specifier = match[1] ?? match[2];
       const target = specifier.startsWith("~/")
         ? `apps/web/src/${specifier.slice(2)}`
         : specifier.startsWith(".")
-          ? relative(root, resolve(dirname(file), specifier))
+          ? NodePath.relative(root, NodePath.resolve(NodePath.dirname(file), specifier))
           : undefined;
       if (target === undefined || target.startsWith(`${dir}/`)) continue;
       problems.push(
@@ -71,7 +71,7 @@ for (const dir of BOARD_DIRS) {
 }
 
 // An upstream merge rewrites AGENTS.md; the fork banner must survive it.
-if (!readFileSync("AGENTS.md", "utf8").includes("**This checkout is the board fork.**"))
+if (!NodeFS.readFileSync("AGENTS.md", "utf8").includes("**This checkout is the board fork.**"))
   problems.push(
     "AGENTS.md: the board fork banner at the top is missing (lost in an upstream merge?)",
   );

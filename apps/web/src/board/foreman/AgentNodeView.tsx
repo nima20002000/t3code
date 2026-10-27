@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../upstream";
 import { type CSSProperties, type MouseEvent, type ReactNode } from "react";
 
 import { useHoverControls } from "./useHoverControls";
@@ -87,34 +88,42 @@ export function AgentNodeView({
           <i aria-hidden="true" />
           {statusLabel}
         </span>
-        <strong className="n-agent-name" title={name}>
-          {name}
-        </strong>
+        <Tooltip>
+          <TooltipTrigger render={<strong className="n-agent-name">{name}</strong>} />
+          <TooltipPopup>{name}</TooltipPopup>
+        </Tooltip>
         <span className="n-agent-harness">{harnessLabel}</span>
         {model ? (
-          <span className="n-agent-model" title={model}>
-            {model}
-          </span>
+          <Tooltip>
+            <TooltipTrigger render={<span className="n-agent-model">{model}</span>} />
+            <TooltipPopup>{model}</TooltipPopup>
+          </Tooltip>
         ) : null}
-        <span className="n-agent-machine" title={machine}>
-          {machine}
-        </span>
+        <Tooltip>
+          <TooltipTrigger render={<span className="n-agent-machine">{machine}</span>} />
+          <TooltipPopup>{machine}</TooltipPopup>
+        </Tooltip>
       </div>
       <div className="n-agent-actions" role="group" aria-label={`${name} actions`}>
         {actions.map((action) => (
-          <button
-            key={action.slot}
-            type="button"
-            className={`n-agent-action n-agent-action--${action.slot} nodrag nopan`}
-            aria-label={action.label}
-            title={action.label}
-            onClick={(event) => {
-              event.stopPropagation();
-              action.onClick(event);
-            }}
-          >
-            {action.icon}
-          </button>
+          <Tooltip key={action.slot}>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  className={`n-agent-action n-agent-action--${action.slot} nodrag nopan`}
+                  aria-label={action.label}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    action.onClick(event);
+                  }}
+                >
+                  {action.icon}
+                </button>
+              }
+            />
+            <TooltipPopup>{action.label}</TooltipPopup>
+          </Tooltip>
         ))}
       </div>
       {children}
