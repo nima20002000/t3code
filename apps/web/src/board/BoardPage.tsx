@@ -4,7 +4,6 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import {
   applyNodeChanges,
   Background,
-  Controls,
   ReactFlow,
   type Connection,
   type Edge,
@@ -16,7 +15,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ActivityIcon, MessageSquareIcon, SettingsIcon } from "lucide-react";
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { EdgeRunView, NodeRunView } from "@t3tools/board-core/runView";
 
 import { NodeSettingsPanel } from "./NodeSettingsPanel";
@@ -49,7 +48,8 @@ import {
 import { SignalEdgeShape, type EdgePulse } from "./foreman/SignalEdgeShape";
 import { AGENT_NODE_SIZE, useFloatingCurve } from "./foreman/signalEdge";
 import "./foreman/foreman.css";
-import { BoardToolbar } from "./BoardToolbar";
+import { BoardTitle, BoardToolbar } from "./BoardToolbar";
+import type { WorkflowNameHandle } from "./toolbar/WorkflowName";
 import { useBoardMachines } from "./useBoardMachines";
 import { BoardKanban } from "./toolbar/BoardKanban";
 import { useNodeRunViews } from "./toolbar/useNodeStatuses";
@@ -412,6 +412,7 @@ function BoardCanvasPage() {
   const pending = useBoardPending();
   const { nodes, edges } = workflow;
   const views = useNodeRunViews(workflow);
+  const workflowName = useRef<WorkflowNameHandle>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [kanban, setKanban] = useState(false);
   const selectedRun = workflow.runs.find((run) => run.id === selectedRunId) ?? null;
@@ -513,21 +514,25 @@ function BoardCanvasPage() {
   return (
     <SidebarInset className="h-dvh">
       <WorkspacePageHeader electron={isElectron} className="board-header border-b border-border">
-        <BoardToolbar
-          selectedRunId={selectedRun?.id ?? null}
-          onSelectRun={setSelectedRunId}
-          kanban={kanban}
-          onToggleKanban={() => setKanban((value) => !value)}
-          onAddAgent={() => {
-            setAddingAgent(true);
-            setAddingThread(false);
-          }}
-          onAddThread={() => setAddingThread((value) => !value)}
-          selectedEdgeCount={selectedEdgeIds.size}
-          onDeleteSelectedEdges={deleteSelectedEdges}
-        />
+        <BoardTitle nameRef={workflowName} />
       </WorkspacePageHeader>
       <div className={`board-canvas relative min-h-0 flex-1${connecting ? " is-connecting" : ""}`}>
+        <div className="board-floating-controls">
+          <BoardToolbar
+            nameRef={workflowName}
+            selectedRunId={selectedRun?.id ?? null}
+            onSelectRun={setSelectedRunId}
+            kanban={kanban}
+            onToggleKanban={() => setKanban((value) => !value)}
+            onAddAgent={() => {
+              setAddingAgent(true);
+              setAddingThread(false);
+            }}
+            onAddThread={() => setAddingThread((value) => !value)}
+            selectedEdgeCount={selectedEdgeIds.size}
+            onDeleteSelectedEdges={deleteSelectedEdges}
+          />
+        </div>
         {kanban ? (
           <BoardKanban workflow={workflow} />
         ) : (
@@ -553,7 +558,6 @@ function BoardCanvasPage() {
                   maxZoom={1.6}
                 >
                   <Background color="var(--border)" gap={24} size={1} />
-                  <Controls showInteractive={false} />
                 </ReactFlow>
               </RunViewsContext.Provider>
             </OpenActivityContext.Provider>
