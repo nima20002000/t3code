@@ -26,16 +26,17 @@ const SWAP_MS = 100;
 const BLUR_MS = 280;
 const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
 const fade = (element: Element, to: number, duration: number) =>
-  element.animate([{ opacity: 1 - to }, { opacity: to }], {
+  element.animate([{ opacity: Number(getComputedStyle(element).opacity) }, { opacity: to }], {
     duration,
     easing: "ease-out",
     fill: "forwards",
   }).finished;
 
 /**
- * Toggles full screen through a blur of the board. Opening: the small panel fades out, then the
- * full panel and the blur fade in together. Minimizing reverses it. Resizing re-lays out the whole
- * chat and blocks the main thread, so it happens while the panel is invisible.
+ * Toggles full screen through a blur of the board. The blur runs through the whole change: the old
+ * panel fades out as it starts, and the new one fades in as it ends. Resizing re-lays out the whole
+ * chat and blocks the main thread, so it happens while the panel is invisible; the blur keeps
+ * moving on the compositor meanwhile.
  */
 export async function morphPanel(panel: HTMLElement | null, maximize: boolean, update: () => void) {
   if (morphing) return;
@@ -48,15 +49,16 @@ export async function morphPanel(panel: HTMLElement | null, maximize: boolean, u
   backdrop.className = "board-panel-backdrop";
   backdrop.style.opacity = maximize ? "0" : "1";
   document.body.append(backdrop);
+  const blur = maximize ? 1 : 0;
   try {
-    if (maximize) await fade(panel, 0, SWAP_MS);
-    else await Promise.all([fade(panel, 0, BLUR_MS), fade(backdrop, 0, BLUR_MS)]);
+    // Most of the blur happens while the panel swaps; the rest finishes with the new panel.
+    void fade(backdrop, maximize ? 0.6 : 0.4, SWAP_MS * 3);
+    await fade(panel, 0, SWAP_MS);
     flushSync(update);
     // The chat re-renders once more when it observes its new size; let that pass before fading in.
     await nextFrame();
     await nextFrame();
-    if (maximize) await Promise.all([fade(panel, 1, BLUR_MS), fade(backdrop, 1, BLUR_MS)]);
-    else await fade(panel, 1, SWAP_MS);
+    await Promise.all([fade(panel, 1, BLUR_MS), fade(backdrop, blur, BLUR_MS)]);
   } finally {
     for (const animation of panel.getAnimations()) animation.cancel();
     backdrop.remove();
