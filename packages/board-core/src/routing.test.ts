@@ -1,20 +1,27 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ModelSelection } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { createWorkflow, type BoardNode, type Workflow } from "./boardModel.ts";
-import { canHandoff, decideRouting, selectSettledMessages, validateGraph } from "./routing.ts";
+import {
+  canHandoff,
+  decideRouting,
+  selectSettledMessages,
+  validateGraph,
+  validateRunnable,
+} from "./routing.ts";
 import type { BoardResult } from "./resultProtocol.ts";
 
+const modelSelection = { instanceId: "codex", model: "gpt-6-luna" } as ModelSelection;
 const node = (id: string, name = id): BoardNode => ({
   id,
   name,
+  profile: "worker",
   environmentId: "env" as EnvironmentId,
-  threadId: id as ThreadId,
+  modelSelection,
   x: 0,
   y: 0,
-  baselined: true,
 });
 const graph = (): Workflow => ({
-  ...createWorkflow("w", "W"),
+  ...createWorkflow("w", "W", "ws"),
   nodes: [node("home", "Home"), node("worker", "Worker"), node("other", "Other")],
   edges: [{ a: "home", b: "worker" }],
 });
@@ -43,6 +50,19 @@ describe("board routing", () => {
       "invalid-edge",
       "invalid-edge",
     ]);
+  });
+
+  it("allows one orchestrator, and workers only run under one", () => {
+    const workflow = graph();
+    const lead = { ...node("lead"), profile: "orchestrator" as const };
+    const second = { ...node("second"), profile: "orchestrator" as const };
+    expect(validateGraph({ ...workflow, nodes: [...workflow.nodes, lead, second] })).toEqual([
+      { kind: "several-orchestrators" },
+    ]);
+    expect(validateGraph(workflow)).toEqual([]);
+    expect(validateRunnable(workflow)).toEqual([{ kind: "no-orchestrator" }]);
+    expect(validateRunnable({ ...workflow, nodes: [...workflow.nodes, lead] })).toEqual([]);
+    expect(validateRunnable({ nodes: [lead], edges: [] })).toEqual([]);
   });
 
   it("selects all fresh settled assistant messages and only the newest result", () => {

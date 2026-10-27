@@ -7,6 +7,7 @@
     "./boardModel": "./src/boardModel.ts",
     "./resultProtocol": "./src/resultProtocol.ts",
     "./routing": "./src/routing.ts",
+    "./kanban": "./src/kanban.ts",
     "./http": "./src/http.ts",
     "./NodeDriver": "./src/NodeDriver.ts",
     "./runView": "./src/runView.ts"

@@ -50,10 +50,23 @@ const handlers = HttpApiBuilder.group(
     const store = yield* BoardStore.BoardStore;
     return handler
       .handle("getSnapshot", () => read(store.snapshot()))
+      .handle("listWorkspaces", () => read(board.listWorkspaces()))
+      .handle("getWorkspace", ({ params }) => read(board.getWorkspace(params.workspaceId)))
+      .handle("createWorkspace", ({ payload }) => operate(board.createWorkspace(payload)))
+      .handle("updateWorkspace", ({ params, payload }) =>
+        operate(board.updateWorkspace(params.workspaceId, payload)),
+      )
+      .handle("deleteWorkspace", ({ params }) => operate(board.deleteWorkspace(params.workspaceId)))
+      .handle("addFolder", ({ params, payload }) =>
+        operate(board.addFolder(params.workspaceId, payload)),
+      )
+      .handle("deleteFolder", ({ params }) =>
+        operate(board.deleteFolder(params.workspaceId, params.environmentId)),
+      )
+      .handle("getKanban", ({ params }) => read(board.getKanban(params.workflowId)))
       .handle("listWorkflows", () => read(board.listWorkflows()))
       .handle("getWorkflow", ({ params }) => read(board.getWorkflow(params.workflowId)))
       .handle("createWorkflow", ({ payload }) => operate(board.createWorkflow(payload)))
-      .handle("importWorkflows", ({ payload }) => operate(board.importWorkflows(payload)))
       .handle("updateWorkflow", ({ params, payload }) =>
         operate(board.updateWorkflow(params.workflowId, payload)),
       )

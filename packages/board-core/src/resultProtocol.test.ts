@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  buildAgentFirstPrompt,
-  buildBoardInstructions,
+  buildAgentInstructions,
+  buildSeededMessage,
   buildRequestMessage,
   connectedNodeNames,
   incomingNodeNames,
@@ -116,20 +116,61 @@ describe("helpers", () => {
   });
 
   it("explains the contract with both name lists", () => {
-    const text = buildBoardInstructions("Dev", ["QA"], ["Lead"]);
+    const text = buildAgentInstructions({
+      name: "Dev",
+      profile: "worker",
+      outgoing: ["QA"],
+      incoming: ["Lead"],
+    });
     expect(text).toContain('"kind": "request"');
     expect(text).toContain('"kind": "return"');
     expect(text).toContain('"kind": "finish"');
-    expect(text).toContain("THIS MESSAGE IS A BRIEFING");
     expect(text).toContain("You can send requests to:\n- QA");
     expect(text).toContain("may send requests to you:\n- Lead");
   });
 
-  it("prefixes the role in the first prompt", () => {
-    expect(buildAgentFirstPrompt("Dev", " Fix bugs ", [])).toMatch(
-      /^Fix bugs\n\n\(The role above[\s\S]*\[Board\]/,
+  it("tells workers the kanban is kept by the orchestrator and shows it only to the orchestrator", () => {
+    const base = { name: "Lead", outgoing: ["Dev"], incoming: [] };
+    const worker = buildAgentInstructions({ ...base, profile: "worker" });
+    expect(worker).toContain("kept by the orchestrator");
+    expect(worker).not.toContain("Current cards:");
+    const orchestrator = buildAgentInstructions({
+      ...base,
+      profile: "orchestrator",
+      nodeNames: ["Dev"],
+      kanban: [
+        {
+          id: "c1",
+          title: "Parser",
+          body: "",
+          status: "blocked",
+          reason: "no spec",
+          updatedBy: "engine",
+          updatedAt: "t",
+        },
+      ],
+    });
+    expect(orchestrator).toContain("You are the orchestrator");
+    expect(orchestrator).toContain("- c1 [blocked] Parser (no spec)");
+  });
+
+  it("lets a node prompt replace the profile role, not the protocol", () => {
+    const text = buildAgentInstructions({
+      name: "Dev",
+      profile: "worker",
+      prompt: " Write Rust only. ",
+      outgoing: [],
+      incoming: [],
+    });
+    expect(text).toContain("Write Rust only.");
+    expect(text).not.toContain("You are a worker");
+    expect(text).toContain("Every reply you write MUST end");
+  });
+
+  it("puts the instructions before the work in the seeded message", () => {
+    expect(buildSeededMessage("rules", "[Board] Work request")).toBe(
+      "rules\n\n---\n\n[Board] Work request",
     );
-    expect(buildAgentFirstPrompt("Dev", " ", ["QA"])).toBe(buildBoardInstructions("Dev", ["QA"]));
   });
 
   it("builds a request message with header and json", () => {

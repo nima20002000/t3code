@@ -2,10 +2,14 @@ import { NodeDriverError, type NodeDriver } from "@t3tools/board-core";
 import { CommandId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as NodeOS from "node:os";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
-import { ThreadLaunch, ThreadManagement } from "./upstream.ts";
+import * as Option from "effect/Option";
+import { ProjectService, ThreadLaunch, ThreadManagement } from "./upstream.ts";
 
 export class LocalDriver extends Context.Service<LocalDriver, NodeDriver>()(
   "t3/board/LocalDriver",
@@ -14,6 +18,9 @@ export class LocalDriver extends Context.Service<LocalDriver, NodeDriver>()(
 const make = Effect.gen(function* () {
   const launchService = yield* ThreadLaunch.ThreadLaunchService;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const projects = yield* ProjectService.ProjectService;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const error = (operation: NodeDriverError["operation"]) => (cause: unknown) =>
     new NodeDriverError({ operation, message: `Local board driver ${operation} failed.`, cause });
 
@@ -161,7 +168,48 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError(error("interrupt")));
   });
-  return LocalDriver.of({ launch, send, subscribeSettled, readLatestAssistant, interrupt });
+  const ensureProject: NodeDriver["ensureProject"] = Effect.fn("LocalDriver.ensureProject")(
+    function* (input) {
+      const existing = yield* projects.getById(input.projectId);
+      if (Option.isSome(existing)) return;
+      yield* projects.create({
+        commandId: CommandId.make(`board:project:${input.projectId}`),
+        projectId: input.projectId,
+        title: input.title,
+        workspaceRoot: input.path,
+        createWorkspaceRootIfMissing: true,
+      });
+    },
+    Effect.mapError(error("ensureProject")),
+  );
+  const deleteProject: NodeDriver["deleteProject"] = Effect.fn("LocalDriver.deleteProject")(
+    function* (input) {
+      const project = input.removeFolder ? yield* projects.getById(input.projectId) : Option.none();
+      yield* projects
+        .delete({
+          commandId: CommandId.make(`board:project-delete:${input.projectId}`),
+          projectId: input.projectId,
+          force: true,
+        })
+        .pipe(Effect.catchTags({ ProjectNotFoundError: () => Effect.void }));
+      if (Option.isNone(project)) return;
+      // Only folders the board created under ~/t3-workspaces are ever deleted.
+      const root = path.resolve(project.value.workspaceRoot);
+      const boardRoot = path.join(NodeOS.homedir(), "t3-workspaces");
+      if (root.startsWith(`${boardRoot}${path.sep}`))
+        yield* fileSystem.remove(root, { recursive: true });
+    },
+    Effect.mapError(error("deleteProject")),
+  );
+  return LocalDriver.of({
+    launch,
+    send,
+    subscribeSettled,
+    readLatestAssistant,
+    interrupt,
+    ensureProject,
+    deleteProject,
+  });
 });
 
 export const layer = Layer.effect(LocalDriver, make);

@@ -63,11 +63,11 @@ export function runToShow(runs: ReadonlyArray<RunRecord>): RunRecord | undefined
  * Projects one run record and each node's live thread facts into node words and edge signals.
  * Pure: the engine's records are the facts; this only decides how they read on the canvas.
  */
-export function runViews(
+export function runViews<N extends BoardNode>(
   run: RunRecord | undefined,
-  nodes: ReadonlyArray<BoardNode>,
+  nodes: ReadonlyArray<N>,
   edges: ReadonlyArray<BoardEdge>,
-  live: (node: BoardNode) => NodeLiveFacts,
+  live: (node: N) => NodeLiveFacts,
 ): { nodes: Map<string, NodeRunView>; edges: Map<string, EdgeRunView> } {
   const nodeViews = new Map<string, NodeRunView>();
   const requests = run?.requests ?? [];

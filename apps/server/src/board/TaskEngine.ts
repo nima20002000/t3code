@@ -5,22 +5,35 @@ import {
   BoardInternalError,
   BoardInvalidRequestError,
   BoardNotFoundError,
+  applyKanban,
+  buildAgentInstructions,
   buildCorrectionMessage,
   buildRequestMessage,
   buildReturnMessage,
+  buildSeededMessage,
   buildStartMessage,
+  cardOfNode,
+  connectedNodeNames,
   decideRouting,
+  incomingNodeNames,
+  moveCard,
   parseResult,
-  validateGraph,
+  validateRunnable,
+  withFolder,
+  type BoardNode,
   type BoardResult,
   type BoardStartRunInput,
   type BoardDriverThread,
+  type KanbanCard,
+  type KanbanChange,
+  type KanbanStatus,
   type NodeDriverError,
   type RunRecord,
   type RunRequestRecord,
+  type RunThread,
   type Workflow,
 } from "@t3tools/board-core";
-import { CommandId, MessageId, type RunId } from "@t3tools/contracts";
+import { CommandId, MessageId, ThreadId, type RunId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -82,6 +95,22 @@ export class TaskEngine extends Context.Service<
 const stableId = (taskId: string, purpose: string) =>
   `board:${NodeCrypto.createHash("sha256").update(taskId).update("\0").update(purpose).digest("hex")}`;
 const MAX_FINISHED_RUNS = 50;
+/** The workflow as the run saw it when it started: routing and prompts never follow later edits. */
+const runWorkflow = (workflow: Workflow, run: RunRecord): Workflow => ({
+  ...workflow,
+  ...run.definition,
+  runs: [run],
+});
+const threadOf = (run: RunRecord, nodeId: string): BoardDriverThread | undefined => {
+  const thread = run.threads[nodeId];
+  return (
+    thread && {
+      environmentId: thread.environmentId,
+      projectId: thread.projectId,
+      threadId: thread.threadId,
+    }
+  );
+};
 const isActive = (run: RunRecord) => run.status === "running" || run.status === "stopping";
 const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 const terminal = (status: BoardStore.TaskStatus) =>
@@ -113,6 +142,89 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const writeCards = Effect.fn("TaskEngine.writeCards")(function* (
+    workflowId: string,
+    change: Pick<KanbanChange, "upserted" | "deleted">,
+  ) {
+    for (const card of change.upserted) {
+      yield* store.putCard(workflowId, card);
+      yield* store.appendEvent({ kind: "kanban.upserted", workflowId, card });
+    }
+    for (const cardId of change.deleted) {
+      yield* store.deleteCard(workflowId, cardId);
+      yield* store.appendEvent({ kind: "kanban.deleted", workflowId, cardId });
+    }
+  });
+  /** Moves the worker's assigned card; the first status group that has a card wins. */
+  const moveWorkerCard = Effect.fn("TaskEngine.moveWorkerCard")(function* (
+    workflowId: string,
+    node: BoardNode | undefined,
+    groups: ReadonlyArray<ReadonlyArray<KanbanStatus>>,
+    to: KanbanStatus,
+    reason?: string,
+  ) {
+    if (node?.profile !== "worker") return;
+    const cards = yield* store.listKanban(workflowId);
+    const card = groups
+      .map((statuses) => cardOfNode(cards, node.id, statuses))
+      .find((entry): entry is KanbanCard => entry !== undefined);
+    if (card)
+      yield* writeCards(workflowId, {
+        upserted: [moveCard(card, to, yield* now, reason)],
+        deleted: [],
+      });
+  });
+  /** Checks the orchestrator's kanban operations against the cards; a reason means they do not fit. */
+  const kanbanProblem = Effect.fn("TaskEngine.kanbanProblem")(function* (
+    workflow: Workflow,
+    node: BoardNode,
+    result: BoardResult,
+  ) {
+    if (node.profile !== "orchestrator" || !result.kanban?.length) return undefined;
+    const applied = applyKanban({
+      cards: yield* store.listKanban(workflow.id),
+      ops: result.kanban,
+      nodes: workflow.nodes,
+      actor: node.id,
+      at: yield* now,
+      newId: () => "pending",
+    });
+    return applied.ok ? undefined : `kanban: ${applied.reason}`;
+  });
+  const commitKanban = Effect.fn("TaskEngine.commitKanban")(function* (
+    workflow: Workflow,
+    node: BoardNode,
+    result: BoardResult,
+  ) {
+    if (!result.kanban?.length) return;
+    if (node.profile !== "orchestrator") {
+      yield* Effect.logWarning(
+        "A worker tried to change the board kanban; only the orchestrator may.",
+        {
+          workflowId: workflow.id,
+          nodeId: node.id,
+        },
+      );
+      return;
+    }
+    const applied = applyKanban({
+      cards: yield* store.listKanban(workflow.id),
+      ops: result.kanban,
+      nodes: workflow.nodes,
+      actor: node.id,
+      at: yield* now,
+      newId: () => NodeCrypto.randomUUID(),
+    });
+    if (!applied.ok) {
+      yield* Effect.logWarning("Board kanban operations no longer fit the cards.", {
+        workflowId: workflow.id,
+        reason: applied.reason,
+      });
+      return;
+    }
+    yield* writeCards(workflow.id, applied.value);
+  });
+
   const failTask = Effect.fn("TaskEngine.failTask")(function* (taskId: string, reason: string) {
     yield* store.transaction(
       Effect.gen(function* () {
@@ -137,6 +249,13 @@ const make = Effect.gen(function* () {
         yield* saveRun(
           { ...workflow, pending: workflow.pending.filter((entry) => entry.id !== task.id) },
           updated,
+        );
+        yield* moveWorkerCard(
+          workflow.id,
+          run.definition.nodes.find((entry) => entry.id === task.nodeId),
+          [["doing"], ["todo", "blocked"]],
+          "blocked",
+          reason,
         );
       }),
     );
@@ -203,22 +322,17 @@ const make = Effect.gen(function* () {
             let interrupting = false;
             for (const task of selected.toReversed()) {
               const checkpoint = task.checkpoint as Checkpoint;
-              const node = workflow?.nodes.find((entry) => entry.id === task.nodeId);
-              const live =
-                checkpoint.stage === "settle" ||
-                (checkpoint.stage === "send" && checkpoint.attempted);
-              if (live && node?.projectId) {
+              const thread = run && threadOf(run, task.nodeId);
+              // Each run has its own threads, so interrupting a launched node thread never touches other work.
+              const live = checkpoint.stage === "settle" || checkpoint.stage === "send";
+              if (live && thread) {
                 interrupting = true;
                 yield* store.putTask({
                   ...task,
                   status: "completing",
                   checkpoint: {
                     stage: "interrupt",
-                    thread: {
-                      environmentId: node.environmentId,
-                      projectId: node.projectId,
-                      threadId: node.threadId,
-                    },
+                    thread,
                     ...(checkpoint.stage === "settle" ? { runId: checkpoint.runId } : {}),
                   } satisfies Checkpoint,
                 });
@@ -269,6 +383,85 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /** Launches the node's fresh thread in the workspace folder on its machine, once per run. */
+  const prepareThread = Effect.fn("TaskEngine.prepareThread")(function* (
+    workflowId: string,
+    runId: string,
+    node: BoardNode,
+  ) {
+    const workflow = yield* store.getWorkflow(workflowId);
+    const run = workflow?.runs.find((entry) => entry.id === runId);
+    if (!workflow || !run) return yield* new BoardNotFoundError({ message: "Run not found." });
+    const existing = run.threads[node.id];
+    if (existing) return existing;
+    const workspace = yield* store.getWorkspace(workflow.workspaceId);
+    if (!workspace) return yield* new BoardNotFoundError({ message: "Workspace not found." });
+    const withFolders = withFolder(workspace, node.environmentId, NodeCrypto.randomUUID());
+    if (withFolders !== workspace)
+      yield* store.transaction(
+        Effect.gen(function* () {
+          yield* store.putWorkspace(withFolders);
+          yield* store.appendEvent({ kind: "workspace.upserted", workspace: withFolders });
+        }),
+      );
+    const folder = withFolders.folders.find((entry) => entry.environmentId === node.environmentId)!;
+    const driver = yield* drivers.get(node.environmentId);
+    yield* driver.ensureProject({
+      environmentId: node.environmentId,
+      projectId: folder.projectId,
+      title: workspace.name,
+      path: folder.path,
+    });
+    const key = `${runId}\0${node.id}`;
+    const threadId = ThreadId.make(stableId(key, "thread"));
+    yield* driver.launch({
+      environmentId: node.environmentId,
+      launch: {
+        commandId: CommandId.make(stableId(key, "launch")),
+        // A fixed thread and command id make a retried launch idempotent through t3's command receipts.
+        threadId,
+        projectId: folder.projectId,
+        title: `${node.name} · ${workflow.name}`,
+        modelSelection: node.modelSelection,
+        runtimeMode: run.definition.settings.runtimeMode,
+        interactionMode: "default",
+        workspaceStrategy: { type: "root" },
+      },
+    });
+    const thread: RunThread = {
+      environmentId: node.environmentId,
+      projectId: folder.projectId,
+      threadId,
+      seeded: false,
+    };
+    yield* store.transaction(
+      Effect.gen(function* () {
+        const current = yield* store.getWorkflow(workflowId);
+        const currentRun = current?.runs.find((entry) => entry.id === runId);
+        if (current && currentRun)
+          yield* saveRun(current, {
+            ...currentRun,
+            threads: { ...currentRun.threads, [node.id]: thread },
+          });
+      }),
+    );
+    return thread;
+  });
+  const seedInstructions = Effect.fn("TaskEngine.seedInstructions")(function* (
+    workflow: Workflow,
+    node: BoardNode,
+  ) {
+    return buildAgentInstructions({
+      name: node.name,
+      profile: node.profile,
+      prompt: node.prompt,
+      outgoing: connectedNodeNames(workflow.nodes, workflow.edges, node.id),
+      incoming: incomingNodeNames(workflow.nodes, workflow.edges, node.id),
+      nodeNames: workflow.nodes.map((entry) => entry.name),
+      ...(node.profile === "orchestrator" ? { kanban: yield* store.listKanban(workflow.id) } : {}),
+    });
+  });
+
   const process = Effect.fn("TaskEngine.process")(function* (
     taskId: string,
   ): Effect.fn.Return<
@@ -285,8 +478,8 @@ const make = Effect.gen(function* () {
       if (terminal(task.status)) return;
       const workflow = yield* store.getWorkflow(task.workflowId);
       const run = workflow?.runs.find((entry) => entry.id === task.runId);
-      const node = workflow?.nodes.find((entry) => entry.id === task.nodeId);
-      if (!workflow || !run || run.status !== "running" || !node?.projectId) {
+      const node = run?.definition.nodes.find((entry) => entry.id === task.nodeId);
+      if (!workflow || !run || run.status !== "running" || !node) {
         yield* failTask(task.id, "The workflow or its thread is no longer available.");
         return;
       }
@@ -297,17 +490,31 @@ const make = Effect.gen(function* () {
             const current = yield* store.getTask(task.id);
             if (!current || terminal(current.status)) return null;
             const driver = yield* drivers.get(node.environmentId);
+            const prepared = yield* prepareThread(task.workflowId, task.runId, node).pipe(
+              Effect.result,
+            );
+            if (Result.isFailure(prepared)) {
+              if (prepared.failure._tag !== "NodeDriverError") return yield* prepared.failure;
+              return prepared.failure;
+            }
+            const thread = prepared.success;
             const messageId = MessageId.make(stableId(task.id, `message:${checkpoint.step}`));
+            const text = thread.seeded
+              ? checkpoint.text
+              : buildSeededMessage(
+                  yield* seedInstructions(runWorkflow(workflow, run), node),
+                  checkpoint.text,
+                );
             const sent = yield* driver
               .send({
                 thread: {
-                  environmentId: node.environmentId,
-                  projectId: node.projectId!,
-                  threadId: node.threadId,
+                  environmentId: thread.environmentId,
+                  projectId: thread.projectId,
+                  threadId: thread.threadId,
                 },
                 commandId: CommandId.make(stableId(task.id, `send:${checkpoint.step}`)),
                 messageId,
-                text: checkpoint.text,
+                text,
               })
               .pipe(Effect.result);
             if (Result.isFailure(sent)) {
@@ -318,17 +525,27 @@ const make = Effect.gen(function* () {
               return sent.failure;
             }
             yield* store.transaction(
-              store.putTask({
-                ...current,
-                status: "running",
-                checkpoint: {
-                  stage: "settle",
-                  step: checkpoint.step,
-                  corrected: checkpoint.corrected,
-                  runId: sent.success.runId,
-                  sequence: sent.success.sequence,
-                  messageId,
-                } satisfies Checkpoint,
+              Effect.gen(function* () {
+                yield* store.putTask({
+                  ...current,
+                  status: "running",
+                  checkpoint: {
+                    stage: "settle",
+                    step: checkpoint.step,
+                    corrected: checkpoint.corrected,
+                    runId: sent.success.runId,
+                    sequence: sent.success.sequence,
+                    messageId,
+                  } satisfies Checkpoint,
+                });
+                if (thread.seeded) return;
+                const latest = yield* store.getWorkflow(task.workflowId);
+                const latestRun = latest?.runs.find((entry) => entry.id === task.runId);
+                if (latest && latestRun)
+                  yield* saveRun(latest, {
+                    ...latestRun,
+                    threads: { ...latestRun.threads, [node.id]: { ...thread, seeded: true } },
+                  });
               }),
             );
             return sent.success;
@@ -348,11 +565,11 @@ const make = Effect.gen(function* () {
       }
       if (checkpoint.stage === "settle") {
         const driver = yield* drivers.get(node.environmentId);
-        const thread = {
-          environmentId: node.environmentId,
-          projectId: node.projectId,
-          threadId: node.threadId,
-        };
+        const thread = threadOf(run, node.id);
+        if (!thread) {
+          yield* failTask(task.id, "The node's thread is no longer available.");
+          return;
+        }
         const sequence = (yield* store.snapshot()).sequence;
         const current = yield* store.getTask(task.id);
         if (!current || terminal(current.status)) return;
@@ -392,9 +609,11 @@ const make = Effect.gen(function* () {
         }
         const decision =
           result?.routing.kind === "request"
-            ? decideRouting(result, { ...workflow, runs: [run] }, node.id)
+            ? decideRouting(result, runWorkflow(workflow, run), node.id)
             : undefined;
         if (decision && !decision.ok) reason = decision.reason;
+        if (reason === undefined && result)
+          reason = yield* kanbanProblem(runWorkflow(workflow, run), node, result);
         if (reason !== undefined || result === undefined) {
           if (checkpoint.corrected) {
             yield* failTask(
@@ -437,7 +656,7 @@ const make = Effect.gen(function* () {
                 return [];
               const freshDecision = decideRouting(
                 result,
-                { ...currentWorkflow, runs: [currentRun] },
+                runWorkflow(currentWorkflow, currentRun),
                 node.id,
               );
               if (!freshDecision.ok)
@@ -506,6 +725,14 @@ const make = Effect.gen(function* () {
                 { ...currentWorkflow, pending },
                 { ...currentRun, requests: [...currentRun.requests, ...additions] },
               );
+              yield* commitKanban(runWorkflow(currentWorkflow, currentRun), node, result);
+              for (const child of created)
+                yield* moveWorkerCard(
+                  task.workflowId,
+                  currentRun.definition.nodes.find((entry) => entry.id === child.nodeId),
+                  [["todo", "blocked"]],
+                  "doing",
+                );
               return created;
             }),
           );
@@ -561,6 +788,14 @@ const make = Effect.gen(function* () {
               },
               updated,
             );
+            yield* commitKanban(runWorkflow(currentWorkflow, currentRun), node, result);
+            if (task.kind === "request")
+              yield* moveWorkerCard(
+                task.workflowId,
+                node,
+                [["doing"], ["todo", "blocked"]],
+                "done",
+              );
           }),
         );
         return;
@@ -683,13 +918,19 @@ const make = Effect.gen(function* () {
             return yield* new BoardConflictError({ message: "Run id already exists." });
           }
           const node = workflow.nodes.find((entry) => entry.id === input.nodeId);
-          if (!node?.projectId)
+          if (!node)
             return yield* new BoardInvalidRequestError({
-              message: "The entry node needs a project and thread.",
+              message: "The entry node was not found.",
             });
-          if (validateGraph(workflow).length)
+          const [problem] = validateRunnable(workflow);
+          if (problem)
             return yield* new BoardInvalidRequestError({
-              message: "The workflow graph is invalid.",
+              message:
+                problem.kind === "no-orchestrator"
+                  ? "A workflow with workers needs an orchestrator."
+                  : problem.kind === "several-orchestrators"
+                    ? "A workflow has at most one orchestrator."
+                    : "The workflow graph is invalid.",
             });
           const run: RunRecord = {
             id: input.id,
@@ -699,6 +940,12 @@ const make = Effect.gen(function* () {
             status: "running",
             startedAt: yield* now,
             requests: [],
+            threads: {},
+            definition: {
+              nodes: workflow.nodes,
+              edges: workflow.edges,
+              settings: workflow.settings,
+            },
           };
           const task: BoardStore.BoardTask = {
             id: input.id,
@@ -730,6 +977,7 @@ const make = Effect.gen(function* () {
             yield* store.appendEvent({ kind: "workflow.upserted", workflow: next });
           }
           yield* store.appendEvent({ kind: "run.upserted", workflowId, run });
+          yield* moveWorkerCard(workflowId, node, [["todo", "blocked"]], "doing");
           return run;
         }),
       )

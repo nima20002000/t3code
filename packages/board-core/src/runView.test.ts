@@ -1,16 +1,22 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ModelSelection } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import type { BoardNode, RunRecord, RunRequestRecord } from "./boardModel.ts";
+import {
+  DEFAULT_WORKFLOW_SETTINGS,
+  type BoardNode,
+  type RunRecord,
+  type RunRequestRecord,
+} from "./boardModel.ts";
 import { runToShow, runViews, type NodeLiveFacts } from "./runView.ts";
 
+const modelSelection = { instanceId: "codex", model: "gpt-6-luna" } as ModelSelection;
 const node = (id: string): BoardNode => ({
   id,
   name: id,
+  profile: "worker",
   environmentId: "env" as EnvironmentId,
-  threadId: id as ThreadId,
+  modelSelection,
   x: 0,
   y: 0,
-  baselined: true,
 });
 const nodes = [node("Home"), node("Italy"), node("Researcher"), node("Spare")];
 const edges = [
@@ -41,6 +47,8 @@ const run = (status: RunRecord["status"], requests: RunRequestRecord[]): RunReco
   status,
   startedAt: "t0",
   requests,
+  threads: {},
+  definition: { nodes, edges, settings: DEFAULT_WORKFLOW_SETTINGS },
 });
 const facts =
   (

@@ -1,5 +1,8 @@
 /** Structured result envelope every board agent ends its turn with (simplified Foreman coordination result). */
 
+import type { AgentProfile } from "./boardModel.ts";
+import { parseKanbanOps, type KanbanCard, type KanbanOp } from "./kanban.ts";
+
 export interface WorkRequest {
   readonly to: string;
   readonly task: string;
@@ -15,6 +18,8 @@ export interface BoardResult {
   readonly summary: string;
   readonly data: unknown;
   readonly routing: Routing;
+  /** Kanban operations; only the orchestrator's are applied. */
+  readonly kanban?: ReadonlyArray<KanbanOp>;
 }
 
 export type ParseResult =
@@ -51,24 +56,31 @@ export function parseResult(text: string): ParseResult {
   const routing = raw.routing;
   if (!isRecord(routing)) return { ok: false, reason: '"routing" is required' };
   const data = raw.data === undefined ? null : raw.data;
+  let kanban: ReadonlyArray<KanbanOp> = [];
+  if (raw.kanban !== undefined && raw.kanban !== null) {
+    const parsed = parseKanbanOps(raw.kanban);
+    if (!parsed.ok) return parsed;
+    kanban = parsed.value;
+  }
+  const done = (result: Omit<BoardResult, "kanban">): ParseResult => ({
+    ok: true,
+    result: kanban.length > 0 ? { ...result, kanban } : result,
+  });
 
   switch (routing.kind) {
     case "finish":
-      return { ok: true, result: { summary, data, routing: { kind: "finish" } } };
+      return done({ summary, data, routing: { kind: "finish" } });
     case "return": {
       const id = routing.requestId;
       if (id !== undefined && typeof id !== "string") {
         return { ok: false, reason: '"routing.requestId" must be a string' };
       }
       const requestId = typeof id === "string" && id.trim().length > 0 ? id.trim() : undefined;
-      return {
-        ok: true,
-        result: {
-          summary,
-          data,
-          routing: requestId === undefined ? { kind: "return" } : { kind: "return", requestId },
-        },
-      };
+      return done({
+        summary,
+        data,
+        routing: requestId === undefined ? { kind: "return" } : { kind: "return", requestId },
+      });
     }
     case "request": {
       const list = routing.requests;
@@ -84,7 +96,7 @@ export function parseResult(text: string): ParseResult {
         if (task.length === 0) return { ok: false, reason: `request ${index} needs a "task"` };
         requests.push(item.input === undefined ? { to, task } : { to, task, input: item.input });
       }
-      return { ok: true, result: { summary, data, routing: { kind: "request", requests } } };
+      return done({ summary, data, routing: { kind: "request", requests } });
     }
     default:
       return {
@@ -183,22 +195,71 @@ function nameList(names: ReadonlyArray<string>): string {
   return names.length > 0 ? names.map((peer) => `- ${peer}`).join("\n") : "- (none)";
 }
 
-/**
- * `outgoingNames` are the nodes this agent may send requests to (connectedNodeNames);
- * `incomingNames` are the nodes that may send requests to it.
- */
-export function buildBoardInstructions(
-  name: string,
-  outgoingNames: ReadonlyArray<string>,
-  incomingNames: ReadonlyArray<string> = [],
-): string {
+const PROFILE_ROLE: Record<AgentProfile, string> = {
+  worker:
+    "You are a worker. An orchestrator hands you work and checks your result. Do the work you are given, then finish: your summary and data go back to the orchestrator that asked.",
+  orchestrator:
+    "You are the orchestrator. You hand out work to your workers, check what they send back, and finish when the whole task is done.",
+};
+
+const PROFILE_RULES: Record<AgentProfile, ReadonlyArray<string>> = {
+  worker: [
+    '- Finish a work request with routing {"kind":"finish"} (not "return"): your summary and data go back to the agent that asked, automatically. Put the complete deliverable in "data".',
+    "- You get only what the request holds, so ask for nothing from the owner and never expect another agent to relay for you.",
+    '- The workflow kanban is kept by the orchestrator. Never add a "kanban" field.',
+  ],
+  orchestrator: [
+    '- Give work with routing "request": one request per worker, with the complete task (the worker sees only what you send). Several requests run in parallel.',
+    '- Each worker\'s result comes back as a "[Board] Work return" message. Check it. If it is not good enough, request that worker again saying what to fix; otherwise move on.',
+    '- Finish with routing {"kind":"finish"} only when the whole task is done. Put the final deliverable in "data"; anything still open belongs in the summary.',
+    "- You keep the workflow kanban (see below). Keep it current: a card for each piece of work you hand out, assigned to the worker.",
+  ],
+};
+
+function kanbanSection(
+  cards: ReadonlyArray<KanbanCard>,
+  nodeNames: ReadonlyArray<string>,
+): string[] {
+  const rows =
+    cards.length === 0
+      ? ["(no cards yet)"]
+      : cards.slice(-50).map((card) => {
+          const detail = card.reason ? ` (${card.reason})` : "";
+          return `- ${card.id} [${card.status}] ${card.title}${detail}`;
+        });
   return [
-    `[Board] You are the agent "${name}" on a board with other agents. The board routes work between agents; it never reads your prose.`,
     "",
-    "THIS MESSAGE IS A BRIEFING: information only. Do not continue, resume or redo any earlier task because of it, and do not run commands or send requests. Answer this briefing itself with just:",
+    'Kanban. Add a top-level "kanban" array to your result to change it. Operations:',
     "```json",
-    '{"summary": "...", "data": null, "routing": {"kind": "finish"}}',
+    '[ {"op":"create","title":"Write the parser","body":"details","status":"todo","assignee":"<node name>"},',
+    '  {"op":"update","id":"<card id>","status":"blocked","reason":"why"},',
+    '  {"op":"delete","id":"<card id>"} ]',
     "```",
+    'Statuses: todo, doing, blocked, done. "blocked" needs a "reason". The board moves a worker\'s card to doing when you give it work and to done or blocked when its result comes back; you correct the rest.',
+    `Assignees: ${nodeNames.join(", ") || "(none)"}.`,
+    "Current cards:",
+    ...rows,
+  ];
+}
+
+/**
+ * What a node's thread is seeded with on its first work in a run: profile role (or the node's own
+ * prompt), the result protocol, and its connections. `kanban` is shown to the orchestrator only.
+ */
+export function buildAgentInstructions(input: {
+  readonly name: string;
+  readonly profile: AgentProfile;
+  readonly prompt?: string | undefined;
+  readonly outgoing: ReadonlyArray<string>;
+  readonly incoming: ReadonlyArray<string>;
+  readonly kanban?: ReadonlyArray<KanbanCard> | undefined;
+  readonly nodeNames?: ReadonlyArray<string> | undefined;
+}): string {
+  const prompt = input.prompt?.trim() ?? "";
+  return [
+    `[Board] You are the agent "${input.name}" on a board with other agents. The board routes work between agents; it never reads your prose.`,
+    "",
+    prompt.length > 0 ? prompt : PROFILE_ROLE[input.profile],
     "",
     "Every reply you write MUST end with exactly one fenced json block, the result envelope. The board reads only the LAST json block of your final message:",
     "",
@@ -220,37 +281,32 @@ export function buildBoardInstructions(
     '{ "summary": "Tests pass", "data": { "passed": 42 }, "routing": { "kind": "return", "requestId": "<requestId from the request>" } }',
     "```",
     "",
-    'routing "finish" ends your work and routes nothing (use it when the task is complete and nobody asked you for it):',
+    'routing "finish" ends your work. It answers the request you were given, or ends the run when you were given the run task:',
     "```json",
     '{ "summary": "All done", "data": { "result": "..." }, "routing": { "kind": "finish" } }',
     "```",
     "",
     "Rules:",
-    '- A message starting with "[Board] Work request" holds a requestId. You must eventually answer it with a "return" that echoes that requestId.',
-    '- A message starting with "[Board] Work return" is the answer to a request you sent; use it, then continue (request more work, return, or finish).',
+    ...PROFILE_RULES[input.profile],
+    '- A message starting with "[Board] Work request" holds a requestId. Answer it with "finish" or a "return" that echoes that requestId.',
+    '- A message starting with "[Board] Work return" is the answer to a request you sent; use it, then continue (request more work or finish).',
     '- A message starting with "[Board] Workflow run started" gives you the task of a run.',
-    '- Act only on a "[Board] Work request" or "[Board] Workflow run started" message, or on direct user chat. After an interruption (for example a stopped run) never start new requests on your own or resume old work.',
+    "- Act only on a board message or on direct user chat. After an interruption (for example a stopped run) never start new requests on your own or resume old work.",
     "- Request only agents listed below. Names are matched case-insensitively.",
     "- If your reply has no valid json block, the board asks you once to resend it.",
     "",
     "You can send requests to:",
-    nameList(outgoingNames),
+    nameList(input.outgoing),
     "",
     "These agents may send requests to you:",
-    nameList(incomingNames),
+    nameList(input.incoming),
+    ...(input.profile === "orchestrator"
+      ? kanbanSection(input.kanban ?? [], input.nodeNames ?? [])
+      : []),
   ].join("\n");
 }
 
-/** First message of an agent the board starts: its role, then the board instructions. */
-export function buildAgentFirstPrompt(
-  name: string,
-  role: string,
-  outgoingNames: ReadonlyArray<string>,
-  incomingNames: ReadonlyArray<string> = [],
-): string {
-  const instructions = buildBoardInstructions(name, outgoingNames, incomingNames);
-  const trimmed = role.trim();
-  return trimmed.length > 0
-    ? `${trimmed}\n\n(The role above is your only task for now: remember it, do not act on it yet.)\n\n${instructions}`
-    : instructions;
+/** The first message a node's fresh thread gets: its instructions, then the work that started it. */
+export function buildSeededMessage(instructions: string, work: string): string {
+  return `${instructions}\n\n---\n\n${work}`;
 }

@@ -5,7 +5,9 @@ export type GraphProblem =
   | { readonly kind: "duplicate-node-id"; readonly nodeId: string }
   | { readonly kind: "duplicate-node-name"; readonly name: string }
   | { readonly kind: "invalid-edge"; readonly edge: BoardEdge }
-  | { readonly kind: "duplicate-edge"; readonly edge: BoardEdge };
+  | { readonly kind: "duplicate-edge"; readonly edge: BoardEdge }
+  | { readonly kind: "several-orchestrators" }
+  | { readonly kind: "no-orchestrator" };
 
 export function validateGraph(
   graph: Pick<Workflow, "nodes" | "edges">,
@@ -29,6 +31,19 @@ export function validateGraph(
     if (edges.has(key)) problems.push({ kind: "duplicate-edge", edge });
     edges.add(key);
   }
+  if (graph.nodes.filter((node) => node.profile === "orchestrator").length > 1)
+    problems.push({ kind: "several-orchestrators" });
+  return problems;
+}
+
+/** What a run needs on top of a valid graph: workers need exactly one orchestrator to hand them work. */
+export function validateRunnable(
+  graph: Pick<Workflow, "nodes" | "edges">,
+): ReadonlyArray<GraphProblem> {
+  const problems = [...validateGraph(graph)];
+  const hasWorkers = graph.nodes.some((node) => node.profile === "worker");
+  if (hasWorkers && !graph.nodes.some((node) => node.profile === "orchestrator"))
+    problems.push({ kind: "no-orchestrator" });
   return problems;
 }
 

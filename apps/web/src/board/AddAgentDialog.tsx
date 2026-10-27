@@ -24,7 +24,6 @@ import {
   ProviderModelPicker,
   Textarea,
   deriveProviderInstanceEntries,
-  newThreadId,
   randomUUID,
   resolveDefaultProviderModelSelection,
   sortProviderInstanceEntries,
@@ -57,10 +56,7 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
   const [role, setRole] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const pendingSubmission = useRef<{
-    key: string;
-    ids: { id: string; threadId: ReturnType<typeof newThreadId> };
-  } | null>(null);
+  const pendingId = useRef<string | null>(null);
 
   const environmentProjects = projects.filter((project) => project.environmentId === environmentId);
   const project =
@@ -88,33 +84,26 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
   const environmentLabel =
     connected.find((environment) => environment.environmentId === environmentId)?.label ?? "";
   const agentName = name.trim() || environmentLabel || "Agent";
-  const projectId =
-    project?.id ?? (manualProject.trim() ? ProjectId.make(manualProject.trim()) : null);
-  const canSubmit = environmentId !== "" && projectId !== null && selection !== null && !submitting;
+  const canSubmit = environmentId !== "" && selection !== null && !submitting;
 
   const submit = async () => {
-    if (environmentId === "" || projectId === null || selection === null || submitting) return;
+    if (environmentId === "" || selection === null || submitting) return;
     setSubmitting(true);
     setError(null);
     try {
-      const input = {
-        kind: "launch" as const,
+      const id = pendingId.current ?? randomUUID();
+      pendingId.current = id;
+      await createNode(workflowId, {
+        id,
         name: agentName,
+        profile: workflow.nodes.some((node) => node.profile === "orchestrator")
+          ? "worker"
+          : "orchestrator",
         environmentId,
-        projectId,
         modelSelection: selection,
-        runtimeMode: settings.runtimeMode,
-        interactionMode: "default" as const,
-        workspaceStrategy: { type: "root" as const },
-        role,
-      };
-      const key = JSON.stringify([workflowId, input]);
-      const ids =
-        pendingSubmission.current?.key === key
-          ? pendingSubmission.current.ids
-          : { id: randomUUID(), threadId: newThreadId() };
-      pendingSubmission.current = { key, ids };
-      await createNode(workflowId, { ...input, ...ids, ...nextNodePosition(workflow) });
+        ...(role.trim() ? { prompt: role } : {}),
+        ...nextNodePosition(workflow),
+      });
       props.onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -140,7 +129,8 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
           <DialogHeader>
             <DialogTitle>Add agent</DialogTitle>
             <DialogDescription>
-              Starts a new {settings.runtimeMode} thread and tells it how the board works.
+              Each run starts a fresh {settings.runtimeMode} thread for this agent in the workspace
+              folder.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>

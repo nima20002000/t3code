@@ -2,9 +2,15 @@ import { assert, it } from "@effect/vitest";
 import { EnvironmentId, MessageId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as NodeOS from "node:os";
 import * as Stream from "effect/Stream";
 import * as LocalDriver from "./LocalDriver.ts";
-import { ThreadLaunch, ThreadManagement } from "./upstream.ts";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
+import { ProjectService, ThreadLaunch, ThreadManagement } from "./upstream.ts";
 
 const thread = {
   environmentId: EnvironmentId.make("env"),
@@ -33,12 +39,16 @@ it.effect("matches a run finished by a restart continuation to the message that 
         }),
     } as never);
     const layer = LocalDriver.layer.pipe(
+      Layer.provide(NodeServices.layer),
       Layer.provide(Layer.succeed(ThreadManagement.ThreadManagementService, threads)),
       Layer.provide(
         Layer.succeed(
           ThreadLaunch.ThreadLaunchService,
           ThreadLaunch.ThreadLaunchService.of({} as never),
         ),
+      ),
+      Layer.provide(
+        Layer.succeed(ProjectService.ProjectService, ProjectService.ProjectService.of({} as never)),
       ),
     );
     const settled = yield* Effect.gen(function* () {
@@ -60,4 +70,116 @@ it.effect("matches a run finished by a restart continuation to the message that 
       },
     );
   }),
+);
+
+const projectDriver = (projects: Partial<ProjectService.ProjectService["Service"]>) =>
+  LocalDriver.layer.pipe(
+    Layer.provide(NodeServices.layer),
+    Layer.provide(
+      Layer.succeed(
+        ThreadManagement.ThreadManagementService,
+        ThreadManagement.ThreadManagementService.of({} as never),
+      ),
+    ),
+    Layer.provide(
+      Layer.succeed(
+        ThreadLaunch.ThreadLaunchService,
+        ThreadLaunch.ThreadLaunchService.of({} as never),
+      ),
+    ),
+    Layer.provide(
+      Layer.succeed(
+        ProjectService.ProjectService,
+        ProjectService.ProjectService.of(projects as never),
+      ),
+    ),
+  );
+
+it.effect("creates a missing workspace project with its folder, and leaves an existing one", () =>
+  Effect.gen(function* () {
+    const created = yield* Ref.make<ReadonlyArray<unknown>>([]);
+    const existing = yield* Ref.make(false);
+    const layer = projectDriver({
+      getById: () =>
+        Ref.get(existing).pipe(
+          Effect.map((has) => (has ? Option.some({} as never) : Option.none())),
+        ),
+      create: (input) => Ref.update(created, (all) => [...all, input]).pipe(Effect.as({} as never)),
+    });
+    yield* Effect.gen(function* () {
+      const driver = yield* LocalDriver.LocalDriver;
+      const input = {
+        environmentId: thread.environmentId,
+        projectId: thread.projectId,
+        title: "Workspace",
+        path: "~/t3-workspaces/workspace",
+      };
+      yield* driver.ensureProject(input);
+      assert.deepStrictEqual(yield* Ref.get(created), [
+        {
+          commandId: "board:project:project",
+          projectId: thread.projectId,
+          title: "Workspace",
+          workspaceRoot: "~/t3-workspaces/workspace",
+          createWorkspaceRootIfMissing: true,
+        },
+      ]);
+      yield* Ref.set(existing, true);
+      yield* driver.ensureProject(input);
+      assert.strictEqual((yield* Ref.get(created)).length, 1);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("removes a workspace project with its threads and tolerates one already gone", () =>
+  Effect.gen(function* () {
+    const deleted = yield* Ref.make<ReadonlyArray<unknown>>([]);
+    const layer = projectDriver({
+      delete: (input) =>
+        Ref.update(deleted, (all) => [...all, input]).pipe(
+          Effect.andThen(
+            Effect.fail(new ProjectService.ProjectNotFoundError({ projectId: input.projectId })),
+          ),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const driver = yield* LocalDriver.LocalDriver;
+      yield* driver.deleteProject({
+        environmentId: thread.environmentId,
+        projectId: thread.projectId,
+      });
+      assert.deepStrictEqual(yield* Ref.get(deleted), [
+        { commandId: "board:project-delete:project", projectId: thread.projectId, force: true },
+      ]);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("deletes a board-created folder under ~/t3-workspaces, never one elsewhere", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const inside = path.join(NodeOS.homedir(), "t3-workspaces", `board-test-${process.pid}`);
+    const outside = yield* fileSystem.makeTempDirectory({ prefix: "board-outside-" });
+    yield* fileSystem.makeDirectory(inside, { recursive: true });
+    for (const [root, kept] of [
+      [inside, false],
+      [outside, true],
+    ] as const) {
+      const layer = projectDriver({
+        getById: () => Effect.succeedSome({ workspaceRoot: root } as never),
+        delete: () => Effect.succeed({} as never),
+      });
+      yield* Effect.gen(function* () {
+        const driver = yield* LocalDriver.LocalDriver;
+        yield* driver.deleteProject({
+          environmentId: thread.environmentId,
+          projectId: thread.projectId,
+          removeFolder: true,
+        });
+      }).pipe(Effect.provide(layer));
+      assert.strictEqual(yield* fileSystem.exists(root), kept);
+    }
+    yield* fileSystem.remove(outside, { recursive: true });
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

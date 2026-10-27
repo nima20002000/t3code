@@ -14,34 +14,30 @@ import {
   snapshotsEqual,
   undoHistory,
   uniqueWorkflowName,
+  type BoardNode as CoreNode,
   type History,
-  type Workflow,
   type WorkflowSettings,
 } from "@t3tools/board-core/boardModel";
 import { Atom } from "effect/reactivity";
 import { useEffect } from "react";
 
 import {
-  boardHubOrigin,
   readBoardHubEnvironmentId,
   runBoardApi,
   runBoardMutation,
   streamBoardEvents,
 } from "./boardApi";
-import { applyBoardEvent } from "./boardState";
-import { importLocalWorkflows } from "./boardImport";
+import { applyBoardEvent, workflowView, type Workflow } from "./boardState";
 
+export type { BoardNode, Workflow } from "./boardState";
 export type {
   BoardEdge,
   BoardLogEntry,
-  BoardNode,
-  BoardsState,
   PendingWake,
   RunRecord,
   RunRequest,
   RunRequestRecord,
   RunStatus,
-  Workflow,
   WorkflowSettings,
 } from "@t3tools/board-core/boardModel";
 import {
@@ -49,7 +45,6 @@ import {
   environmentSession,
   randomUUID,
   readEnvironmentScope,
-  readThreadShells,
   toastManager,
 } from "./upstream";
 
@@ -58,7 +53,6 @@ interface BoardState {
   readonly currentId: string;
   readonly status: "loading" | "connected" | "offline";
   readonly error: string | null;
-  readonly importError: string | null;
   readonly historyVersion: number;
 }
 
@@ -71,7 +65,6 @@ export const boardStateAtom: Atom.Writable<BoardState> =
     currentId: "",
     status: "loading",
     error: null,
-    importError: null,
     historyVersion: 0,
   }).pipe(Atom.withLabel("board-hub-state"));
 hotData.boardStateAtom = boardStateAtom;
@@ -89,35 +82,6 @@ function setSnapshot(snapshot: BoardSnapshot) {
   setState({ snapshot, currentId, status: "connected", error: null });
 }
 
-async function importToHub(snapshot: BoardSnapshot, signal?: AbortSignal) {
-  await importLocalWorkflows({
-    storage: localStorage,
-    origin: boardHubOrigin(),
-    snapshot,
-    newId: randomUUID,
-    projectIdForNode: (node) =>
-      readThreadShells().find(
-        (shell) => shell.environmentId === node.environmentId && shell.id === node.threadId,
-      )?.projectId,
-    send: (workflows) =>
-      runBoardMutation(
-        (client) => client.importWorkflows({ headers: {}, payload: { workflows } }),
-        signal,
-      ),
-  });
-}
-
-export async function retryBoardImport() {
-  const snapshot = getSnapshot();
-  if (!snapshot) return;
-  try {
-    await importToHub(snapshot);
-    setState({ importError: null });
-  } catch (error) {
-    setState({ importError: error instanceof Error ? error.message : String(error) });
-  }
-}
-
 export function useBoardConnection() {
   // oxlint-disable-next-line t3code/react-effect-budget -- Keep the hub stream connected while the board is open.
   useEffect(() => {
@@ -132,34 +96,30 @@ export function useBoardConnection() {
         const hubId = readBoardHubEnvironmentId();
         const canMutate = () =>
           hubId !== null && readEnvironmentScope(hubId, "orchestration:operate");
-        // Imports local workflows and creates the default one; runs once the scope allows writes.
+        // Creates the default workspace and workflow; runs once the scope allows writes.
         const prepare = async (current: BoardSnapshot) => {
-          try {
-            await importToHub(current, controller.signal);
-            if (!controller.signal.aborted) setState({ importError: null });
-          } catch (error) {
-            if (controller.signal.aborted) return current;
-            setState({ importError: error instanceof Error ? error.message : String(error) });
-          }
-          let next = await runBoardApi(
-            (client) => client.getSnapshot({ headers: {} }),
+          if (current.workflows.length) return current;
+          const workspaceId =
+            current.workspaces[0]?.id ??
+            (
+              await runBoardApi(
+                (client) =>
+                  client.createWorkspace({
+                    headers: {},
+                    payload: { id: randomUUID(), name: "Default workspace" },
+                  }),
+                controller.signal,
+              )
+            ).id;
+          await runBoardApi(
+            (client) =>
+              client.createWorkflow({
+                headers: {},
+                payload: { id: randomUUID(), name: "Workflow", workspaceId },
+              }),
             controller.signal,
           );
-          if (!next.workflows.length) {
-            await runBoardApi(
-              (client) =>
-                client.createWorkflow({
-                  headers: {},
-                  payload: { id: randomUUID(), name: "Workflow" },
-                }),
-              controller.signal,
-            );
-            next = await runBoardApi(
-              (client) => client.getSnapshot({ headers: {} }),
-              controller.signal,
-            );
-          }
-          return next;
+          return runBoardApi((client) => client.getSnapshot({ headers: {} }), controller.signal);
         };
         if (canMutate()) snapshot = await prepare(snapshot);
         else if (hubId !== null) {
@@ -170,9 +130,7 @@ export function useBoardConnection() {
               if (!canMutate()) return;
               unsubscribe();
               void prepare(getSnapshot() ?? snapshot).catch((error: unknown) => {
-                if (!controller.signal.aborted) {
-                  setState({ importError: error instanceof Error ? error.message : String(error) });
-                }
+                if (!controller.signal.aborted) reportError("Could not prepare the board", error);
               });
             },
           );
@@ -211,18 +169,21 @@ export function useBoardState() {
 }
 export function useBoards() {
   const { snapshot, currentId } = useBoardState();
-  return { workflows: snapshot?.workflows ?? [], currentId };
+  return { workflows: (snapshot?.workflows ?? []).map(workflowView), currentId };
 }
 export function getWorkflow(id: string): Workflow | undefined {
-  return getSnapshot()?.workflows.find((workflow) => workflow.id === id);
+  const workflow = getSnapshot()?.workflows.find((entry) => entry.id === id);
+  return workflow && workflowView(workflow);
 }
 export function getCurrentWorkflow(): Workflow {
   const { snapshot, currentId } = getState();
-  return (snapshot?.workflows.find((w) => w.id === currentId) ?? snapshot?.workflows[0])!;
+  const current = snapshot?.workflows.find((w) => w.id === currentId) ?? snapshot?.workflows[0];
+  return (current && workflowView(current))!;
 }
 export function useCurrentWorkflow(): Workflow {
   const { snapshot, currentId } = useBoardState();
-  return (snapshot?.workflows.find((w) => w.id === currentId) ?? snapshot?.workflows[0])!;
+  const current = snapshot?.workflows.find((w) => w.id === currentId) ?? snapshot?.workflows[0];
+  return (current && workflowView(current))!;
 }
 export const activeRunOf = (workflow: Workflow) =>
   workflow.runs.find((run) => run.status === "running" || run.status === "stopping");
@@ -271,6 +232,18 @@ export function useBoardHistory() {
   };
 }
 
+function nodeInput(node: CoreNode): BoardCreateNodeInput {
+  return {
+    id: node.id,
+    name: node.name,
+    profile: node.profile,
+    environmentId: node.environmentId,
+    modelSelection: node.modelSelection,
+    ...(node.prompt === undefined ? {} : { prompt: node.prompt }),
+    x: node.x,
+    y: node.y,
+  };
+}
 async function restore(workflow: Workflow, target: ReturnType<typeof snapshotOf>) {
   const targetNodes = new Map(target.nodes.map((node) => [node.id, node]));
   const currentNodes = new Map(workflow.nodes.map((node) => [node.id, node]));
@@ -294,25 +267,20 @@ async function restore(workflow: Workflow, target: ReturnType<typeof snapshotOf>
     }
   for (const node of target.nodes) {
     if (!currentNodes.has(node.id)) {
-      const projectId =
-        node.projectId ??
-        readThreadShells().find(
-          (shell) => shell.environmentId === node.environmentId && shell.id === node.threadId,
-        )?.projectId;
-      if (!projectId) throw new Error(`The project for ${node.name} is not available.`);
       await runBoardMutation((client) =>
         client.createNode({
           headers: {},
           params: { workflowId: workflow.id },
-          payload: { kind: "bind", ...node, projectId },
+          payload: nodeInput(node),
         }),
       );
     } else {
+      const { id: _id, ...patch } = nodeInput(node);
       await runBoardMutation((client) =>
         client.updateNode({
           headers: {},
           params: { workflowId: workflow.id, nodeId: node.id },
-          payload: { name: node.name, role: node.role ?? "", x: node.x, y: node.y },
+          payload: patch,
         }),
       );
     }
@@ -349,7 +317,7 @@ export function recordHistoryStep() {
   changedHistory();
 }
 export function setCurrentWorkflow(id: string) {
-  const workflow = getSnapshot()?.workflows.find((w) => w.id === id);
+  const workflow = getWorkflow(id);
   if (!workflow) return;
   histories.set(id, createHistory(snapshotOf(workflow)));
   setState({ currentId: id });
@@ -361,10 +329,21 @@ export function createNewWorkflow(name?: string, settings?: WorkflowSettings) {
     name?.trim() || "Workflow",
   );
   perform("Could not create workflow", async () => {
+    const workspaceId =
+      getCurrentWorkflow()?.workspaceId ??
+      getSnapshot()?.workspaces[0]?.id ??
+      (
+        await runBoardMutation((client) =>
+          client.createWorkspace({
+            headers: {},
+            payload: { id: randomUUID(), name: "Default workspace" },
+          }),
+        )
+      ).id;
     const workflow = await runBoardMutation((client) =>
       client.createWorkflow({
         headers: {},
-        payload: { id, name: finalName, ...(settings ? { settings } : {}) },
+        payload: { id, name: finalName, workspaceId, ...(settings ? { settings } : {}) },
       }),
     );
     setState({ currentId: workflow.id });
@@ -407,14 +386,7 @@ export function updateWorkflowSettings(patch: Partial<WorkflowSettings>) {
     ),
   );
 }
-export function isThreadOnBoard(environmentId: string, threadId: string) {
-  return (
-    getSnapshot()?.workflows.some((w) =>
-      w.nodes.some((n) => n.environmentId === environmentId && n.threadId === threadId),
-    ) ?? false
-  );
-}
-export function nextNodePosition(workflow: Workflow) {
+export function nextNodePosition(workflow: Pick<Workflow, "nodes">) {
   for (let index = 0; ; index++) {
     const x = 40 + (index % 4) * 300,
       y = 40 + Math.floor(index / 4) * 230;
@@ -423,18 +395,16 @@ export function nextNodePosition(workflow: Workflow) {
   }
 }
 export async function createNode(workflowId: string, input: BoardCreateNodeInput) {
-  const workflow = getSnapshot()?.workflows.find((w) => w.id === workflowId);
+  const workflow = getWorkflow(workflowId);
   if (!workflow) throw new Error("Workflow is not available.");
   const history = recordHistory(historyOf(workflow), snapshotOf(workflow));
   await runBoardMutation((client) =>
-    input.kind === "bind"
-      ? client.createNode({ headers: {}, params: { workflowId }, payload: input })
-      : client.createNode({ headers: {}, params: { workflowId }, payload: input }),
+    client.createNode({ headers: {}, params: { workflowId }, payload: input }),
   );
   histories.set(workflowId, history);
   changedHistory();
 }
-function patchNode(id: string, patch: { name?: string; role?: string; x?: number; y?: number }) {
+function patchNode(id: string, patch: { name?: string; prompt?: string; x?: number; y?: number }) {
   const action = (workflow: Workflow) =>
     runBoardMutation((client) =>
       client.updateNode({
@@ -465,7 +435,7 @@ export function renameNode(id: string, name: string) {
   if (name.trim()) patchNode(id, { name: name.trim() });
 }
 export function setNodeRole(id: string, role: string) {
-  patchNode(id, { role });
+  patchNode(id, { prompt: role });
 }
 export function removeNode(id: string) {
   edit((workflow) =>

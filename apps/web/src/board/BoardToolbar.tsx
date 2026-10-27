@@ -6,7 +6,6 @@ import {
   ChevronsRightIcon,
   CloudOffIcon,
   KanbanIcon,
-  LinkIcon,
   Loader2Icon,
   PlusIcon,
   Redo2Icon,
@@ -97,7 +96,6 @@ export function BoardToolbar(props: {
   readonly kanban: boolean;
   readonly onToggleKanban: () => void;
   readonly onAddAgent: () => void;
-  readonly onAddThread: () => void;
 }) {
   const workflow = useCurrentWorkflow();
   const { status, error } = useBoardState();
@@ -205,9 +203,6 @@ export function BoardToolbar(props: {
         <WorkflowMenu onRename={() => window.setTimeout(props.onRename, 150)} />
         <IconButton label="Add agent" onClick={props.onAddAgent}>
           <PlusIcon />
-        </IconButton>
-        <IconButton label="Add existing thread" onClick={props.onAddThread}>
-          <LinkIcon />
         </IconButton>
         <WorkflowSettings />
         <MachinesButton />

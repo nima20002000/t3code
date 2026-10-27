@@ -1,19 +1,19 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Folder project ids must be unique and derived synchronously.
+import * as NodeCrypto from "node:crypto";
 import {
   BoardConflictError,
   BoardInvalidRequestError,
   BoardNotFoundError,
-  buildAgentFirstPrompt,
-  buildBoardInstructions,
-  connectedNodeNames,
   createWorkflow,
-  incomingNodeNames,
-  MAX_LOG,
+  defaultFolder,
   validateGraph,
+  withFolder,
+  type BoardAddFolderInput,
   type BoardCreateNodeInput,
   type BoardCreateScheduleInput,
   type BoardCreateWorkflowInput,
+  type BoardCreateWorkspaceInput,
   type BoardEdge,
-  type BoardImportWorkflowsInput,
   type BoardNode,
   type BoardPeer,
   type BoardSchedule,
@@ -21,17 +21,19 @@ import {
   type BoardUpdateNodeInput,
   type BoardUpdateScheduleInput,
   type BoardUpdateWorkflowInput,
+  type BoardUpdateWorkspaceInput,
+  type GraphProblem,
+  type KanbanCard,
   type NodeDriverError,
   type RunRecord,
   type Workflow,
+  type Workspace,
 } from "@t3tools/board-core";
-import { CommandId, MessageId } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Result from "effect/Result";
-import * as Semaphore from "effect/Semaphore";
 import type { SqlError } from "effect/sql/SqlError";
 import * as BoardStore from "./BoardStore.ts";
 import * as DriverRegistry from "./DriverRegistry.ts";
@@ -49,12 +51,19 @@ type EngineError = BoardError | import("@t3tools/board-core").BoardInternalError
 export class BoardService extends Context.Service<
   BoardService,
   {
+    readonly listWorkspaces: () => Op<ReadonlyArray<Workspace>>;
+    readonly getWorkspace: (id: string) => Op<Workspace>;
+    readonly createWorkspace: (input: BoardCreateWorkspaceInput) => Op<Workspace>;
+    readonly updateWorkspace: (id: string, input: BoardUpdateWorkspaceInput) => Op<Workspace>;
+    readonly deleteWorkspace: (id: string) => Op<void>;
+    readonly addFolder: (id: string, input: BoardAddFolderInput) => Op<Workspace>;
+    readonly deleteFolder: (id: string, environmentId: EnvironmentId) => Op<Workspace>;
+    readonly getKanban: (workflowId: string) => Op<ReadonlyArray<KanbanCard>>;
     readonly listWorkflows: () => Op<ReadonlyArray<Workflow>>;
     readonly getWorkflow: (id: string) => Op<Workflow>;
     readonly createWorkflow: (input: BoardCreateWorkflowInput) => Op<Workflow>;
     readonly updateWorkflow: (id: string, input: BoardUpdateWorkflowInput) => Op<Workflow>;
     readonly deleteWorkflow: (id: string) => Op<void>;
-    readonly importWorkflows: (input: BoardImportWorkflowsInput) => Op<ReadonlyArray<Workflow>>;
     readonly createNode: (id: string, input: BoardCreateNodeInput) => Op<BoardNode>;
     readonly updateNode: (id: string, nodeId: string, input: BoardUpdateNodeInput) => Op<BoardNode>;
     readonly deleteNode: (id: string, nodeId: string) => Op<void>;
@@ -73,6 +82,17 @@ export class BoardService extends Context.Service<
   }
 >()("t3/board/BoardService") {}
 
+const describeProblem = (problem: GraphProblem) => {
+  switch (problem.kind) {
+    case "several-orchestrators":
+      return "A workflow has at most one orchestrator.";
+    case "no-orchestrator":
+      return "A workflow with workers needs an orchestrator.";
+    default:
+      return "The workflow graph is invalid.";
+  }
+};
+
 const make = Effect.gen(function* () {
   const store = yield* BoardStore.BoardStore;
   const drivers = yield* DriverRegistry.DriverRegistry;
@@ -82,92 +102,78 @@ const make = Effect.gen(function* () {
     if (!workflow) return yield* new BoardNotFoundError({ message: "Workflow not found." });
     return workflow;
   });
-  const saveWithSequence = Effect.fn("BoardService.saveWithSequence")(function* (
-    workflow: Workflow,
-  ) {
-    if (validateGraph(workflow).length)
-      return yield* new BoardInvalidRequestError({ message: "The workflow graph is invalid." });
-    yield* store.putWorkflow(workflow);
-    const sequence = yield* store.appendEvent({ kind: "workflow.upserted", workflow });
-    return { workflow, sequence };
+  const getWorkspace = Effect.fn("BoardService.getWorkspace")(function* (id: string) {
+    const workspace = yield* store.getWorkspace(id);
+    if (!workspace) return yield* new BoardNotFoundError({ message: "Workspace not found." });
+    return workspace;
+  });
+  const saveWorkspace = Effect.fn("BoardService.saveWorkspace")(function* (workspace: Workspace) {
+    yield* store.putWorkspace(workspace);
+    yield* store.appendEvent({ kind: "workspace.upserted", workspace });
+    return workspace;
   });
   const save = Effect.fn("BoardService.save")(function* (workflow: Workflow) {
-    return (yield* saveWithSequence(workflow)).workflow;
+    const [problem] = validateGraph(workflow);
+    if (problem) return yield* new BoardInvalidRequestError({ message: describeProblem(problem) });
+    yield* store.putWorkflow(workflow);
+    yield* store.appendEvent({ kind: "workflow.upserted", workflow });
+    return workflow;
   });
-  const neighborIds = (workflow: Workflow, nodeId: string) =>
-    workflow.edges.flatMap((edge) =>
-      edge.a === nodeId ? [edge.b] : edge.b === nodeId ? [edge.a] : [],
-    );
-  const briefingLock = yield* Semaphore.make(1);
-  const deliverBriefings = Effect.fn("BoardService.deliverBriefings")(function* (
-    workflowId?: string,
-  ) {
-    yield* briefingLock.withPermits(1)(deliverPending(workflowId));
-  });
-  const deliverPending = Effect.fn("BoardService.deliverPending")(function* (workflowId?: string) {
-    for (const pending of yield* store.listBriefings(workflowId)) {
-      const workflow = yield* store.getWorkflow(pending.workflowId);
-      const node = workflow?.nodes.find((entry) => entry.id === pending.nodeId);
-      if (!workflow || !node) {
-        yield* store.clearBriefing(pending);
-        continue;
-      }
-      const key = `${encodeURIComponent(workflow.id)}:${pending.sequence}:${encodeURIComponent(node.id)}`;
-      const result = yield* Effect.gen(function* () {
-        if (!node.projectId)
-          return yield* new BoardInvalidRequestError({ message: "Node project is missing." });
-        const driver = yield* drivers.get(node.environmentId);
-        return yield* driver.send({
-          thread: {
-            environmentId: node.environmentId,
-            projectId: node.projectId,
-            threadId: node.threadId,
-          },
-          commandId: CommandId.make(`board:briefing:${key}`),
-          messageId: MessageId.make(`board:briefing:${key}`),
-          text: buildBoardInstructions(
-            node.name,
-            connectedNodeNames(workflow.nodes, workflow.edges, node.id),
-            incomingNodeNames(workflow.nodes, workflow.edges, node.id),
-          ),
-        });
-      }).pipe(Effect.result);
-      if (Result.isSuccess(result)) {
-        yield* store.clearBriefing(pending);
-        continue;
-      }
-      yield* Effect.logWarning("Could not send updated board instructions", {
-        workflowId: workflow.id,
-        nodeId: node.id,
-        cause: result.failure,
-      });
-      yield* store.transaction(
-        Effect.gen(function* () {
-          const current = yield* store.getWorkflow(workflow.id);
-          if (!current || current.log.some((entry) => entry.id === `briefing:${key}`)) return;
-          yield* save({
-            ...current,
-            log: [
-              ...current.log,
-              {
-                id: `briefing:${key}`,
-                at: DateTime.formatIso(yield* DateTime.now),
-                kind: "error" as const,
-                text: `Could not send updated board instructions to ${node.name}.`,
-              },
-            ].slice(-MAX_LOG),
-          });
-        }),
-      );
-    }
-  });
-  yield* deliverBriefings().pipe(Effect.ignore, Effect.forkScoped);
   const checkEditable = (workflow: Workflow) =>
     workflow.runs.some((run) => run.status === "running" || run.status === "stopping")
       ? Effect.fail(
           new BoardConflictError({ message: "Stop the active run before changing the workflow." }),
         )
       : Effect.void;
+  const checkMachine = (environmentId: EnvironmentId) =>
+    drivers
+      .get(environmentId)
+      .pipe(
+        Effect.mapError(
+          () => new BoardInvalidRequestError({ message: "That machine is not connected." }),
+        ),
+      );
+  const checkWorkspaceName = Effect.fn("BoardService.checkWorkspaceName")(function* (
+    name: string,
+    ownId?: string,
+  ) {
+    const wanted = name.trim().toLowerCase();
+    // The name is the default folder name on every machine, so two workspaces cannot share it.
+    if (
+      (yield* store.listWorkspaces()).some(
+        (entry) => entry.id !== ownId && entry.name.trim().toLowerCase() === wanted,
+      )
+    )
+      return yield* new BoardConflictError({ message: "A workspace with that name exists." });
+  });
+  const removeProjects = Effect.fn("BoardService.removeProjects")(function* (
+    workspace: Workspace,
+    environmentId?: EnvironmentId,
+  ) {
+    for (const folder of workspace.folders) {
+      if (
+        !folder.managed ||
+        (environmentId !== undefined && folder.environmentId !== environmentId)
+      )
+        continue;
+      yield* drivers.get(folder.environmentId).pipe(
+        Effect.flatMap((driver) =>
+          driver.deleteProject({
+            environmentId: folder.environmentId,
+            projectId: folder.projectId,
+            removeFolder: true,
+          }),
+        ),
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not remove a workspace project from its machine", {
+            workspaceId: workspace.id,
+            environmentId: folder.environmentId,
+            cause,
+          }),
+        ),
+      );
+    }
+  });
   const deleteSchedulesFor = Effect.fn("BoardService.deleteSchedulesFor")(function* (
     workflowId: string,
     nodeId?: string,
@@ -182,15 +188,114 @@ const make = Effect.gen(function* () {
       yield* store.appendEvent({ kind: "schedule.deleted", scheduleId: schedule.id });
     }
   });
+
+  const createWorkspace = Effect.fn("BoardService.createWorkspace")(function* (
+    input: BoardCreateWorkspaceInput,
+  ) {
+    return yield* store.transaction(
+      Effect.gen(function* () {
+        if (yield* store.getWorkspace(input.id))
+          return yield* new BoardConflictError({ message: "Workspace id already exists." });
+        yield* checkWorkspaceName(input.name);
+        return yield* saveWorkspace({ id: input.id, name: input.name, folders: [] });
+      }),
+    );
+  });
+  const updateWorkspace = Effect.fn("BoardService.updateWorkspace")(function* (
+    id: string,
+    input: BoardUpdateWorkspaceInput,
+  ) {
+    return yield* store.transaction(
+      Effect.gen(function* () {
+        const workspace = yield* getWorkspace(id);
+        yield* checkWorkspaceName(input.name, id);
+        return yield* saveWorkspace({ ...workspace, name: input.name });
+      }),
+    );
+  });
+  const addFolder = Effect.fn("BoardService.addFolder")(function* (
+    id: string,
+    input: BoardAddFolderInput,
+  ) {
+    yield* checkMachine(input.environmentId);
+    return yield* store.transaction(
+      Effect.gen(function* () {
+        const workspace = yield* getWorkspace(id);
+        if (workspace.folders.some((folder) => folder.environmentId === input.environmentId))
+          return yield* new BoardConflictError({
+            message: "The workspace already has a folder on that machine.",
+          });
+        const folder = defaultFolder(workspace, input.environmentId, NodeCrypto.randomUUID());
+        return yield* saveWorkspace({
+          ...workspace,
+          folders: [
+            ...workspace.folders,
+            input.path === undefined ? folder : { ...folder, path: input.path },
+          ],
+        });
+      }),
+    );
+  });
+  const deleteFolder = Effect.fn("BoardService.deleteFolder")(function* (
+    id: string,
+    environmentId: EnvironmentId,
+  ) {
+    const removed = yield* store.transaction(
+      Effect.gen(function* () {
+        const workspace = yield* getWorkspace(id);
+        if (!workspace.folders.some((folder) => folder.environmentId === environmentId))
+          return yield* new BoardNotFoundError({ message: "Folder not found." });
+        const inUse = (yield* store.listWorkflows()).some(
+          (workflow) =>
+            workflow.workspaceId === id &&
+            workflow.nodes.some((node) => node.environmentId === environmentId),
+        );
+        if (inUse)
+          return yield* new BoardConflictError({
+            message: "Agents of this workspace still run on that machine.",
+          });
+        const next = yield* saveWorkspace({
+          ...workspace,
+          folders: workspace.folders.filter((folder) => folder.environmentId !== environmentId),
+        });
+        return { workspace, next };
+      }),
+    );
+    yield* removeProjects(removed.workspace, environmentId);
+    return removed.next;
+  });
+  const deleteWorkspace = Effect.fn("BoardService.deleteWorkspace")(function* (id: string) {
+    const workspace = yield* getWorkspace(id);
+    const inside = (yield* store.listWorkflows()).filter((workflow) => workflow.workspaceId === id);
+    for (const workflow of inside) yield* checkEditable(workflow);
+    yield* removeProjects(workspace);
+    yield* store.transaction(
+      Effect.gen(function* () {
+        const current = (yield* store.listWorkflows()).filter(
+          (workflow) => workflow.workspaceId === id,
+        );
+        for (const workflow of current) yield* checkEditable(workflow);
+        for (const workflow of current) {
+          yield* store.deleteRunTasks(workflow.runs.map((run) => run.id));
+          yield* deleteSchedulesFor(workflow.id);
+          yield* store.appendEvent({ kind: "workflow.deleted", workflowId: workflow.id });
+        }
+        yield* store.deleteWorkspace(id);
+        yield* store.appendEvent({ kind: "workspace.deleted", workspaceId: id });
+      }),
+    );
+  });
+
   const create = Effect.fn("BoardService.createWorkflow")(function* (
     input: BoardCreateWorkflowInput,
   ) {
     return yield* store.transaction(
       Effect.gen(function* () {
+        yield* getWorkspace(input.workspaceId);
         if (yield* store.getWorkflow(input.id))
           return yield* new BoardConflictError({ message: "Workflow id already exists." });
         return yield* save({
-          ...createWorkflow(input.id, input.name),
+          ...createWorkflow(input.id, input.name, input.workspaceId),
           ...(input.settings === undefined ? {} : { settings: input.settings }),
         });
       }),
@@ -213,105 +318,41 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const workflow = yield* getWorkflow(id);
         yield* checkEditable(workflow);
+        yield* store.deleteRunTasks(workflow.runs.map((run) => run.id));
         yield* store.deleteWorkflow(id);
         yield* deleteSchedulesFor(id);
         yield* store.appendEvent({ kind: "workflow.deleted", workflowId: id });
       }),
     );
   });
-  const importWorkflows = Effect.fn("BoardService.importWorkflows")(function* (
-    input: BoardImportWorkflowsInput,
+  const ensureFolder = Effect.fn("BoardService.ensureFolder")(function* (
+    workspaceId: string,
+    environmentId: EnvironmentId,
   ) {
-    return yield* store.transaction(
-      Effect.gen(function* () {
-        const imported: Workflow[] = [];
-        for (const workflow of input.workflows) {
-          if (yield* store.getWorkflow(workflow.id)) continue;
-          const safe = {
-            ...workflow,
-            pending: [],
-            runQueue: [],
-            // Runs are stored oldest first; the old local board kept them newest first.
-            runs: workflow.runs
-              .toSorted((a, b) => a.startedAt.localeCompare(b.startedAt))
-              .map((run) =>
-                run.status === "running" || run.status === "stopping"
-                  ? { ...run, status: "stopped" as const }
-                  : run,
-              ),
-          };
-          imported.push(yield* save(safe));
-        }
-        return imported;
-      }),
-    );
+    const workspace = yield* getWorkspace(workspaceId);
+    const next = withFolder(workspace, environmentId, NodeCrypto.randomUUID());
+    if (next !== workspace) yield* saveWorkspace(next);
   });
   const createNode = Effect.fn("BoardService.createNode")(function* (
     id: string,
     input: BoardCreateNodeInput,
   ) {
-    const workflow = yield* getWorkflow(id);
-    yield* checkEditable(workflow);
-    if (
-      workflow.nodes.some(
-        (node) =>
-          node.id === input.id ||
-          node.name.trim().toLowerCase() === input.name.trim().toLowerCase(),
-      )
-    )
-      return yield* new BoardConflictError({ message: "Node id or name already exists." });
-    let threadId = input.threadId;
-    if (input.kind === "launch") {
-      const intent = yield* store.transaction(
-        Effect.gen(function* () {
-          const existing = yield* store.getLaunchIntent(id, input.id);
-          if (existing) return existing;
-          yield* store.putLaunchIntent(id, input.id, input.threadId);
-          return { threadId: input.threadId };
-        }),
-      );
-      threadId = intent.threadId as typeof input.threadId;
-      const driver = yield* drivers.get(input.environmentId);
-      const key = `${encodeURIComponent(id)}:${encodeURIComponent(input.id)}`;
-      yield* driver.launch({
-        environmentId: input.environmentId,
-        launch: {
-          commandId: CommandId.make(`board:launch:${key}`),
-          threadId,
-          projectId: input.projectId,
-          title: input.name,
-          modelSelection: input.modelSelection,
-          runtimeMode: input.runtimeMode,
-          interactionMode: input.interactionMode,
-          workspaceStrategy: input.workspaceStrategy,
-          initialMessage: {
-            messageId: MessageId.make(`board:briefing:${key}`),
-            text: buildAgentFirstPrompt(input.name, input.role ?? "", [], []),
-            attachments: [],
-          },
-        },
-      });
-    }
-    const node: BoardNode = {
-      id: input.id,
-      name: input.name,
-      environmentId: input.environmentId,
-      projectId: input.projectId,
-      threadId,
-      x: input.x,
-      y: input.y,
-      baselined: true,
-      ...(input.role === undefined ? {} : { role: input.role }),
-      ...(input.kind === "launch" ? { awaitingFirstReply: true } : {}),
-    };
+    yield* checkMachine(input.environmentId);
     return yield* store.transaction(
       Effect.gen(function* () {
-        const current = yield* getWorkflow(id);
-        yield* checkEditable(current);
-        if (current.nodes.some((entry) => entry.id === node.id))
-          return yield* new BoardConflictError({ message: "Node id already exists." });
-        yield* save({ ...current, nodes: [...current.nodes, node] });
-        yield* store.deleteLaunchIntent(id, node.id);
+        const workflow = yield* getWorkflow(id);
+        yield* checkEditable(workflow);
+        if (
+          workflow.nodes.some(
+            (node) =>
+              node.id === input.id ||
+              node.name.trim().toLowerCase() === input.name.trim().toLowerCase(),
+          )
+        )
+          return yield* new BoardConflictError({ message: "Node id or name already exists." });
+        const node: BoardNode = input;
+        yield* ensureFolder(workflow.workspaceId, node.environmentId);
+        yield* save({ ...workflow, nodes: [...workflow.nodes, node] });
         return node;
       }),
     );
@@ -321,28 +362,31 @@ const make = Effect.gen(function* () {
     nodeId: string,
     input: BoardUpdateNodeInput,
   ) {
-    const node = yield* store.transaction(
+    if (input.environmentId !== undefined) yield* checkMachine(input.environmentId);
+    return yield* store.transaction(
       Effect.gen(function* () {
         const workflow = yield* getWorkflow(id);
         yield* checkEditable(workflow);
         const current = workflow.nodes.find((node) => node.id === nodeId);
         if (!current) return yield* new BoardNotFoundError({ message: "Node not found." });
-        const node = { ...current, ...input };
-        const saved = yield* saveWithSequence({
+        const node: BoardNode = { ...current, ...input };
+        if (
+          node.name !== current.name &&
+          workflow.nodes.some(
+            (entry) =>
+              entry.id !== nodeId &&
+              entry.name.trim().toLowerCase() === node.name.trim().toLowerCase(),
+          )
+        )
+          return yield* new BoardConflictError({ message: "Node id or name already exists." });
+        yield* ensureFolder(workflow.workspaceId, node.environmentId);
+        yield* save({
           ...workflow,
           nodes: workflow.nodes.map((entry) => (entry.id === nodeId ? node : entry)),
         });
-        if (node.name !== current.name)
-          yield* store.markBriefings(
-            id,
-            [nodeId, ...neighborIds(workflow, nodeId)],
-            saved.sequence,
-          );
         return node;
       }),
     );
-    yield* deliverBriefings(id);
-    return node;
   });
   const deleteNode = Effect.fn("BoardService.deleteNode")(function* (id: string, nodeId: string) {
     yield* store.transaction(
@@ -352,27 +396,29 @@ const make = Effect.gen(function* () {
         if (!workflow.nodes.some((node) => node.id === nodeId))
           return yield* new BoardNotFoundError({ message: "Node not found." });
         yield* deleteSchedulesFor(id, nodeId);
-        const saved = yield* saveWithSequence({
+        for (const card of yield* store.listKanban(id)) {
+          if (card.assigneeNodeId !== nodeId) continue;
+          const { assigneeNodeId: _gone, ...unassigned } = card;
+          yield* store.putCard(id, unassigned);
+          yield* store.appendEvent({ kind: "kanban.upserted", workflowId: id, card: unassigned });
+        }
+        yield* save({
           ...workflow,
           nodes: workflow.nodes.filter((node) => node.id !== nodeId),
           edges: workflow.edges.filter((edge) => edge.a !== nodeId && edge.b !== nodeId),
           pending: workflow.pending.filter((entry) => entry.from !== nodeId && entry.to !== nodeId),
         });
-        yield* store.markBriefings(id, neighborIds(workflow, nodeId), saved.sequence);
       }),
     );
-    yield* deliverBriefings(id);
   });
   const createEdge = Effect.fn("BoardService.createEdge")(function* (id: string, edge: BoardEdge) {
     yield* store.transaction(
       Effect.gen(function* () {
         const workflow = yield* getWorkflow(id);
         yield* checkEditable(workflow);
-        const saved = yield* saveWithSequence({ ...workflow, edges: [...workflow.edges, edge] });
-        yield* store.markBriefings(id, [edge.a, edge.b], saved.sequence);
+        yield* save({ ...workflow, edges: [...workflow.edges, edge] });
       }),
     );
-    yield* deliverBriefings(id);
     return edge;
   });
   const deleteEdge = Effect.fn("BoardService.deleteEdge")(function* (
@@ -386,14 +432,16 @@ const make = Effect.gen(function* () {
         yield* checkEditable(workflow);
         if (!workflow.edges.some((edge) => edge.a === from && edge.b === to))
           return yield* new BoardNotFoundError({ message: "Edge not found." });
-        const saved = yield* saveWithSequence({
+        yield* save({
           ...workflow,
           edges: workflow.edges.filter((edge) => edge.a !== from || edge.b !== to),
         });
-        yield* store.markBriefings(id, [from, to], saved.sequence);
       }),
     );
-    yield* deliverBriefings(id);
+  });
+  const getKanban = Effect.fn("BoardService.getKanban")(function* (workflowId: string) {
+    yield* getWorkflow(workflowId);
+    return yield* store.listKanban(workflowId);
   });
   const findSchedule = Effect.fn("BoardService.findSchedule")(function* (id: string) {
     const schedule = (yield* store.listSchedules()).find((entry) => entry.id === id);
@@ -459,12 +507,19 @@ const make = Effect.gen(function* () {
     );
   });
   return BoardService.of({
+    listWorkspaces: store.listWorkspaces,
+    getWorkspace,
+    createWorkspace,
+    updateWorkspace,
+    deleteWorkspace,
+    addFolder,
+    deleteFolder,
+    getKanban,
     listWorkflows: store.listWorkflows,
     getWorkflow,
     createWorkflow: create,
     updateWorkflow: update,
     deleteWorkflow: remove,
-    importWorkflows,
     createNode,
     updateNode,
     deleteNode,

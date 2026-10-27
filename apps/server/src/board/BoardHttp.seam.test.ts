@@ -19,6 +19,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as BoardHttp from "./BoardHttp.ts";
 
@@ -51,6 +52,7 @@ const routes = Layer.merge(authRoutes, BoardHttp.layer).pipe(
   Layer.provide(config),
   Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+  Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
   Layer.provideMerge(
     HttpPlatform.layer.pipe(
       Layer.provideMerge(NodeServices.layer),
@@ -113,12 +115,27 @@ it.live("authenticates paired clients and streams committed board events", () =>
           assert.include(stream.headers.get("content-type"), "text/event-stream");
           const reader = stream.body!.getReader();
           const event = reader.read();
+          const workspace = await call(
+            post("/api/board/workspaces", '{"id":"workspace","name":"Workspace"}', cookie),
+          );
+          assert.strictEqual(workspace.status, 200);
           const created = await call(
-            post("/api/board/workflows", '{"id":"workflow","name":"Workflow"}', cookie),
+            post(
+              "/api/board/workflows",
+              '{"id":"workflow","name":"Workflow","workspaceId":"workspace"}',
+              cookie,
+            ),
           );
           assert.strictEqual(created.status, 200);
           const frame = await event;
-          assert.include(new TextDecoder().decode(frame.value), '"kind":"workflow.upserted"');
+          assert.include(new TextDecoder().decode(frame.value), '"kind":"workspace.upserted"');
+          const kanban = await call(get("/api/board/workflows/workflow/kanban", cookie));
+          assert.strictEqual(kanban.status, 200);
+          assert.deepStrictEqual(await kanban.json(), []);
+          assert.strictEqual(
+            (await call(get("/api/board/workflows/missing/kanban", cookie))).status,
+            404,
+          );
           await reader.cancel();
         }),
       ({ dispose }) => Effect.promise(dispose),

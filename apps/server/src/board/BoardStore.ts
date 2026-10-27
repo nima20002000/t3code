@@ -1,5 +1,13 @@
-import type { BoardEvent, BoardPeer, BoardSchedule, Workflow } from "@t3tools/board-core";
+import type {
+  BoardEvent,
+  BoardPeer,
+  BoardSchedule,
+  KanbanCard,
+  Workflow,
+  Workspace,
+} from "@t3tools/board-core";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -9,7 +17,8 @@ import * as Stream from "effect/Stream";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { upgradeLegacyBoard, type LegacyWorkflow } from "./legacyMigration.ts";
 import type { Peer } from "./remote/PeerStore.ts";
 
 export type TaskStatus =
@@ -34,12 +43,6 @@ export interface BoardTask {
   readonly waitPolicy: "allSettled" | "failFast";
 }
 
-export interface PendingBriefing {
-  readonly workflowId: string;
-  readonly nodeId: string;
-  readonly sequence: number;
-}
-
 export const EVENT_RETENTION = 10_000;
 
 type EventInput = BoardEvent extends infer E
@@ -55,6 +58,13 @@ export class BoardStore extends Context.Service<
     readonly transaction: <A, E, R>(
       effect: Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | SqlError, R>;
+    readonly listWorkspaces: () => StoreEffect<ReadonlyArray<Workspace>>;
+    readonly getWorkspace: (id: string) => StoreEffect<Workspace | undefined>;
+    readonly putWorkspace: (workspace: Workspace) => StoreEffect<void>;
+    readonly deleteWorkspace: (id: string) => StoreEffect<void>;
+    readonly listKanban: (workflowId: string) => StoreEffect<ReadonlyArray<KanbanCard>>;
+    readonly putCard: (workflowId: string, card: KanbanCard) => StoreEffect<void>;
+    readonly deleteCard: (workflowId: string, cardId: string) => StoreEffect<void>;
     readonly getWorkflow: (id: string) => StoreEffect<Workflow | undefined>;
     readonly listWorkflows: () => StoreEffect<ReadonlyArray<Workflow>>;
     readonly putWorkflow: (workflow: Workflow) => StoreEffect<void>;
@@ -73,30 +83,18 @@ export class BoardStore extends Context.Service<
       status: BoardPeer["status"],
       error?: string,
     ) => StoreEffect<BoardPeer | undefined>;
-    readonly getLaunchIntent: (
-      workflowId: string,
-      nodeId: string,
-    ) => StoreEffect<{ readonly threadId: string } | undefined>;
-    readonly putLaunchIntent: (
-      workflowId: string,
-      nodeId: string,
-      threadId: string,
-    ) => StoreEffect<void>;
-    readonly deleteLaunchIntent: (workflowId: string, nodeId: string) => StoreEffect<void>;
-    readonly markBriefings: (
-      workflowId: string,
-      nodeIds: ReadonlyArray<string>,
-      sequence: number,
-    ) => StoreEffect<void>;
-    readonly listBriefings: (workflowId?: string) => StoreEffect<ReadonlyArray<PendingBriefing>>;
-    readonly clearBriefing: (briefing: PendingBriefing) => StoreEffect<void>;
     readonly listSchedules: () => StoreEffect<ReadonlyArray<BoardSchedule>>;
     readonly putSchedule: (schedule: BoardSchedule) => StoreEffect<void>;
     readonly deleteSchedule: (id: string) => StoreEffect<void>;
     readonly appendEvent: (event: EventInput) => StoreEffect<number>;
     readonly snapshot: () => StoreEffect<{
       readonly sequence: number;
+      readonly workspaces: ReadonlyArray<Workspace>;
       readonly workflows: ReadonlyArray<Workflow>;
+      readonly kanban: ReadonlyArray<{
+        readonly workflowId: string;
+        readonly cards: ReadonlyArray<KanbanCard>;
+      }>;
       readonly peers: ReadonlyArray<BoardPeer>;
       readonly schedules: ReadonlyArray<BoardSchedule>;
     }>;
@@ -122,9 +120,53 @@ const intentsMigration = Effect.gen(function* () {
   yield* sql`CREATE TABLE board_pending_briefings (workflow_id TEXT NOT NULL, node_id TEXT NOT NULL, sequence INTEGER NOT NULL, PRIMARY KEY (workflow_id, node_id), FOREIGN KEY (workflow_id) REFERENCES board_workflows(id) ON DELETE CASCADE)`;
 });
 
+const workspacesMigration = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`CREATE TABLE board_workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL)`;
+  yield* sql`CREATE TABLE board_workspace_folders (workspace_id TEXT NOT NULL, environment_id TEXT NOT NULL, project_id TEXT NOT NULL, path TEXT NOT NULL, managed INTEGER NOT NULL, PRIMARY KEY (workspace_id, environment_id), FOREIGN KEY (workspace_id) REFERENCES board_workspaces(id) ON DELETE CASCADE)`;
+  yield* sql`CREATE TABLE board_kanban_cards (workflow_id TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY (workflow_id, id), FOREIGN KEY (workflow_id) REFERENCES board_workflows(id) ON DELETE CASCADE)`;
+  yield* sql`ALTER TABLE board_workflows ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''`;
+  // Threads are per run now, so the fixed-thread launch and briefing bookkeeping has no use.
+  yield* sql`DROP TABLE board_launch_intents`;
+  yield* sql`DROP TABLE board_pending_briefings`;
+  const rows = yield* sql<
+    JsonRow & { readonly id: string }
+  >`SELECT id, data FROM board_workflows ORDER BY rowid`;
+  if (rows.length === 0) return;
+  const endedAt = DateTime.formatIso(yield* DateTime.now);
+  const { workspace, workflows } = upgradeLegacyBoard(
+    rows.map((row) => decodeJson(row.data) as LegacyWorkflow),
+    endedAt,
+  );
+  yield* sql`INSERT INTO board_workspaces (id, name) VALUES (${workspace.id}, ${workspace.name})`;
+  for (const folder of workspace.folders)
+    yield* sql`INSERT INTO board_workspace_folders (workspace_id, environment_id, project_id, path, managed) VALUES (${workspace.id}, ${folder.environmentId}, ${folder.projectId}, ${folder.path}, ${folder.managed ? 1 : 0})`;
+  for (const workflow of workflows) {
+    yield* sql`UPDATE board_workflows SET data = ${encodeJson(workflow)}, workspace_id = ${workspace.id} WHERE id = ${workflow.id}`;
+    yield* sql`DELETE FROM board_nodes WHERE workflow_id = ${workflow.id}`;
+    for (const node of workflow.nodes)
+      yield* sql`INSERT INTO board_nodes (workflow_id, id, data) VALUES (${workflow.id}, ${node.id}, ${encodeJson(node)})`;
+  }
+  // Work that was waiting on a fixed thread cannot continue; tasks being interrupted still finish.
+  yield* sql`UPDATE board_tasks SET status = 'stopped' WHERE status IN ('pending', 'running', 'waiting')`;
+  // Old events carry the old workflow shape. Clients that last saw them resync from a snapshot.
+  yield* sql`DELETE FROM board_task_events`;
+  for (const event of [
+    { kind: "workspace.upserted", workspace },
+    ...workflows.map((entry) => ({ kind: "workflow.upserted", workflow: entry })),
+  ])
+    yield* sql`INSERT INTO board_task_events (data) VALUES (${encodeJson(event)})`;
+});
+
+export const migrations = {
+  "1_Board": migration,
+  "2_BoardIntents": intentsMigration,
+  "3_BoardWorkspaces": workspacesMigration,
+};
+
 export const migrate = Migrator.make({})({
   table: "board_migrations",
-  loader: Migrator.fromRecord({ "1_Board": migration, "2_BoardIntents": intentsMigration }),
+  loader: Migrator.fromRecord(migrations),
 });
 
 type JsonRow = { readonly data: string };
@@ -185,7 +227,7 @@ const make = Effect.gen(function* () {
     return rows.map((row) => decodeJson(row.data) as Workflow);
   });
   const putWorkflow = Effect.fn("BoardStore.putWorkflow")(function* (workflow: Workflow) {
-    yield* sql`INSERT INTO board_workflows (id, data) VALUES (${workflow.id}, ${encodeJson(workflow)}) ON CONFLICT(id) DO UPDATE SET data = excluded.data`;
+    yield* sql`INSERT INTO board_workflows (id, data, workspace_id) VALUES (${workflow.id}, ${encodeJson(workflow)}, ${workflow.workspaceId}) ON CONFLICT(id) DO UPDATE SET data = excluded.data, workspace_id = excluded.workspace_id`;
     yield* sql`DELETE FROM board_nodes WHERE workflow_id = ${workflow.id}`;
     yield* sql`DELETE FROM board_edges WHERE workflow_id = ${workflow.id}`;
     for (const node of workflow.nodes) {
@@ -262,60 +304,69 @@ const make = Effect.gen(function* () {
     yield* sql`UPDATE board_peers SET data = ${encodeJson(updated)} WHERE id = ${peer.environmentId}`;
     return updated;
   });
-  const getLaunchIntent = Effect.fn("BoardStore.getLaunchIntent")(function* (
-    workflowId: string,
-    nodeId: string,
-  ) {
-    const rows = yield* sql<{
-      readonly thread_id: string;
-    }>`SELECT thread_id FROM board_launch_intents WHERE workflow_id = ${workflowId} AND node_id = ${nodeId}`;
-    return rows[0] === undefined ? undefined : { threadId: rows[0].thread_id };
-  });
-  const putLaunchIntent = Effect.fn("BoardStore.putLaunchIntent")(function* (
-    workflowId: string,
-    nodeId: string,
-    threadId: string,
-  ) {
-    yield* sql`INSERT OR REPLACE INTO board_launch_intents (workflow_id, node_id, thread_id) VALUES (${workflowId}, ${nodeId}, ${threadId})`;
-  });
-  const deleteLaunchIntent = Effect.fn("BoardStore.deleteLaunchIntent")(function* (
-    workflowId: string,
-    nodeId: string,
-  ) {
-    yield* sql`DELETE FROM board_launch_intents WHERE workflow_id = ${workflowId} AND node_id = ${nodeId}`;
-  });
-  const markBriefings = Effect.fn("BoardStore.markBriefings")(function* (
-    workflowId: string,
-    nodeIds: ReadonlyArray<string>,
-    sequence: number,
-  ) {
-    for (const nodeId of nodeIds) {
-      yield* sql`INSERT OR REPLACE INTO board_pending_briefings (workflow_id, node_id, sequence) VALUES (${workflowId}, ${nodeId}, ${sequence})`;
-    }
-  });
-  const listBriefings = Effect.fn("BoardStore.listBriefings")(function* (workflowId?: string) {
-    const rows =
-      workflowId === undefined
-        ? yield* sql<{
-            readonly workflow_id: string;
-            readonly node_id: string;
-            readonly sequence: number;
-          }>`SELECT * FROM board_pending_briefings ORDER BY rowid`
-        : yield* sql<{
-            readonly workflow_id: string;
-            readonly node_id: string;
-            readonly sequence: number;
-          }>`SELECT * FROM board_pending_briefings WHERE workflow_id = ${workflowId} ORDER BY rowid`;
-    return rows.map((row) => ({
-      workflowId: row.workflow_id,
-      nodeId: row.node_id,
-      sequence: row.sequence,
+  type FolderRow = {
+    readonly workspace_id: string;
+    readonly environment_id: string;
+    readonly project_id: string;
+    readonly path: string;
+    readonly managed: number;
+  };
+  const workspacesFrom = (
+    workspaces: ReadonlyArray<{ readonly id: string; readonly name: string }>,
+    folders: ReadonlyArray<FolderRow>,
+  ): ReadonlyArray<Workspace> =>
+    workspaces.map((workspace) => ({
+      id: workspace.id,
+      name: workspace.name,
+      folders: folders
+        .filter((folder) => folder.workspace_id === workspace.id)
+        .map((folder) => ({
+          environmentId: folder.environment_id as EnvironmentId,
+          projectId: folder.project_id as ProjectId,
+          path: folder.path,
+          managed: folder.managed === 1,
+        })),
     }));
+  const listWorkspaces = Effect.fn("BoardStore.listWorkspaces")(function* () {
+    const workspaces = yield* sql<{
+      readonly id: string;
+      readonly name: string;
+    }>`SELECT id, name FROM board_workspaces ORDER BY rowid`;
+    const folders = yield* sql<FolderRow>`SELECT * FROM board_workspace_folders ORDER BY rowid`;
+    return workspacesFrom(workspaces, folders);
   });
-  const clearBriefing = Effect.fn("BoardStore.clearBriefing")(function* (
-    briefing: PendingBriefing,
+  const getWorkspace = Effect.fn("BoardStore.getWorkspace")(function* (id: string) {
+    const workspaces = yield* sql<{
+      readonly id: string;
+      readonly name: string;
+    }>`SELECT id, name FROM board_workspaces WHERE id = ${id}`;
+    const folders =
+      yield* sql<FolderRow>`SELECT * FROM board_workspace_folders WHERE workspace_id = ${id} ORDER BY rowid`;
+    return workspacesFrom(workspaces, folders)[0];
+  });
+  const putWorkspace = Effect.fn("BoardStore.putWorkspace")(function* (workspace: Workspace) {
+    yield* sql`INSERT INTO board_workspaces (id, name) VALUES (${workspace.id}, ${workspace.name}) ON CONFLICT(id) DO UPDATE SET name = excluded.name`;
+    yield* sql`DELETE FROM board_workspace_folders WHERE workspace_id = ${workspace.id}`;
+    for (const folder of workspace.folders)
+      yield* sql`INSERT INTO board_workspace_folders (workspace_id, environment_id, project_id, path, managed) VALUES (${workspace.id}, ${folder.environmentId}, ${folder.projectId}, ${folder.path}, ${folder.managed ? 1 : 0})`;
+  });
+  const deleteWorkspace = Effect.fn("BoardStore.deleteWorkspace")(function* (id: string) {
+    yield* sql`DELETE FROM board_workflows WHERE workspace_id = ${id}`;
+    yield* sql`DELETE FROM board_workspaces WHERE id = ${id}`;
+  });
+  const listKanban = Effect.fn("BoardStore.listKanban")(function* (workflowId: string) {
+    const rows =
+      yield* sql<JsonRow>`SELECT data FROM board_kanban_cards WHERE workflow_id = ${workflowId} ORDER BY rowid`;
+    return rows.map((row) => decodeJson(row.data) as KanbanCard);
+  });
+  const putCard = Effect.fn("BoardStore.putCard")(function* (workflowId: string, card: KanbanCard) {
+    yield* sql`INSERT INTO board_kanban_cards (workflow_id, id, data) VALUES (${workflowId}, ${card.id}, ${encodeJson(card)}) ON CONFLICT(workflow_id, id) DO UPDATE SET data = excluded.data`;
+  });
+  const deleteCard = Effect.fn("BoardStore.deleteCard")(function* (
+    workflowId: string,
+    cardId: string,
   ) {
-    yield* sql`DELETE FROM board_pending_briefings WHERE workflow_id = ${briefing.workflowId} AND node_id = ${briefing.nodeId} AND sequence = ${briefing.sequence}`;
+    yield* sql`DELETE FROM board_kanban_cards WHERE workflow_id = ${workflowId} AND id = ${cardId}`;
   });
   const listSchedules = Effect.fn("BoardStore.listSchedules")(function* () {
     const rows = yield* sql<JsonRow>`SELECT data FROM board_schedules ORDER BY rowid`;
@@ -341,9 +392,15 @@ const make = Effect.gen(function* () {
         const rows = yield* sql<{
           readonly sequence: number;
         }>`SELECT COALESCE(MAX(sequence), 0) AS sequence FROM board_task_events`;
+        const workflows = yield* listWorkflows();
+        const kanban = [];
+        for (const workflow of workflows)
+          kanban.push({ workflowId: workflow.id, cards: yield* listKanban(workflow.id) });
         return {
           sequence: rows[0]?.sequence ?? 0,
-          workflows: yield* listWorkflows(),
+          workspaces: yield* listWorkspaces(),
+          workflows,
+          kanban,
           peers: yield* listPeers(),
           schedules: yield* listSchedules(),
         };
@@ -388,6 +445,13 @@ const make = Effect.gen(function* () {
     );
   return BoardStore.of({
     transaction,
+    listWorkspaces,
+    getWorkspace,
+    putWorkspace,
+    deleteWorkspace,
+    listKanban,
+    putCard,
+    deleteCard,
     getWorkflow,
     listWorkflows,
     putWorkflow,
@@ -402,12 +466,6 @@ const make = Effect.gen(function* () {
     putPeer,
     deletePeer,
     updatePeerStatus,
-    getLaunchIntent,
-    putLaunchIntent,
-    deleteLaunchIntent,
-    markBriefings,
-    listBriefings,
-    clearBriefing,
     listSchedules,
     putSchedule,
     deleteSchedule,

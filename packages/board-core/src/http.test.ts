@@ -32,15 +32,26 @@ describe("board wire contract", () => {
     ).toThrow();
     expect(() =>
       decodeUnknownSyncBoardCreateNodeInput({
-        kind: "bind",
         id: "n",
         name: "Node",
+        profile: "master",
         environmentId: "env",
-        threadId: "thread",
+        modelSelection: { instanceId: "codex", model: "gpt-6-luna" },
         x: 0,
         y: 0,
       }),
     ).toThrow();
+    expect(
+      decodeUnknownSyncBoardCreateNodeInput({
+        id: "n",
+        name: "Node",
+        profile: "orchestrator",
+        environmentId: "env",
+        modelSelection: { instanceId: "codex", model: "gpt-6-luna" },
+        x: 0,
+        y: 0,
+      }).profile,
+    ).toBe("orchestrator");
   });
 
   it("represents failed and stopped child requests in a run", () => {
@@ -92,6 +103,8 @@ describe("board wire contract", () => {
     expect(endpoints.getSnapshot.path).toBe("/api/board/snapshot");
     expect(endpoints.startRun.path).toBe("/api/board/workflows/:workflowId/runs");
     expect(endpoints.stopRun.path).toBe("/api/board/workflows/:workflowId/runs/:runId/stop");
+    expect(endpoints.getKanban.path).toBe("/api/board/workflows/:workflowId/kanban");
+    expect(endpoints.deleteWorkspace.path).toBe("/api/board/workspaces/:workspaceId");
     expect(endpoints.events.path).toBe("/api/board/events");
     expect([...endpoints.events.success]).toEqual(
       expect.arrayContaining([expect.objectContaining({ _tag: "StreamSse", mode: "sse" })]),

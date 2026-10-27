@@ -8,15 +8,11 @@ import {
   AuthAccessTokenType,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
-  CommandId,
   ORCHESTRATION_V2_WS_METHODS,
-  ProjectId,
   ThreadId,
-  WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
-import { createWorkflow } from "@t3tools/board-core";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -146,14 +142,6 @@ it.live("runs a board request and interrupts through the real server and orchest
       );
       const rpcContext = yield* Layer.build(protocol);
       const client = yield* RpcClient.make(WsRpcGroup).pipe(Effect.provide(rpcContext));
-      const projectId = ProjectId.make("board-seam-project");
-      yield* client[WS_METHODS.projectsMutate]({
-        type: "project.create",
-        commandId: CommandId.make("board-seam-project-create"),
-        projectId,
-        title: "Board seam",
-        workspaceRoot: cwd,
-      });
       const post = (path: string, body: unknown) =>
         request(path, {
           method: "POST",
@@ -290,57 +278,43 @@ it.live("runs a board request and interrupts through the real server and orchest
       );
       const remoteRpcContext = yield* Layer.build(remoteProtocol);
       const remoteClient = yield* RpcClient.make(WsRpcGroup).pipe(Effect.provide(remoteRpcContext));
-      yield* remoteClient[WS_METHODS.projectsMutate]({
-        type: "project.create",
-        commandId: CommandId.make("board-seam-remote-project-create"),
-        projectId,
-        title: "Remote board seam",
-        workspaceRoot: cwd,
-      });
-
+      const hubFolder = NodePath.join(cwd, "board-seam-hub-folder");
+      const remoteFolder = NodePath.join(cwd, "board-seam-remote-folder");
       assert.strictEqual(
-        (yield* post("/api/board/workflows/import", {
-          workflows: [createWorkflow("imported", "Imported")],
+        (yield* post("/api/board/workspaces", { id: "workspace", name: "Seam workspace" })).status,
+        200,
+      );
+      for (const [environmentId, path] of [
+        [descriptor.environmentId, hubFolder],
+        [remoteDescriptor.environmentId, remoteFolder],
+      ] as const)
+        assert.strictEqual(
+          (yield* post("/api/board/workspaces/workspace/folders", { environmentId, path })).status,
+          200,
+        );
+      assert.strictEqual(
+        (yield* post("/api/board/workflows", {
+          id: "workflow",
+          name: "Workflow",
+          workspaceId: "workspace",
         })).status,
         200,
       );
-      assert.strictEqual(
-        (yield* post("/api/board/workflows", { id: "workflow", name: "Workflow" })).status,
-        200,
-      );
-      for (const [id, name] of [
-        ["root", "Root"],
-        ["child", "Child"],
+      for (const [id, name, profile] of [
+        ["root", "Root", "orchestrator"],
+        ["child", "Child", "worker"],
       ] as const) {
         const response = yield* post("/api/board/workflows/workflow/nodes", {
-          kind: "launch",
           id,
           name,
+          profile,
           environmentId: id === "child" ? remoteDescriptor.environmentId : descriptor.environmentId,
-          projectId,
-          threadId: `board-seam-${id}`,
           modelSelection: { instanceId: "codex", model: "gpt-6-luna" },
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          workspaceStrategy: { type: "root" },
           x: 0,
           y: 0,
         });
         assert.strictEqual(response.status, 200);
       }
-      const rootThread = ThreadId.make("board-seam-root");
-      const threadSequence = Effect.fn("BoardSeam.threadSequence")(function* () {
-        const snapshot = yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
-          threadId: rootThread,
-        }).pipe(
-          Stream.filter((item) => item.kind === "snapshot"),
-          Stream.runHead,
-          Effect.map(Option.getOrThrow),
-        );
-        if (snapshot.kind !== "snapshot") return yield* Effect.die("Expected thread snapshot");
-        return snapshot.snapshotSequence;
-      });
-      const beforeBriefing = yield* threadSequence();
       assert.strictEqual(
         (yield* post("/api/board/workflows/workflow/edges", { a: "root", b: "child" })).status,
         200,
@@ -368,36 +342,6 @@ it.live("runs a board request and interrupts through the real server and orchest
       };
       assert.strictEqual(paused.enabled, false);
       assert.isNull(paused.nextRunAt);
-      const briefing = yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
-        threadId: rootThread,
-        afterSequence: beforeBriefing,
-      }).pipe(
-        Stream.filter(
-          (item) =>
-            item.kind === "event" &&
-            item.event.type === "message.updated" &&
-            item.event.payload.text.includes("You can send requests to:\n- Child"),
-        ),
-        Stream.runHead,
-        Effect.map(Option.getOrThrow),
-      );
-      if (briefing.kind !== "event" || briefing.event.type !== "message.updated")
-        return yield* Effect.die("Expected board briefing");
-      const briefingRunId = briefing.event.payload.runId;
-      yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
-        threadId: rootThread,
-        afterSequence: briefing.sequence,
-      }).pipe(
-        Stream.filter(
-          (item) =>
-            item.kind === "event" &&
-            item.event.type === "run.updated" &&
-            item.event.payload.id === briefingRunId &&
-            item.event.payload.status === "completed",
-        ),
-        Stream.take(1),
-        Stream.runDrain,
-      );
       const beforeRun = yield* request("/api/board/workflows/workflow", { headers: authorization });
       const beforeRunData = (yield* Effect.tryPromise(() => beforeRun.json())) as {
         runs: ReadonlyArray<unknown>;
@@ -414,7 +358,14 @@ it.live("runs a board request and interrupts through the real server and orchest
       );
       let buffer = "";
       const decoder = new TextDecoder();
-      const waitForRun = (runId: string, status: string) =>
+      type SeamRun = {
+        id: string;
+        status: string;
+        summary?: string;
+        requests: ReadonlyArray<{ status: string }>;
+        threads: Record<string, { threadId: string }>;
+      };
+      const waitForRun = (runId: string, ready: (run: SeamRun) => boolean) =>
         Effect.tryPromise(async () => {
           while (true) {
             const frameEnd = buffer.indexOf("\n\n");
@@ -423,20 +374,8 @@ it.live("runs a board request and interrupts through the real server and orchest
               buffer = buffer.slice(frameEnd + 2);
               const data = frame.split("\n").find((line) => line.startsWith("data:"));
               if (!data) continue;
-              const event = JSON.parse(data.slice(5).trim()) as {
-                kind: string;
-                run?: {
-                  id: string;
-                  status: string;
-                  summary?: string;
-                  requests: ReadonlyArray<{ status: string }>;
-                };
-              };
-              if (
-                event.kind === "run.upserted" &&
-                event.run?.id === runId &&
-                event.run.status === status
-              )
+              const event = JSON.parse(data.slice(5).trim()) as { kind: string; run?: SeamRun };
+              if (event.kind === "run.upserted" && event.run?.id === runId && ready(event.run))
                 return event.run;
               continue;
             }
@@ -445,6 +384,7 @@ it.live("runs a board request and interrupts through the real server and orchest
             buffer += decoder.decode(chunk.value, { stream: true }).replaceAll("\r\n", "\n");
           }
         });
+      const withStatus = (status: string) => (run: SeamRun) => run.status === status;
       assert.strictEqual(
         (yield* post("/api/board/workflows/workflow/runs", {
           id: "run",
@@ -453,12 +393,59 @@ it.live("runs a board request and interrupts through the real server and orchest
         })).status,
         200,
       );
-      const completed = yield* waitForRun("run", "finished");
+      const completed = yield* waitForRun("run", withStatus("finished"));
       assert.strictEqual(completed.summary, "run finished");
       assert.deepStrictEqual(
         completed.requests.map((entry) => entry.status),
         ["returned"],
       );
+      assert.deepStrictEqual(Object.keys(completed.threads).toSorted(), ["child", "root"]);
+
+      // Each node's thread is launched fresh for the run, seeded with its profile instructions.
+      const rootThread = ThreadId.make(completed.threads.root!.threadId);
+      const rootProjection = yield* client[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
+        threadId: rootThread,
+      });
+      const seeded = rootProjection.messages.find((message) => message.role === "user")!;
+      assert.include(seeded.text, "You are the orchestrator");
+      assert.include(seeded.text, "[Board] Workflow run started");
+      const childProjection = yield* remoteClient[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
+        threadId: ThreadId.make(completed.threads.child!.threadId),
+      });
+      assert.include(
+        childProjection.messages.find((m) => m.role === "user")!.text,
+        "You are a worker",
+      );
+      const workspaceResponse = yield* request("/api/board/workspaces/workspace", {
+        headers: authorization,
+      });
+      const workspace = (yield* Effect.tryPromise(() => workspaceResponse.json())) as {
+        folders: ReadonlyArray<{ path: string; managed: boolean }>;
+      };
+      assert.deepStrictEqual(
+        workspace.folders.map((folder) => [folder.path, folder.managed]),
+        [
+          [hubFolder, true],
+          [remoteFolder, true],
+        ],
+      );
+      assert.isTrue(NodeFS.existsSync(hubFolder));
+
+      // The orchestrator created the card; the engine moved it with the worker's result.
+      const kanbanResponse = yield* request("/api/board/workflows/workflow/kanban", {
+        headers: authorization,
+      });
+      const cards = (yield* Effect.tryPromise(() => kanbanResponse.json())) as ReadonlyArray<{
+        title: string;
+        status: string;
+        assigneeNodeId?: string;
+        updatedBy: string;
+      }>;
+      assert.deepStrictEqual(
+        cards.map((card) => [card.title, card.status, card.assigneeNodeId, card.updatedBy]),
+        [["Deliver result", "done", "child", "engine"]],
+      );
+
       assert.strictEqual(
         (yield* post("/api/board/workflows/workflow/runs", {
           id: "held",
@@ -468,72 +455,13 @@ it.live("runs a board request and interrupts through the real server and orchest
         200,
       );
       yield* Effect.promise(() => FakeTransport.held.promise);
-      const beforeQueued = yield* threadSequence();
-      assert.strictEqual(
-        (yield* post("/api/board/workflows/workflow/runs", {
-          id: "queued",
-          nodeId: "root",
-          task: "Queued task",
-        })).status,
-        200,
-      );
-      const threadId = rootThread;
-      const queuedEvent = yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
-        threadId,
-        afterSequence: beforeQueued,
-      }).pipe(
-        Stream.filter(
-          (item) =>
-            item.kind === "event" &&
-            item.event.type === "message.updated" &&
-            item.event.payload.text.includes("Queued task"),
-        ),
-        Stream.runHead,
-        Effect.map(Option.getOrThrow),
-      );
-      assert.isTrue(queuedEvent.kind === "event" && queuedEvent.event.type === "message.updated");
-      if (queuedEvent.kind !== "event" || queuedEvent.event.type !== "message.updated")
-        return yield* Effect.die("Expected queued message");
-      const queuedRunId = queuedEvent.event.payload.runId;
-      assert.isNotNull(queuedRunId);
-      const beforeCancel = yield* client[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
-        threadId,
-      });
-      assert.strictEqual(beforeCancel.runs.find((run) => run.id === queuedRunId)?.status, "queued");
-      assert.strictEqual(
-        (yield* post("/api/board/workflows/workflow/runs/queued/stop", {})).status,
-        200,
-      );
-      const cancelled = yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
-        threadId,
-        afterSequence: queuedEvent.sequence,
-      }).pipe(
-        Stream.filter(
-          (item) =>
-            item.kind === "event" &&
-            item.event.type === "run.updated" &&
-            item.event.payload.id === queuedRunId &&
-            item.event.payload.status === "cancelled",
-        ),
-        Stream.runHead,
-      );
-      assert.isTrue(Option.isSome(cancelled));
       assert.strictEqual(
         (yield* post("/api/board/workflows/workflow/runs/held/stop", {})).status,
         200,
       );
       yield* Effect.promise(() => FakeTransport.interrupted.promise);
-      yield* waitForRun("held", "stopped");
+      yield* waitForRun("held", withStatus("stopped"));
 
-      const remoteThread = ThreadId.make("board-seam-child");
-      const remoteSnapshot = yield* remoteClient[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
-        threadId: remoteThread,
-      }).pipe(
-        Stream.filter((item) => item.kind === "snapshot"),
-        Stream.runHead,
-        Effect.map(Option.getOrThrow),
-      );
-      if (remoteSnapshot.kind !== "snapshot") return yield* Effect.die("Expected remote snapshot");
       assert.strictEqual(
         (yield* post("/api/board/workflows/workflow/runs", {
           id: "remote-held",
@@ -542,9 +470,14 @@ it.live("runs a board request and interrupts through the real server and orchest
         })).status,
         200,
       );
+      const remoteLaunched = yield* waitForRun(
+        "remote-held",
+        (run) => run.threads.child !== undefined,
+      );
+      const remoteThread = ThreadId.make(remoteLaunched.threads.child!.threadId);
       const remoteMessage = yield* remoteClient[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
         threadId: remoteThread,
-        afterSequence: remoteSnapshot.snapshotSequence,
+        afterSequence: 0,
       }).pipe(
         Stream.filter(
           (item) =>
@@ -561,7 +494,7 @@ it.live("runs a board request and interrupts through the real server and orchest
       assert.isNotNull(remoteRunId);
       yield* remoteClient[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
         threadId: remoteThread,
-        afterSequence: remoteSnapshot.snapshotSequence,
+        afterSequence: 0,
       }).pipe(
         Stream.filter(
           (item) =>
@@ -577,21 +510,40 @@ it.live("runs a board request and interrupts through the real server and orchest
         (yield* post("/api/board/workflows/workflow/runs/remote-held/stop", {})).status,
         200,
       );
-      yield* waitForRun("remote-held", "stopped");
+      yield* waitForRun("remote-held", withStatus("stopped"));
       yield* remoteClient[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
         threadId: remoteThread,
-        afterSequence: remoteSnapshot.snapshotSequence,
+        afterSequence: 0,
       }).pipe(
-        Stream.filter(
-          (item) =>
-            item.kind === "event" &&
-            item.event.type === "run.updated" &&
-            item.event.payload.id === remoteRunId &&
-            ["interrupted", "cancelled"].includes(item.event.payload.status),
+        // An interrupt that landed before this subscription is only in the initial snapshot.
+        Stream.filter((item) =>
+          item.kind === "snapshot"
+            ? item.projection.runs.some(
+                (run) =>
+                  run.id === remoteRunId && ["interrupted", "cancelled"].includes(run.status),
+              )
+            : item.kind === "event" &&
+              item.event.type === "run.updated" &&
+              item.event.payload.id === remoteRunId &&
+              ["interrupted", "cancelled"].includes(item.event.payload.status),
         ),
         Stream.take(1),
         Stream.runDrain,
       );
+      // Deleting the workspace removes its board-created projects, and their threads, on both machines.
+      assert.strictEqual(
+        (yield* request("/api/board/workspaces/workspace", {
+          method: "DELETE",
+          headers: authorization,
+        })).status,
+        204,
+      );
+      const emptiedResponse = yield* request("/api/board/snapshot", { headers: authorization });
+      const emptied = (yield* Effect.tryPromise(() => emptiedResponse.json())) as {
+        workspaces: ReadonlyArray<unknown>;
+        workflows: ReadonlyArray<unknown>;
+      };
+      assert.deepStrictEqual([emptied.workspaces, emptied.workflows], [[], []]);
       const snapshotBeforeRemoval = yield* request("/api/board/snapshot", {
         headers: authorization,
       });

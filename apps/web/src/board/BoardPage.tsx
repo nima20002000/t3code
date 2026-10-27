@@ -1,5 +1,4 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { ProjectId, ThreadId, type EnvironmentId } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   applyNodeChanges,
@@ -22,17 +21,13 @@ import { NodeSettingsPanel } from "./NodeSettingsPanel";
 import { AddAgentDialog } from "./AddAgentDialog";
 import {
   addEdge,
-  createNode,
-  nextNodePosition,
   useBoardConnection,
   useBoardState,
   getCurrentWorkflow,
   getWorkflow,
-  isThreadOnBoard,
   recordHistoryStep,
   removeEdge,
   removeNode,
-  retryBoardImport,
   updateNode,
   useCurrentWorkflow,
   useBoardPeers,
@@ -49,166 +44,22 @@ import { SignalEdgeShape, type EdgePulse } from "./foreman/SignalEdgeShape";
 import { AGENT_NODE_SIZE, useFloatingCurve } from "./foreman/signalEdge";
 import { useHoverControls } from "./foreman/useHoverControls";
 import { BoardTitle, BoardToolbar } from "./BoardToolbar";
-import { useBoardMachines } from "./useBoardMachines";
 import { BoardKanban } from "./toolbar/BoardKanban";
 import { useNodeRunViews } from "./toolbar/useNodeStatuses";
 import { useNodeConnections } from "./useNodeConnection";
 import { RunActivityCard, type ActivityTarget } from "./RunActivity";
 import { RunDetails } from "./toolbar/RunDetails";
-import { useBoardPending } from "./boardApi";
 import {
   Button,
   SidebarInset,
   WorkspacePageHeader,
   buildThreadRouteParams,
   isElectron,
-  randomUUID,
   useEnvironmentIdentities,
   useThreadShells,
 } from "./upstream";
 
 const ACTIVE_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
-
-function AddNodeForm({ onDone }: { onDone: () => void }) {
-  const connected = useBoardMachines();
-  const threads = useThreadShells();
-  const workflow = useCurrentWorkflow();
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [environmentId, setEnvironmentId] = useState<EnvironmentId | "">("");
-  const [threadId, setThreadId] = useState<ThreadId | "">("");
-  const [name, setName] = useState("");
-  const [manualProject, setManualProject] = useState("");
-  const [manualThread, setManualThread] = useState("");
-  const environmentThreads = threads.filter(
-    (thread) =>
-      thread.environmentId === environmentId &&
-      thread.archivedAt === null &&
-      thread.deletedAt === null &&
-      !isThreadOnBoard(thread.environmentId, thread.id),
-  );
-  const environmentLabel =
-    connected.find((env) => env.environmentId === environmentId)?.label ?? "";
-
-  const submit = async () => {
-    const thread = environmentThreads.find((candidate) => candidate.id === threadId);
-    const projectId =
-      thread?.projectId ?? (manualProject.trim() ? ProjectId.make(manualProject.trim()) : null);
-    const chosenThreadId =
-      thread?.id ?? (manualThread.trim() ? ThreadId.make(manualThread.trim()) : null);
-    if (environmentId === "" || !projectId || !chosenThreadId || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await createNode(workflow.id, {
-        kind: "bind",
-        id: randomUUID(),
-        name: name.trim() || environmentLabel || "Agent",
-        environmentId,
-        projectId,
-        threadId: chosenThreadId,
-        ...nextNodePosition(workflow),
-      });
-      onDone();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div
-      className="absolute top-17 left-5 z-10 grid w-96 max-w-[calc(100%-2.5rem)] gap-3 rounded-sm border bg-card p-3.5 text-foreground shadow-lg"
-      role="dialog"
-      aria-label="Add existing thread"
-    >
-      <label className="grid gap-1 text-xs font-semibold text-muted-foreground">
-        Machine
-        <select
-          className="h-8 w-full rounded-md border bg-background px-2 text-sm font-normal text-foreground"
-          value={environmentId}
-          onChange={(event) => {
-            setEnvironmentId(event.target.value as EnvironmentId | "");
-            setThreadId("");
-            setManualProject("");
-            setManualThread("");
-          }}
-        >
-          <option value="">Select...</option>
-          {connected.map((environment) => (
-            <option key={environment.environmentId} value={environment.environmentId}>
-              {environment.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="grid gap-1 text-xs font-semibold text-muted-foreground">
-        Thread
-        {environmentThreads.length ? (
-          <select
-            className="h-8 w-full rounded-md border bg-background px-2 text-sm font-normal text-foreground"
-            value={threadId}
-            onChange={(event) => setThreadId(event.target.value as ThreadId | "")}
-          >
-            <option value="">Select...</option>
-            {environmentThreads.map((thread) => (
-              <option key={thread.id} value={thread.id}>
-                {thread.title}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <input
-            className="h-8 rounded-md border bg-background px-2 text-sm"
-            placeholder="Thread ID on this machine"
-            value={manualThread}
-            onChange={(event) => setManualThread(event.target.value)}
-          />
-        )}
-      </label>
-      {environmentThreads.length === 0 ? (
-        <label className="grid gap-1 text-xs font-semibold text-muted-foreground">
-          Project ID
-          <input
-            className="h-8 rounded-md border bg-background px-2 text-sm"
-            value={manualProject}
-            onChange={(event) => setManualProject(event.target.value)}
-          />
-        </label>
-      ) : null}
-      <label className="grid gap-1 text-xs font-semibold text-muted-foreground">
-        Name
-        <input
-          className="h-8 rounded-md border bg-background px-2 text-sm font-normal text-foreground"
-          placeholder={environmentLabel || "Agent name"}
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-        />
-      </label>
-      {error ? (
-        <p role="alert" className="text-destructive">
-          {error}
-        </p>
-      ) : null}
-      <div className="flex justify-end gap-2">
-        <Button size="sm" variant="ghost" onClick={onDone}>
-          Cancel
-        </Button>
-        <Button
-          size="sm"
-          disabled={
-            busy ||
-            environmentId === "" ||
-            (threadId === "" && (!manualProject.trim() || !manualThread.trim()))
-          }
-          onClick={() => void submit()}
-        >
-          Add node
-        </Button>
-      </div>
-    </div>
-  );
-}
 
 const OpenSettingsContext = createContext<(nodeId: string) => void>(() => {});
 const OpenActivityContext = createContext<(nodeId: string) => void>(() => {});
@@ -511,8 +362,6 @@ export function BoardPage() {
 
 function BoardCanvasPage() {
   const workflow = useCurrentWorkflow();
-  const { importError } = useBoardState();
-  const pending = useBoardPending();
   const { nodes, edges } = workflow;
   const views = useNodeRunViews(workflow);
   const flights = useFlights(views.edges, edges);
@@ -536,7 +385,6 @@ function BoardCanvasPage() {
         ? { kind: "edge", from: selectedEdge.a, to: selectedEdge.b }
         : null;
   const [addingAgent, setAddingAgent] = useState(false);
-  const [addingThread, setAddingThread] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [settingsNodeId, setSettingsNodeId] = useState<string | null>(null);
   const settingsNode = nodes.find((n) => n.id === settingsNodeId) ?? null;
@@ -625,11 +473,7 @@ function BoardCanvasPage() {
             onSelectRun={setSelectedRunId}
             kanban={kanban}
             onToggleKanban={() => setKanban((value) => !value)}
-            onAddAgent={() => {
-              setAddingAgent(true);
-              setAddingThread(false);
-            }}
-            onAddThread={() => setAddingThread((value) => !value)}
+            onAddAgent={() => setAddingAgent(true)}
           />
         </div>
         {kanban ? (
@@ -662,19 +506,6 @@ function BoardCanvasPage() {
             </OpenActivityContext.Provider>
           </OpenSettingsContext.Provider>
         )}
-        {importError ? (
-          <div className="absolute top-3 left-4 z-20 grid max-w-md gap-2 rounded-lg border bg-background p-3 text-sm shadow-lg">
-            <p role="alert">Local workflows have not been imported. {importError}</p>
-            <div className="flex gap-2">
-              <Button size="sm" onClick={() => void retryBoardImport()} disabled={pending}>
-                Retry import
-              </Button>
-              <Button size="sm" variant="outline" render={<Link to="/settings/connections" />}>
-                Connections
-              </Button>
-            </div>
-          </div>
-        ) : null}
         {selectedRun ? (
           <RunDetails run={selectedRun} onClose={() => setSelectedRunId(null)} />
         ) : null}
@@ -695,7 +526,6 @@ function BoardCanvasPage() {
             onClose={() => setSettingsNodeId(null)}
           />
         ) : null}
-        {addingThread ? <AddNodeForm onDone={() => setAddingThread(false)} /> : null}
       </div>
       {addingAgent ? <AddAgentDialog onClose={() => setAddingAgent(false)} /> : null}
     </SidebarInset>

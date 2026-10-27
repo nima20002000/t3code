@@ -59,6 +59,8 @@ export class NodeDriverError extends Schema.TaggedError<NodeDriverError>()("Node
     "subscribeSettled",
     "readLatestAssistant",
     "interrupt",
+    "ensureProject",
+    "deleteProject",
   ]),
   message: Schema.String,
   /** The outcome is unknown, so repeating the call with the same ids is safe. */
@@ -66,7 +68,23 @@ export class NodeDriverError extends Schema.TaggedError<NodeDriverError>()("Node
   cause: Schema.optionalKey(Schema.Defect()),
 }) {}
 
+export interface BoardDriverProject {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+}
+
 export interface NodeDriver {
+  /** Registers the t3 project for a workspace folder, creating the folder when it is missing. */
+  readonly ensureProject: (
+    input: BoardDriverProject & { readonly title: string; readonly path: string },
+  ) => Effect.Effect<void, NodeDriverError>;
+  /**
+   * Removes the t3 project and its threads. With `removeFolder`, also deletes a board-created folder
+   * under ~/t3-workspaces where the driver can (stock t3 has no remote folder delete).
+   */
+  readonly deleteProject: (
+    input: BoardDriverProject & { readonly removeFolder?: boolean },
+  ) => Effect.Effect<void, NodeDriverError>;
   readonly launch: (input: BoardDriverLaunch) => Effect.Effect<BoardDriverThread, NodeDriverError>;
   readonly send: (input: BoardDriverSend) => Effect.Effect<BoardDriverSendResult, NodeDriverError>;
   readonly subscribeSettled: (input: {

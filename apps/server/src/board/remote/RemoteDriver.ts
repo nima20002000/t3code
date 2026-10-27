@@ -4,6 +4,7 @@ import {
   CommandId,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
   ORCHESTRATION_V2_WS_METHODS,
+  WS_METHODS,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadStreamItem,
@@ -238,6 +239,29 @@ function connectionFailure(cause: unknown): boolean {
 
 export function make(store: PeerStore): NodeDriver {
   return {
+    ensureProject: Effect.fn("RemoteDriver.ensureProject")(function* (input) {
+      const commandId = CommandId.make(`board:project:${input.projectId}`);
+      yield* useClient(store, input, (client) =>
+        client[WS_METHODS.projectsMutate]({
+          type: "project.create",
+          commandId,
+          projectId: input.projectId,
+          title: input.title,
+          workspaceRoot: input.path,
+          createWorkspaceRootIfMissing: true,
+        }),
+      ).pipe(Effect.mapError((cause) => error("ensureProject", cause)));
+    }),
+    deleteProject: Effect.fn("RemoteDriver.deleteProject")(function* (input) {
+      yield* useClient(store, input, (client) =>
+        client[WS_METHODS.projectsMutate]({
+          type: "project.delete",
+          commandId: CommandId.make(`board:project-delete:${input.projectId}`),
+          projectId: input.projectId,
+          force: true,
+        }),
+      ).pipe(Effect.mapError((cause) => error("deleteProject", cause)));
+    }),
     launch: Effect.fn("RemoteDriver.launch")(function* (input) {
       const result = yield* useClient(store, input, (client) =>
         client[ORCHESTRATION_V2_WS_METHODS.launchThread](input.launch),

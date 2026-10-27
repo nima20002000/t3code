@@ -1,21 +1,36 @@
-import type { EnvironmentId, ProjectId, RuntimeMode, ThreadId } from "@t3tools/contracts";
+import { ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, ModelSelection, RuntimeMode, ThreadId } from "@t3tools/contracts";
 
 /** Pure board data model: types, defaults, storage migration and undo history. No React, no storage. */
+
+/** Built-in agent profiles: what a node is told it is. There is no per-node thread; runs launch one. */
+export type AgentProfile = "worker" | "orchestrator";
 
 export interface BoardNode {
   readonly id: string;
   readonly name: string;
+  readonly profile: AgentProfile;
   readonly environmentId: EnvironmentId;
-  readonly projectId?: ProjectId;
-  readonly threadId: ThreadId;
+  readonly modelSelection: ModelSelection;
+  /** Replaces the profile's role text in the node's instructions. */
+  readonly prompt?: string;
   readonly x: number;
   readonly y: number;
-  /** True once the messages that existed when the node was added were marked processed. */
-  readonly baselined: boolean;
-  /** Set for agents the board started: their first reply answers the setup prompt and is skipped. */
-  readonly awaitingFirstReply?: boolean;
-  /** Free-form note about what this agent does; edited in the node settings. */
-  readonly role?: string;
+}
+
+/** A workspace's folder on one machine. The board creates and removes the t3 project when `managed`. */
+export interface WorkspaceFolder {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly path: string;
+  readonly managed: boolean;
+}
+
+/** Board-owned grouping of workflows with one folder per machine; its agents run in those folders. */
+export interface Workspace {
+  readonly id: string;
+  readonly name: string;
+  readonly folders: ReadonlyArray<WorkspaceFolder>;
 }
 
 /** Directed work connection: `a` (source) may send work requests to `b` (target), which returns to `a`. */
@@ -64,6 +79,14 @@ export interface RunRequestRecord {
   readonly failureReason?: string;
 }
 
+/** The thread a run launched for a node. `seeded` is set once the node's instructions were sent. */
+export interface RunThread {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly threadId: ThreadId;
+  readonly seeded: boolean;
+}
+
 export interface RunRecord {
   readonly id: string;
   readonly nodeId: string;
@@ -75,6 +98,10 @@ export interface RunRecord {
   readonly summary?: string;
   readonly data?: unknown;
   readonly requests: ReadonlyArray<RunRequestRecord>;
+  /** nodeId -> the fresh thread this run launched for it, once it first got work. */
+  readonly threads: Readonly<Record<string, RunThread>>;
+  /** The workflow as it was when the run started; later edits never change a run. */
+  readonly definition: WorkflowDefinition;
 }
 
 export interface WorkflowSettings {
@@ -88,9 +115,16 @@ export interface WorkflowSettings {
   readonly waitPolicy?: "allSettled" | "failFast";
 }
 
+export interface WorkflowDefinition {
+  readonly nodes: ReadonlyArray<BoardNode>;
+  readonly edges: ReadonlyArray<BoardEdge>;
+  readonly settings: WorkflowSettings;
+}
+
 export interface Workflow {
   readonly id: string;
   readonly name: string;
+  readonly workspaceId: string;
   readonly nodes: ReadonlyArray<BoardNode>;
   readonly edges: ReadonlyArray<BoardEdge>;
   readonly pending: ReadonlyArray<PendingWake>;
@@ -98,11 +132,6 @@ export interface Workflow {
   readonly runQueue: ReadonlyArray<RunRequest>;
   readonly runs: ReadonlyArray<RunRecord>;
   readonly settings: WorkflowSettings;
-}
-
-export interface BoardsState {
-  readonly workflows: ReadonlyArray<Workflow>;
-  readonly currentId: string;
 }
 
 export const DEFAULT_WORKFLOW_SETTINGS: WorkflowSettings = {
@@ -115,10 +144,11 @@ export const DEFAULT_WORKFLOW_SETTINGS: WorkflowSettings = {
 export const MAX_LOG = 200;
 export const MAX_RUNS = 50;
 
-export function createWorkflow(id: string, name: string): Workflow {
+export function createWorkflow(id: string, name: string, workspaceId: string): Workflow {
   return {
     id,
     name,
+    workspaceId,
     nodes: [],
     edges: [],
     pending: [],
@@ -129,62 +159,46 @@ export function createWorkflow(id: string, name: string): Workflow {
   };
 }
 
-function asArray<T>(value: unknown): ReadonlyArray<T> {
-  return Array.isArray(value) ? (value as ReadonlyArray<T>) : [];
+/** Lowercase letters, digits and dashes: the workspace's folder name. */
+export function workspaceSlug(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug.length > 0 ? slug : "workspace";
 }
 
-function normalizeWorkflow(raw: Partial<Workflow> & { id: string; name: string }): Workflow {
-  return {
-    id: raw.id,
-    name: raw.name,
-    nodes: asArray(raw.nodes),
-    edges: asArray(raw.edges),
-    pending: asArray(raw.pending),
-    log: asArray(raw.log),
-    runQueue: asArray(raw.runQueue),
-    runs: asArray(raw.runs),
-    settings: { ...DEFAULT_WORKFLOW_SETTINGS, ...raw.settings },
-  };
-}
+export const WORKSPACES_ROOT = "~/t3-workspaces";
 
 /**
- * Reads persisted data: the multi-workflow shape (v2), or the original single board (v1, whose
- * nodes/edges/pending/log/runQueue become a workflow named "Workflow"). Anything else gives one
- * empty workflow.
+ * The folder a workspace gets on a machine it has none on yet; `~` expands on that machine.
+ * t3 never reuses a project id, so each folder needs a fresh `uniqueId`.
  */
-export function migrateBoards(v2: unknown, v1: unknown, newId: () => string): BoardsState {
-  if (v2 !== null && typeof v2 === "object") {
-    const candidate = v2 as Partial<BoardsState>;
-    if (Array.isArray(candidate.workflows) && candidate.workflows.length > 0) {
-      const workflows = candidate.workflows
-        .filter((workflow): workflow is Workflow => typeof workflow?.id === "string")
-        .map((workflow) =>
-          normalizeWorkflow({ ...workflow, name: String(workflow.name ?? "Workflow") }),
-        );
-      if (workflows.length > 0) {
-        const currentId = workflows.some((workflow) => workflow.id === candidate.currentId)
-          ? (candidate.currentId as string)
-          : workflows[0]!.id;
-        return { workflows, currentId };
-      }
-    }
-  }
-  const legacy = v1 !== null && typeof v1 === "object" ? (v1 as Partial<Workflow>) : {};
-  const id = newId();
+export function defaultFolder(
+  workspace: Workspace,
+  environmentId: EnvironmentId,
+  uniqueId: string,
+): WorkspaceFolder {
   return {
-    workflows: [
-      normalizeWorkflow({
-        nodes: legacy.nodes ?? [],
-        edges: legacy.edges ?? [],
-        pending: legacy.pending ?? [],
-        log: legacy.log ?? [],
-        runQueue: legacy.runQueue ?? [],
-        id,
-        name: "Workflow",
-      }),
-    ],
-    currentId: id,
+    environmentId,
+    projectId: ProjectId.make(`board:${workspace.id}:${uniqueId}`),
+    path: `${WORKSPACES_ROOT}/${workspaceSlug(workspace.name)}`,
+    managed: true,
   };
+}
+
+/** The workspace with a folder on that machine, adding the default one when it has none. */
+export function withFolder(
+  workspace: Workspace,
+  environmentId: EnvironmentId,
+  uniqueId: string,
+): Workspace {
+  return workspace.folders.some((folder) => folder.environmentId === environmentId)
+    ? workspace
+    : {
+        ...workspace,
+        folders: [...workspace.folders, defaultFolder(workspace, environmentId, uniqueId)],
+      };
 }
 
 /** Picks a name not used by other workflows: "Base", "Base 2", ... */
@@ -259,24 +273,12 @@ export function discardHistory(history: History): {
   return { snapshot: history.origin, history: createHistory(history.origin) };
 }
 
-/**
- * Dropped nodes take their pending wakes with them. Engine bookkeeping flags (`baselined`,
- * `awaitingFirstReply`) of surviving nodes are kept, so undo cannot make the engine re-read a thread.
- */
+/** Dropped nodes take their pending wakes with them. */
 export function applySnapshot(workflow: Workflow, snapshot: EditSnapshot): Workflow {
-  const current = new Map(workflow.nodes.map((node) => [node.id, node]));
-  const nodes = snapshot.nodes.map((node) => {
-    const live = current.get(node.id);
-    if (live === undefined) return node;
-    const { awaitingFirstReply: _stale, ...rest } = node;
-    return live.awaitingFirstReply === undefined
-      ? { ...rest, baselined: live.baselined }
-      : { ...rest, baselined: live.baselined, awaitingFirstReply: live.awaitingFirstReply };
-  });
-  const ids = new Set(nodes.map((node) => node.id));
+  const ids = new Set(snapshot.nodes.map((node) => node.id));
   return {
     ...workflow,
-    nodes,
+    nodes: snapshot.nodes,
     edges: snapshot.edges,
     pending: workflow.pending.filter((wake) => ids.has(wake.from) && ids.has(wake.to)),
   };

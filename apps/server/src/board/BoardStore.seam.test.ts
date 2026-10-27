@@ -15,6 +15,7 @@ import * as DriverRegistry from "./DriverRegistry.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 
 it.effect("keeps core and board migration histories and board data across reopening", () =>
   Effect.scoped(
@@ -42,7 +43,7 @@ it.effect("keeps core and board migration histories and board data across reopen
           }>`SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id`;
           yield* store.transaction(
             Effect.gen(function* () {
-              const workflow = createWorkflow("workflow", "Workflow");
+              const workflow = createWorkflow("workflow", "Workflow", "workspace");
               yield* store.putWorkflow(workflow);
               yield* store.appendEvent({ kind: "workflow.upserted", workflow });
             }),
@@ -68,6 +69,7 @@ it.effect("keeps core and board migration histories and board data across reopen
           assert.deepStrictEqual(board, [
             { migration_id: 1, name: "Board" },
             { migration_id: 2, name: "BoardIntents" },
+            { migration_id: 3, name: "BoardWorkspaces" },
           ]);
           const snapshot = yield* store.snapshot();
           assert.strictEqual(snapshot.sequence, 2);
@@ -86,6 +88,7 @@ it.effect("keeps core and board migration histories and board data across reopen
             ),
             Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
             Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+            Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
           );
           yield* Effect.gen(function* () {
             const drivers = yield* DriverRegistry.DriverRegistry;
@@ -118,7 +121,7 @@ it.effect("rolls board state and its event back together", () =>
     yield* store
       .transaction(
         Effect.gen(function* () {
-          const workflow = createWorkflow("rolled-back", "Rolled back");
+          const workflow = createWorkflow("rolled-back", "Rolled back", "workspace");
           yield* store.putWorkflow(workflow);
           yield* store.appendEvent({ kind: "workflow.upserted", workflow });
           return yield* Effect.fail("abort");
@@ -133,7 +136,7 @@ it.effect("rolls board state and its event back together", () =>
 it.effect("prunes old events and ends replay that would have a gap", () =>
   Effect.gen(function* () {
     const store = yield* BoardStore.BoardStore;
-    const workflow = createWorkflow("pruned", "Pruned");
+    const workflow = createWorkflow("pruned", "Pruned", "workspace");
     const total = BoardStore.EVENT_RETENTION + 5;
     yield* store.transaction(
       Effect.forEach(

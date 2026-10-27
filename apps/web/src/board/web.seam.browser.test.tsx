@@ -1,6 +1,6 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { createWorkflow } from "@t3tools/board-core/boardModel";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
@@ -41,26 +41,57 @@ it("shows Board in the chat layout, hides the sidebar and mounts the node's real
       else localStorage.setItem("t3.board.v2", previousBoard);
     },
   };
+  const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-luna" };
+  const remoteEnvironmentId = EnvironmentId.make("remote-environment");
+  const nodes = [
+    {
+      id: "scout",
+      name: "Scout",
+      profile: "orchestrator" as const,
+      environmentId: ENVIRONMENT_ID,
+      modelSelection,
+      x: 40,
+      y: 40,
+    },
+    {
+      id: "remote",
+      name: "Remote agent",
+      profile: "worker" as const,
+      environmentId: remoteEnvironmentId,
+      modelSelection,
+      x: 340,
+      y: 40,
+    },
+  ];
+  const base = createWorkflow("board-seam", "Seam workflow", "workspace");
   const workflow = {
-    ...createWorkflow("board-seam", "Seam workflow"),
-    nodes: [
+    ...base,
+    nodes,
+    // Each node's thread is the one its newest run launched.
+    runs: [
       {
-        id: "scout",
-        name: "Scout",
-        environmentId: ENVIRONMENT_ID,
-        threadId: thread.id,
-        x: 40,
-        y: 40,
-        baselined: true,
-      },
-      {
-        id: "remote",
-        name: "Remote agent",
-        environmentId: EnvironmentId.make("remote-environment"),
-        threadId: ThreadId.make("remote-thread"),
-        x: 340,
-        y: 40,
-        baselined: true,
+        id: "run",
+        nodeId: "scout",
+        nodeName: "Scout",
+        task: "task",
+        status: "finished" as const,
+        startedAt: "2026-01-01T00:00:00.000Z",
+        requests: [],
+        threads: {
+          scout: {
+            environmentId: ENVIRONMENT_ID,
+            projectId: ProjectId.make("board-seam-project"),
+            threadId: thread.id,
+            seeded: true,
+          },
+          remote: {
+            environmentId: remoteEnvironmentId,
+            projectId: ProjectId.make("remote-project"),
+            threadId: ThreadId.make("remote-thread"),
+            seeded: true,
+          },
+        },
+        definition: { nodes, edges: [], settings: base.settings },
       },
     ],
   };
@@ -70,7 +101,9 @@ it("shows Board in the chat layout, hides the sidebar and mounts the node's real
     if (url.pathname === "/api/board/snapshot") {
       return Response.json({
         sequence: 0,
+        workspaces: [{ id: "workspace", name: "Workspace", folders: [] }],
         workflows: [workflow],
+        kanban: [],
         peers: [
           {
             id: "remote-peer",

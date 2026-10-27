@@ -1,71 +1,51 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ModelSelection } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  DEFAULT_WORKFLOW_SETTINGS,
   MAX_HISTORY,
   applySnapshot,
   createHistory,
   createWorkflow,
+  defaultFolder,
   discardHistory,
-  migrateBoards,
   recordHistory,
   redoHistory,
   snapshotOf,
   snapshotsEqual,
   uniqueWorkflowName,
+  workspaceSlug,
   undoHistory,
   type BoardNode,
   type EditSnapshot,
 } from "./boardModel.ts";
 
+const modelSelection = { instanceId: "codex", model: "gpt-6-luna" } as ModelSelection;
 const node = (id: string, patch: Partial<BoardNode> = {}): BoardNode => ({
   id,
   name: id,
+  profile: "worker",
   environmentId: "env" as EnvironmentId,
-  threadId: `thread-${id}` as ThreadId,
+  modelSelection,
   x: 0,
   y: 0,
-  baselined: true,
   ...patch,
 });
 
-describe("migrateBoards", () => {
-  it("turns the legacy single board into a workflow named Workflow", () => {
-    const legacy = {
-      nodes: [node("a")],
-      edges: [{ a: "a", b: "a" }],
-      pending: [],
-      log: [{ id: "l", at: "t", kind: "info", text: "x" }],
-      runQueue: [],
-    };
-    const boards = migrateBoards(null, legacy, () => "w1");
-    expect(boards.currentId).toBe("w1");
-    expect(boards.workflows).toHaveLength(1);
-    const [workflow] = boards.workflows;
-    expect(workflow?.name).toBe("Workflow");
-    expect(workflow?.nodes).toEqual(legacy.nodes);
-    expect(workflow?.log).toHaveLength(1);
-    expect(workflow?.runs).toEqual([]);
-    expect(workflow?.settings).toEqual(DEFAULT_WORKFLOW_SETTINGS);
+describe("workspaces", () => {
+  const workspace = { id: "w1", name: "Big Project!", folders: [] };
+
+  it("slugs the name into a folder name", () => {
+    expect(workspaceSlug("Big Project!")).toBe("big-project");
+    expect(workspaceSlug("  ")).toBe("workspace");
   });
 
-  it("gives one empty workflow when nothing is stored", () => {
-    const boards = migrateBoards(null, null, () => "w1");
-    expect(boards.workflows).toEqual([createWorkflow("w1", "Workflow")]);
-  });
-
-  it("keeps v2 data, fills missing fields and repairs the current id", () => {
-    const boards = migrateBoards(
-      { workflows: [{ id: "x", name: "Two", nodes: [node("a")] }], currentId: "missing" },
-      { nodes: [node("legacy")] },
-      () => "never",
-    );
-    expect(boards.currentId).toBe("x");
-    expect(boards.workflows[0]?.name).toBe("Two");
-    expect(boards.workflows[0]?.nodes).toHaveLength(1);
-    expect(boards.workflows[0]?.runs).toEqual([]);
-    expect(boards.workflows[0]?.settings.defaultModel).toBe("gpt-6-luna");
+  it("gives a machine its default folder under the t3 workspaces root", () => {
+    expect(defaultFolder(workspace, "env" as EnvironmentId, "u1")).toEqual({
+      environmentId: "env",
+      projectId: "board:w1:u1",
+      path: "~/t3-workspaces/big-project",
+      managed: true,
+    });
   });
 });
 
@@ -123,21 +103,18 @@ describe("history", () => {
 });
 
 describe("applySnapshot", () => {
-  it("keeps engine flags of surviving nodes and drops wakes of removed nodes", () => {
+  it("replaces nodes and edges and drops wakes of removed nodes", () => {
     const workflow = {
-      ...createWorkflow("w", "W"),
-      nodes: [node("a", { baselined: true, awaitingFirstReply: false }), node("b")],
+      ...createWorkflow("w", "W", "ws"),
+      nodes: [node("a"), node("b")],
       pending: [
         { id: "p1", from: "a", to: "b" },
         { id: "p2", from: "a", to: "c" },
       ],
     };
-    const snapshot: EditSnapshot = {
-      nodes: [node("a", { baselined: false, awaitingFirstReply: true, x: 5 })],
-      edges: [],
-    };
+    const snapshot: EditSnapshot = { nodes: [node("a", { x: 5 })], edges: [] };
     const next = applySnapshot(workflow, snapshot);
-    expect(next.nodes[0]).toMatchObject({ x: 5, baselined: true, awaitingFirstReply: false });
+    expect(next.nodes[0]).toMatchObject({ x: 5 });
     expect(next.pending).toEqual([]);
     expect(snapshotOf(next).edges).toBe(snapshot.edges);
   });

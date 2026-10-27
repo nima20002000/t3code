@@ -14,7 +14,7 @@ import {
   type BoardNode,
 } from "./boardStore";
 import {
-  buildBoardInstructions,
+  buildAgentInstructions,
   connectedNodeNames,
   incomingNodeNames,
 } from "@t3tools/board-core/resultProtocol";
@@ -70,7 +70,7 @@ export function NodeSettingsPanel(props: {
     peers.find((peer) => peer.environmentId === node.environmentId)?.name ??
     "Unknown";
   const [name, setName] = useState(node.name);
-  const [role, setRole] = useState(node.role ?? "");
+  const [role, setRole] = useState(node.prompt ?? "");
 
   // The panel is too narrow for t3's right panel; start each node's chat with it closed.
   // oxlint-disable-next-line t3code/react-effect-budget -- Synchronize the external right-panel store with the active thread.
@@ -95,7 +95,16 @@ export function NodeSettingsPanel(props: {
   const sendInstructions = async () => {
     const outgoing = connectedNodeNames(nodes, edges, node.id);
     const incoming = incomingNodeNames(nodes, edges, node.id);
-    await send(node, buildBoardInstructions(node.name, outgoing, incoming));
+    await send(
+      node,
+      buildAgentInstructions({
+        name: node.name,
+        profile: node.profile,
+        prompt: node.prompt,
+        outgoing,
+        incoming,
+      }),
+    );
   };
 
   return (

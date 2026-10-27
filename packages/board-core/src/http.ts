@@ -4,10 +4,8 @@ import {
   EnvironmentScopeRequiredError,
   ModelSelection,
   NonNegativeInt,
-  OrchestrationV2ThreadLaunchWorkspaceStrategy,
   PositiveInt,
   ProjectId,
-  ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
   TrimmedNonEmptyString,
@@ -24,17 +22,38 @@ const OptionalAuthHeaders = Schema.Struct({
   dpop: Schema.optionalKey(Schema.String),
 });
 
+export const BoardAgentProfileSchema = Schema.Literals(["worker", "orchestrator"]);
 export const BoardNodeSchema = Schema.Struct({
   id: Id,
   name: TrimmedNonEmptyString,
+  profile: BoardAgentProfileSchema,
   environmentId: EnvironmentId,
-  projectId: Schema.optionalKey(ProjectId),
-  threadId: ThreadId,
+  modelSelection: ModelSelection,
+  prompt: Schema.optionalKey(Schema.String),
   x: Schema.Number,
   y: Schema.Number,
-  baselined: Schema.Boolean,
-  awaitingFirstReply: Schema.optionalKey(Schema.Boolean),
-  role: Schema.optionalKey(Schema.String),
+});
+export const BoardWorkspaceFolderSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  projectId: ProjectId,
+  path: Schema.String,
+  managed: Schema.Boolean,
+});
+export const BoardWorkspaceSchema = Schema.Struct({
+  id: Id,
+  name: TrimmedNonEmptyString,
+  folders: Schema.Array(BoardWorkspaceFolderSchema),
+});
+export type BoardWorkspace = typeof BoardWorkspaceSchema.Type;
+export const BoardKanbanCardSchema = Schema.Struct({
+  id: Id,
+  title: Schema.String,
+  body: Schema.String,
+  status: Schema.Literals(["todo", "doing", "blocked", "done"]),
+  reason: Schema.optionalKey(Schema.String),
+  assigneeNodeId: Schema.optionalKey(Id),
+  updatedBy: Schema.String,
+  updatedAt: Schema.String,
 });
 export const BoardEdgeSchema = Schema.Struct({ a: Id, b: Id });
 export const BoardPendingWakeSchema = Schema.Struct({ id: Id, from: Id, to: Id });
@@ -60,6 +79,13 @@ export const BoardRunRequestRecordSchema = Schema.Struct({
   returnData: Schema.optionalKey(Schema.Unknown),
   failureReason: Schema.optionalKey(Schema.String),
 });
+export const BoardWorkflowSettingsSchema = Schema.Struct({
+  defaultInstanceId: Schema.String,
+  defaultModel: Schema.String,
+  runtimeMode: RuntimeMode,
+  maxHandoffsPerEdge: Schema.NullOr(NonNegativeInt),
+  waitPolicy: Schema.optionalKey(Schema.Literals(["allSettled", "failFast"])),
+});
 export const BoardRunSchema = Schema.Struct({
   id: Id,
   nodeId: Id,
@@ -71,17 +97,25 @@ export const BoardRunSchema = Schema.Struct({
   summary: Schema.optionalKey(Schema.String),
   data: Schema.optionalKey(Schema.Unknown),
   requests: Schema.Array(BoardRunRequestRecordSchema),
-});
-export const BoardWorkflowSettingsSchema = Schema.Struct({
-  defaultInstanceId: Schema.String,
-  defaultModel: Schema.String,
-  runtimeMode: RuntimeMode,
-  maxHandoffsPerEdge: Schema.NullOr(NonNegativeInt),
-  waitPolicy: Schema.optionalKey(Schema.Literals(["allSettled", "failFast"])),
+  threads: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      environmentId: EnvironmentId,
+      projectId: ProjectId,
+      threadId: ThreadId,
+      seeded: Schema.Boolean,
+    }),
+  ),
+  definition: Schema.Struct({
+    nodes: Schema.Array(BoardNodeSchema),
+    edges: Schema.Array(BoardEdgeSchema),
+    settings: BoardWorkflowSettingsSchema,
+  }),
 });
 export const BoardWorkflowSchema = Schema.Struct({
   id: Id,
   name: TrimmedNonEmptyString,
+  workspaceId: Id,
   nodes: Schema.Array(BoardNodeSchema),
   edges: Schema.Array(BoardEdgeSchema),
   pending: Schema.Array(BoardPendingWakeSchema),
@@ -114,13 +148,39 @@ export type BoardSchedule = typeof BoardScheduleSchema.Type;
 // The sequence and snapshot must be read atomically so clients can resume events without a gap.
 export const BoardSnapshotSchema = Schema.Struct({
   sequence: NonNegativeInt,
+  workspaces: Schema.Array(BoardWorkspaceSchema),
   workflows: Schema.Array(BoardWorkflowSchema),
+  kanban: Schema.Array(
+    Schema.Struct({ workflowId: Id, cards: Schema.Array(BoardKanbanCardSchema) }),
+  ),
   peers: Schema.Array(BoardPeerSchema),
   schedules: Schema.Array(BoardScheduleSchema),
 });
 export type BoardSnapshot = typeof BoardSnapshotSchema.Type;
 
 export const BoardEvent = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("workspace.upserted"),
+    sequence: NonNegativeInt,
+    workspace: BoardWorkspaceSchema,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("workspace.deleted"),
+    sequence: NonNegativeInt,
+    workspaceId: Id,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("kanban.upserted"),
+    sequence: NonNegativeInt,
+    workflowId: Id,
+    card: BoardKanbanCardSchema,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("kanban.deleted"),
+    sequence: NonNegativeInt,
+    workflowId: Id,
+    cardId: Id,
+  }),
   Schema.Struct({
     kind: Schema.Literal("workflow.upserted"),
     sequence: NonNegativeInt,
@@ -194,52 +254,44 @@ const WorkflowParams = Schema.Struct({ workflowId: Id });
 const NodeParams = Schema.Struct({ workflowId: Id, nodeId: Id });
 const EdgeParams = Schema.Struct({ workflowId: Id, fromId: Id, toId: Id });
 const RunParams = Schema.Struct({ workflowId: Id, runId: Id });
+const WorkspaceParams = Schema.Struct({ workspaceId: Id });
+const FolderParams = Schema.Struct({ workspaceId: Id, environmentId: EnvironmentId });
 const PeerParams = Schema.Struct({ peerId: Id });
 const ScheduleParams = Schema.Struct({ scheduleId: Id });
 
+export const BoardCreateWorkspaceInput = Schema.Struct({ id: Id, name: TrimmedNonEmptyString });
+export const BoardUpdateWorkspaceInput = Schema.Struct({ name: TrimmedNonEmptyString });
+/** Without `path` the folder is `~/t3-workspaces/<workspace name>` on that machine. */
+export const BoardAddFolderInput = Schema.Struct({
+  environmentId: EnvironmentId,
+  path: Schema.optionalKey(TrimmedNonEmptyString),
+});
 export const BoardCreateWorkflowInput = Schema.Struct({
   id: Id,
   name: TrimmedNonEmptyString,
+  workspaceId: Id,
   settings: Schema.optionalKey(BoardWorkflowSettingsSchema),
 });
 export const BoardUpdateWorkflowInput = Schema.Struct({
   name: Schema.optionalKey(TrimmedNonEmptyString),
   settings: Schema.optionalKey(BoardWorkflowSettingsSchema),
 });
-export const BoardImportWorkflowsInput = Schema.Struct({
-  workflows: Schema.Array(BoardWorkflowSchema),
+export const BoardCreateNodeInput = Schema.Struct({
+  id: Id,
+  name: TrimmedNonEmptyString,
+  profile: BoardAgentProfileSchema,
+  environmentId: EnvironmentId,
+  modelSelection: ModelSelection,
+  prompt: Schema.optionalKey(Schema.String),
+  x: Schema.Number,
+  y: Schema.Number,
 });
-export const BoardCreateNodeInput = Schema.Union([
-  Schema.Struct({
-    kind: Schema.Literal("bind"),
-    id: Id,
-    name: TrimmedNonEmptyString,
-    environmentId: EnvironmentId,
-    projectId: ProjectId,
-    threadId: ThreadId,
-    x: Schema.Number,
-    y: Schema.Number,
-    role: Schema.optionalKey(Schema.String),
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("launch"),
-    id: Id,
-    name: TrimmedNonEmptyString,
-    environmentId: EnvironmentId,
-    projectId: ProjectId,
-    threadId: ThreadId,
-    modelSelection: ModelSelection,
-    runtimeMode: RuntimeMode,
-    interactionMode: ProviderInteractionMode,
-    workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
-    x: Schema.Number,
-    y: Schema.Number,
-    role: Schema.optionalKey(Schema.String),
-  }),
-]);
 export const BoardUpdateNodeInput = Schema.Struct({
   name: Schema.optionalKey(TrimmedNonEmptyString),
-  role: Schema.optionalKey(Schema.String),
+  profile: Schema.optionalKey(BoardAgentProfileSchema),
+  environmentId: Schema.optionalKey(EnvironmentId),
+  modelSelection: Schema.optionalKey(ModelSelection),
+  prompt: Schema.optionalKey(Schema.String),
   x: Schema.optionalKey(Schema.Number),
   y: Schema.optionalKey(Schema.Number),
 });
@@ -270,7 +322,9 @@ export const BoardUpdateScheduleInput = Schema.Struct({
 
 export type BoardCreateWorkflowInput = typeof BoardCreateWorkflowInput.Type;
 export type BoardUpdateWorkflowInput = typeof BoardUpdateWorkflowInput.Type;
-export type BoardImportWorkflowsInput = typeof BoardImportWorkflowsInput.Type;
+export type BoardCreateWorkspaceInput = typeof BoardCreateWorkspaceInput.Type;
+export type BoardUpdateWorkspaceInput = typeof BoardUpdateWorkspaceInput.Type;
+export type BoardAddFolderInput = typeof BoardAddFolderInput.Type;
 export type BoardCreateNodeInput = typeof BoardCreateNodeInput.Type;
 export type BoardUpdateNodeInput = typeof BoardUpdateNodeInput.Type;
 export type BoardPairPeerInput = typeof BoardPairPeerInput.Type;
@@ -287,6 +341,63 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
     }),
   )
   .add(
+    HttpApiEndpoint.get("listWorkspaces", "/workspaces", {
+      headers: OptionalAuthHeaders,
+      success: Schema.Array(BoardWorkspaceSchema),
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("createWorkspace", "/workspaces", {
+      headers: OptionalAuthHeaders,
+      payload: BoardCreateWorkspaceInput,
+      success: BoardWorkspaceSchema,
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.get("getWorkspace", "/workspaces/:workspaceId", {
+      headers: OptionalAuthHeaders,
+      params: WorkspaceParams,
+      success: BoardWorkspaceSchema,
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.patch("updateWorkspace", "/workspaces/:workspaceId", {
+      headers: OptionalAuthHeaders,
+      params: WorkspaceParams,
+      payload: BoardUpdateWorkspaceInput,
+      success: BoardWorkspaceSchema,
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.delete("deleteWorkspace", "/workspaces/:workspaceId", {
+      headers: OptionalAuthHeaders,
+      params: WorkspaceParams,
+      success: HttpApiSchema.NoContent,
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("addFolder", "/workspaces/:workspaceId/folders", {
+      headers: OptionalAuthHeaders,
+      params: WorkspaceParams,
+      payload: BoardAddFolderInput,
+      success: BoardWorkspaceSchema,
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.delete("deleteFolder", "/workspaces/:workspaceId/folders/:environmentId", {
+      headers: OptionalAuthHeaders,
+      params: FolderParams,
+      success: BoardWorkspaceSchema,
+      error: Errors,
+    }),
+  )
+  .add(
     HttpApiEndpoint.get("listWorkflows", "/workflows", {
       headers: OptionalAuthHeaders,
       success: Schema.Array(BoardWorkflowSchema),
@@ -298,14 +409,6 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
       headers: OptionalAuthHeaders,
       payload: BoardCreateWorkflowInput,
       success: BoardWorkflowSchema,
-      error: Errors,
-    }),
-  )
-  .add(
-    HttpApiEndpoint.post("importWorkflows", "/workflows/import", {
-      headers: OptionalAuthHeaders,
-      payload: BoardImportWorkflowsInput,
-      success: Schema.Array(BoardWorkflowSchema),
       error: Errors,
     }),
   )
@@ -462,6 +565,14 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
       headers: OptionalAuthHeaders,
       params: ScheduleParams,
       success: HttpApiSchema.NoContent,
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.get("getKanban", "/workflows/:workflowId/kanban", {
+      headers: OptionalAuthHeaders,
+      params: WorkflowParams,
+      success: Schema.Array(BoardKanbanCardSchema),
       error: Errors,
     }),
   )

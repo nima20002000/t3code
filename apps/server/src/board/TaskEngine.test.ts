@@ -4,9 +4,16 @@ import {
   NodeDriverError,
   type BoardDriverSend,
   type BoardDriverSettled,
+  type BoardNode,
   type NodeDriver,
 } from "@t3tools/board-core";
-import { EnvironmentId, MessageId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  ProviderInstanceId,
+  RunId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
@@ -24,18 +31,24 @@ import * as BoardScheduler from "./BoardScheduler.ts";
 import * as BoardService from "./BoardService.ts";
 
 const environmentId = EnvironmentId.make("environment:test");
-const projectId = ProjectId.make("project:test");
-const thread = (id: string) => ThreadId.make(`thread:${id}`);
-const node = (id: string) => ({
+const node = (id: string, profile: BoardNode["profile"] = "worker"): BoardNode => ({
   id,
   name: id,
+  profile,
   environmentId,
-  projectId,
-  threadId: thread(id),
+  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-luna" },
   x: 0,
   y: 0,
-  baselined: true,
 });
+const workspace = { id: "workspace", name: "Workspace", folders: [] };
+const seed = (
+  store: BoardStore.BoardStore["Service"],
+  workflow: ReturnType<typeof setupWorkflow>,
+) => store.putWorkspace(workspace).pipe(Effect.andThen(store.putWorkflow(workflow)));
+const definitionOf = () => {
+  const { nodes, edges, settings } = setupWorkflow();
+  return { nodes, edges, settings };
+};
 const finish = '```json\n{"summary":"finished","data":42,"routing":{"kind":"finish"}}\n```';
 const request =
   '```json\n{"summary":"delegate","data":null,"routing":{"kind":"request","requests":[{"to":"one","task":"first"},{"to":"two","task":"second"}]}}\n```';
@@ -45,17 +58,32 @@ const returned = (summary: string) =>
 const makeHarness = Effect.gen(function* () {
   const sends = yield* Queue.unbounded<BoardDriverSend>();
   const interrupts = yield* Queue.unbounded<ThreadId>();
+  const launches = yield* Queue.unbounded<Parameters<NodeDriver["launch"]>[0]>();
+  const projects = yield* Queue.unbounded<Parameters<NodeDriver["ensureProject"]>[0]>();
   const replies = new Map<ThreadId, Queue.Queue<BoardDriverSettled>>();
-  for (const id of ["root", "one", "two"])
-    replies.set(thread(id), yield* Queue.unbounded<BoardDriverSettled>());
+  // A thread's queue exists once the engine launched it.
+  const queueFor = (threadId: ThreadId) => replies.get(threadId)!;
   const messages = yield* Ref.make(new Map<RunId, string>());
   const driver: NodeDriver = {
-    launch: () => Effect.die("launch is not used"),
+    ensureProject: (input) => Queue.offer(projects, input).pipe(Effect.asVoid),
+    deleteProject: () => Effect.void,
+    launch: (input) =>
+      Effect.gen(function* () {
+        if (!replies.has(input.launch.threadId))
+          replies.set(input.launch.threadId, yield* Queue.unbounded<BoardDriverSettled>());
+        yield* Queue.offer(launches, input);
+      }).pipe(
+        Effect.as({
+          environmentId: input.environmentId,
+          projectId: input.launch.projectId,
+          threadId: input.launch.threadId,
+        }),
+      ),
     send: (input) =>
       Queue.offer(sends, input).pipe(
         Effect.as({ runId: RunId.make(input.messageId), sequence: 0 }),
       ),
-    subscribeSettled: ({ thread: target }) => Stream.fromQueue(replies.get(target.threadId)!),
+    subscribeSettled: ({ thread: target }) => Stream.fromQueue(queueFor(target.threadId)),
     readLatestAssistant: ({ runId }) =>
       Ref.get(messages).pipe(
         Effect.map((all) => {
@@ -78,7 +106,7 @@ const makeHarness = Effect.gen(function* () {
     Effect.gen(function* () {
       const runId = RunId.make(sent.messageId);
       yield* Ref.update(messages, (current) => new Map(current).set(runId, text));
-      yield* Queue.offer(replies.get(sent.thread.threadId)!, {
+      yield* Queue.offer(queueFor(sent.thread.threadId), {
         thread: sent.thread,
         runId,
         messageId: sent.messageId,
@@ -86,21 +114,21 @@ const makeHarness = Effect.gen(function* () {
         status,
       });
     });
-  return { sends, interrupts, reply, registry, driver };
+  return { sends, interrupts, launches, projects, reply, registry, driver };
 });
 
 const setupWorkflow = (
   waitPolicy: "allSettled" | "failFast" = "allSettled",
   limit: number | null = null,
 ) => ({
-  ...createWorkflow("workflow", "Workflow"),
-  nodes: [node("root"), node("one"), node("two")],
+  ...createWorkflow("workflow", "Workflow", "workspace"),
+  nodes: [node("root", "orchestrator"), node("one"), node("two")],
   edges: [
     { a: "root", b: "one" },
     { a: "root", b: "two" },
   ],
   settings: {
-    ...createWorkflow("workflow", "Workflow").settings,
+    ...createWorkflow("workflow", "Workflow", "workspace").settings,
     waitPolicy,
     maxHandoffsPerEdge: limit,
   },
@@ -116,64 +144,6 @@ const waitForRun = (
     Effect.map(Option.getOrThrow),
   );
 
-it.effect("sends updated instructions when connections change", () =>
-  Effect.gen(function* () {
-    const harness = yield* makeHarness;
-    const layer = BoardService.layer.pipe(
-      Layer.provideMerge(TaskEngine.layer),
-      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
-      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
-    );
-    yield* Effect.gen(function* () {
-      const board = yield* BoardService.BoardService;
-      const store = yield* BoardStore.BoardStore;
-      yield* store.transaction(store.putWorkflow({ ...setupWorkflow(), edges: [] }));
-      yield* board.createEdge("workflow", { a: "root", b: "one" });
-      const source = yield* Queue.take(harness.sends);
-      const target = yield* Queue.take(harness.sends);
-      assert.include(source.text, "You can send requests to:\n- one");
-      assert.include(target.text, "These agents may send requests to you:\n- root");
-      yield* board.deleteEdge("workflow", "root", "one");
-      const updated = yield* Queue.take(harness.sends);
-      yield* Queue.take(harness.sends);
-      assert.include(updated.text, "You can send requests to:\n- (none)");
-      assert.notStrictEqual(source.commandId, updated.commandId);
-    }).pipe(Effect.provide(layer));
-  }),
-);
-
-it.effect("records an instruction delivery failure in the workflow", () =>
-  Effect.gen(function* () {
-    const harness = yield* makeHarness;
-    const driver: NodeDriver = {
-      ...harness.driver,
-      send: () => Effect.fail(new NodeDriverError({ operation: "send", message: "Unavailable" })),
-    };
-    const registry = DriverRegistry.DriverRegistry.of({
-      get: () => Effect.succeed(driver),
-      register: () => Effect.void,
-      remove: () => Effect.void,
-    });
-    const layer = BoardService.layer.pipe(
-      Layer.provideMerge(TaskEngine.layer),
-      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, registry)),
-      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
-    );
-    yield* Effect.gen(function* () {
-      const board = yield* BoardService.BoardService;
-      const store = yield* BoardStore.BoardStore;
-      yield* store.transaction(store.putWorkflow({ ...setupWorkflow(), edges: [] }));
-      yield* board.createEdge("workflow", { a: "root", b: "one" });
-      const workflow = yield* board.getWorkflow("workflow");
-      assert.deepStrictEqual(
-        workflow.log.map((entry) => entry.kind),
-        ["error", "error"],
-      );
-      assert.deepStrictEqual(workflow.edges, [{ a: "root", b: "one" }]);
-    }).pipe(Effect.provide(layer));
-  }),
-);
-
 it.effect("removes schedules when their node or workflow is deleted", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness;
@@ -185,7 +155,7 @@ it.effect("removes schedules when their node or workflow is deleted", () =>
     yield* Effect.gen(function* () {
       const board = yield* BoardService.BoardService;
       const store = yield* BoardStore.BoardStore;
-      yield* store.transaction(store.putWorkflow(setupWorkflow()));
+      yield* store.transaction(seed(store, setupWorkflow()));
       for (const nodeId of ["root", "one"]) {
         yield* board.createSchedule({
           id: `schedule:${nodeId}`,
@@ -227,7 +197,7 @@ it.effect("joins all child returns before sending one combined message", () =>
     yield* Effect.gen(function* () {
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
-      yield* store.transaction(store.putWorkflow(setupWorkflow()));
+      yield* store.transaction(seed(store, setupWorkflow()));
       yield* engine.start("workflow", { id: "run:join", nodeId: "root", task: "Delegate" });
       const root = yield* Queue.take(harness.sends);
       yield* harness.reply(root, request);
@@ -241,7 +211,7 @@ it.effect("joins all child returns before sending one combined message", () =>
       assert.strictEqual((yield* store.getTask("run:join"))?.status, "waiting");
       yield* harness.reply(second, returned("second result"));
       const joined = yield* Queue.take(harness.sends);
-      assert.strictEqual(joined.thread.threadId, thread("root"));
+      assert.strictEqual(joined.thread.threadId, root.thread.threadId);
       assert.include(joined.text, "first result");
       assert.include(joined.text, "second result");
       yield* harness.reply(joined, finish);
@@ -261,7 +231,7 @@ it.effect("failFast stops siblings when a child fails", () =>
     yield* Effect.gen(function* () {
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
-      yield* store.transaction(store.putWorkflow(setupWorkflow("failFast")));
+      yield* store.transaction(seed(store, setupWorkflow("failFast")));
       yield* engine.start("workflow", { id: "run:fail-fast", nodeId: "root", task: "Delegate" });
       yield* harness.reply(yield* Queue.take(harness.sends), request);
       const first = yield* Queue.take(harness.sends);
@@ -311,7 +281,7 @@ it.effect("joins the latest child results if a return commits during the join", 
       Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, registry)),
       Layer.provide(Layer.succeed(BoardStore.BoardStore, observedStore)),
     );
-    yield* store.transaction(store.putWorkflow(setupWorkflow()));
+    yield* store.transaction(seed(store, setupWorkflow()));
     yield* Effect.gen(function* () {
       const engine = yield* TaskEngine.TaskEngine;
       yield* engine.start("workflow", { id: "run:join-race", nodeId: "root", task: "Delegate" });
@@ -362,11 +332,11 @@ it.effect("stops all active tasks and interrupts their threads", () =>
     yield* Effect.gen(function* () {
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
-      yield* store.transaction(store.putWorkflow(setupWorkflow()));
+      yield* store.transaction(seed(store, setupWorkflow()));
       yield* engine.start("workflow", { id: "run:stop", nodeId: "root", task: "Delegate" });
       yield* harness.reply(yield* Queue.take(harness.sends), request);
-      yield* Queue.take(harness.sends);
-      yield* Queue.take(harness.sends);
+      const stoppedOne = yield* Queue.take(harness.sends);
+      const stoppedTwo = yield* Queue.take(harness.sends);
       const stopped = yield* engine.stop("workflow", "run:stop");
       assert.strictEqual(stopped.status, "stopped");
       assert.isTrue(
@@ -376,7 +346,10 @@ it.effect("stops all active tasks and interrupts their threads", () =>
         yield* Queue.take(harness.interrupts),
         yield* Queue.take(harness.interrupts),
       ];
-      assert.deepStrictEqual(new Set(interrupted), new Set([thread("one"), thread("two")]));
+      assert.deepStrictEqual(
+        new Set(interrupted),
+        new Set([stoppedOne.thread.threadId, stoppedTwo.thread.threadId]),
+      );
     }).pipe(Effect.provide(layer));
   }),
 );
@@ -401,7 +374,7 @@ it.effect("retries an interrupted stop after restart with the same command ID", 
       remove: () => Effect.void,
     });
     const store = yield* BoardStore.BoardStore;
-    yield* store.transaction(store.putWorkflow(setupWorkflow()));
+    yield* store.transaction(seed(store, setupWorkflow()));
     const engineLayer = TaskEngine.layer.pipe(
       Layer.provide(Layer.succeed(BoardStore.BoardStore, store)),
       Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, registry)),
@@ -459,7 +432,7 @@ it.effect("allows a failed stop to be retried without restarting", () =>
     yield* Effect.gen(function* () {
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
-      yield* store.transaction(store.putWorkflow(setupWorkflow()));
+      yield* store.transaction(seed(store, setupWorkflow()));
       yield* engine.start("workflow", { id: "run:stop-retry", nodeId: "root", task: "Hold" });
       yield* Queue.take(harness.sends);
       yield* engine.stop("workflow", "run:stop-retry").pipe(Effect.flip);
@@ -485,11 +458,12 @@ it.effect("records capped requests as denied and returns them to the requester",
     yield* Effect.gen(function* () {
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
-      yield* store.transaction(store.putWorkflow(setupWorkflow("allSettled", 0)));
+      yield* store.transaction(seed(store, setupWorkflow("allSettled", 0)));
       yield* engine.start("workflow", { id: "run:capped", nodeId: "root", task: "Delegate" });
-      yield* harness.reply(yield* Queue.take(harness.sends), request);
+      const rootSend = yield* Queue.take(harness.sends);
+      yield* harness.reply(rootSend, request);
       const response = yield* Queue.take(harness.sends);
-      assert.strictEqual(response.thread.threadId, thread("root"));
+      assert.strictEqual(response.thread.threadId, rootSend.thread.threadId);
       assert.include(response.text, "Handoff limit 0 reached");
       yield* harness.reply(response, finish);
       const event = yield* waitForRun(store, (run) => run.status === "finished");
@@ -529,7 +503,7 @@ it.effect("replays an interrupted dispatch with the same command and message IDs
       remove: () => Effect.void,
     });
     const store = yield* BoardStore.BoardStore;
-    yield* store.transaction(store.putWorkflow(setupWorkflow()));
+    yield* store.transaction(seed(store, setupWorkflow()));
     const engineLayer = TaskEngine.layer.pipe(
       Layer.provide(Layer.succeed(BoardStore.BoardStore, store)),
       Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, registry)),
@@ -567,7 +541,7 @@ it.effect("starts due schedules without a client and advances the persisted dead
       const store = yield* BoardStore.BoardStore;
       yield* store.transaction(
         Effect.gen(function* () {
-          yield* store.putWorkflow(setupWorkflow());
+          yield* seed(store, setupWorkflow());
           yield* store.putSchedule({
             id: "schedule",
             workflowId: "workflow",
@@ -621,7 +595,7 @@ it.effect("retries persisted stop intents in the background", () =>
     yield* Effect.gen(function* () {
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
-      yield* store.transaction(store.putWorkflow(setupWorkflow()));
+      yield* store.transaction(seed(store, setupWorkflow()));
       yield* engine.start("workflow", { id: "run:bg-stop", nodeId: "root", task: "Hold" });
       yield* Queue.take(harness.sends);
       yield* engine.stop("workflow", "run:bg-stop").pipe(Effect.flip);
@@ -642,7 +616,7 @@ it.effect("stop cancels every active run of the workflow", () =>
     yield* Effect.gen(function* () {
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
-      yield* store.transaction(store.putWorkflow(setupWorkflow()));
+      yield* store.transaction(seed(store, setupWorkflow()));
       yield* engine.start("workflow", { id: "run:a", nodeId: "root", task: "A" });
       yield* Queue.take(harness.sends);
       yield* engine.start("workflow", { id: "run:b", nodeId: "root", task: "B" });
@@ -669,11 +643,12 @@ it.effect("returns the existing run when a start is repeated with the same id", 
     yield* Effect.gen(function* () {
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
-      yield* store.transaction(store.putWorkflow(setupWorkflow()));
+      yield* store.transaction(seed(store, setupWorkflow()));
       const input = { id: "run:again", nodeId: "root", task: "Once" };
       const first = yield* engine.start("workflow", input);
       yield* Queue.take(harness.sends);
-      assert.deepStrictEqual(yield* engine.start("workflow", input), first);
+      const repeated = yield* engine.start("workflow", input);
+      assert.deepStrictEqual([repeated.id, repeated.status], [first.id, "running"]);
       const conflict = yield* engine
         .start("workflow", { ...input, task: "Other" })
         .pipe(Effect.flip);
@@ -702,9 +677,11 @@ it.effect("keeps only the last 50 finished runs and never prunes active ones", (
         status,
         startedAt: "2020-01-01T00:00:00.000Z",
         requests: [],
+        threads: {},
+        definition: definitionOf(),
       });
       yield* store.transaction(
-        store.putWorkflow({
+        seed(store, {
           ...setupWorkflow(),
           runs: [
             old(-1, "running"),
@@ -773,7 +750,7 @@ it.effect("retries an uncertain send with the same ids instead of failing the ta
     yield* Effect.gen(function* () {
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
-      yield* store.transaction(store.putWorkflow(setupWorkflow()));
+      yield* store.transaction(seed(store, setupWorkflow()));
       yield* engine.start("workflow", { id: "run:uncertain", nodeId: "root", task: "Go" });
       const first = yield* Queue.take(calls);
       yield* TestClock.adjust("15 seconds");
@@ -814,7 +791,7 @@ it.effect("interrupts the thread when Stop lands while an uncertain send waits t
     yield* Effect.gen(function* () {
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
-      yield* store.transaction(store.putWorkflow(setupWorkflow()));
+      yield* store.transaction(seed(store, setupWorkflow()));
       yield* engine.start("workflow", { id: "run:stop-uncertain", nodeId: "root", task: "Go" });
       yield* Queue.take(calls);
       const stopped = yield* engine.stop("workflow", "run:stop-uncertain");
@@ -845,7 +822,7 @@ it.effect("fails a task with the driver's message when the send is certain to ha
     yield* Effect.gen(function* () {
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
-      yield* store.transaction(store.putWorkflow(setupWorkflow()));
+      yield* store.transaction(seed(store, setupWorkflow()));
       yield* engine.start("workflow", { id: "run:expired", nodeId: "root", task: "Go" });
       const event = yield* waitForRun(store, (run) => run.status === "failed");
       if (event.kind === "run.upserted")
@@ -874,7 +851,7 @@ it.effect("does not start a schedule while a run is active and skips a paused sc
       };
       yield* store.transaction(
         Effect.gen(function* () {
-          yield* store.putWorkflow({
+          yield* seed(store, {
             ...setupWorkflow(),
             runs: [
               {
@@ -885,6 +862,8 @@ it.effect("does not start a schedule while a run is active and skips a paused sc
                 status: "running",
                 startedAt: dueAt,
                 requests: [],
+                threads: {},
+                definition: definitionOf(),
               },
             ],
           });
