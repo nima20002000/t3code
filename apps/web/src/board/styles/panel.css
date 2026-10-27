@@ -62,3 +62,10 @@
   background-color: var(--chat-composer-glass-surface);
   backdrop-filter: none;
 }
+
+/* t3 fades the strip's own layer out at the bottom, since the shell normally paints under it. */
+.board-chat-panel:not([data-full])
+  [data-model-strip-transition]
+  [data-composer-model-strip]::before {
+  mask: none;
+}
