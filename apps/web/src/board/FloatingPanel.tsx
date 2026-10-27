@@ -98,6 +98,9 @@ function snapshot(panel: HTMLElement, zIndex: string) {
   return copy;
 }
 
+/** t3's in-app browser places its native view on window scroll; a moved panel must say so too. */
+const followMove = (panel: HTMLElement) => panel.dispatchEvent(new Event("scroll"));
+
 const MIN_PANEL = { w: 320, h: 260 };
 type PanelSize = { readonly w: number; readonly h: number };
 function readPanelSize(key: string): PanelSize | null {
@@ -188,7 +191,8 @@ export function FloatingPanel(props: {
         x: clamp(moveEvent.clientX - startX, 0, board.clientWidth - panel.offsetWidth),
         y: clamp(moveEvent.clientY - startY, 0, board.clientHeight - 40),
       };
-      setPosition(next);
+      flushSync(() => setPosition(next));
+      followMove(panel);
     };
     const end = () => {
       header.removeEventListener("pointermove", move);
@@ -238,8 +242,11 @@ export function FloatingPanel(props: {
       }
       nextSize = { w, h };
       nextPosition = { x, y };
-      setSize(nextSize);
-      setPosition(nextPosition);
+      flushSync(() => {
+        setSize(nextSize);
+        setPosition(nextPosition);
+      });
+      followMove(panel);
     };
     const end = () => {
       handle.removeEventListener("pointermove", move);

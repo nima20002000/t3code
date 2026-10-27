@@ -1,8 +1,8 @@
 import {
   Maximize2Icon,
   Minimize2Icon,
-  PanelBottomIcon,
-  PanelRightIcon,
+  GlobeIcon,
+  SquareTerminalIcon,
   SettingsIcon,
   XIcon,
 } from "lucide-react";
@@ -11,6 +11,7 @@ import { Link } from "@tanstack/react-router";
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { AgentDialog } from "./AddAgentDialog";
+import { useChatTools } from "./ChatTools";
 import { FloatingPanel, morphPanel } from "./FloatingPanel";
 import { IconButton } from "./toolbar/IconButton";
 import { useSendBoardInstructions } from "./useSendBoardInstructions";
@@ -91,9 +92,9 @@ export function NodeSettingsPanel(props: {
   const [configuring, setConfiguring] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const panel = useRef<HTMLElement>(null);
-  // The small panel hides the chat's own header; these reach t3's toggles there.
-  const clickChatControl = (label: string) =>
-    panel.current?.querySelector<HTMLElement>(`[aria-label="${label}"]`)?.click();
+  const tools = useChatTools(
+    node.threadId === "" ? null : scopeThreadRef(node.environmentId, node.threadId),
+  );
   const toggleMaximized = (next: boolean) =>
     void morphPanel(panel.current, next, () => setMaximized(next));
 
@@ -120,108 +121,108 @@ export function NodeSettingsPanel(props: {
   };
 
   return (
-    <FloatingPanel
-      storageKey="board:chat-panel"
-      maximized={maximized}
-      ref={panel}
-      label={`${node.name} chat`}
-      className="top-16 right-3 h-[70%] w-[420px] max-w-[calc(100%-1.5rem)]"
-      header={
-        <>
-          {editingName ? (
-            <Input
-              size="sm"
-              aria-label="Name"
-              autoFocus
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              onBlur={commitName}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") event.currentTarget.blur();
-                if (event.key === "Escape") {
-                  event.stopPropagation();
+    <>
+      {connectedIds.includes(node.environmentId) ? tools.view : null}
+      <FloatingPanel
+        storageKey="board:chat-panel"
+        maximized={maximized}
+        ref={panel}
+        label={`${node.name} chat`}
+        className="top-16 right-3 h-[70%] w-[420px] max-w-[calc(100%-1.5rem)]"
+        header={
+          <>
+            {editingName ? (
+              <Input
+                size="sm"
+                aria-label="Name"
+                autoFocus
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                onBlur={commitName}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                  if (event.key === "Escape") {
+                    event.stopPropagation();
+                    setName(node.name);
+                    setEditingName(false);
+                  }
+                }}
+              />
+            ) : (
+              <button
+                type="button"
+                className="min-w-0 truncate rounded px-1 text-left text-sm font-medium hover:bg-accent"
+                onClick={() => {
                   setName(node.name);
-                  setEditingName(false);
-                }
-              }}
+                  setEditingName(true);
+                }}
+              >
+                {node.name}
+              </button>
+            )}
+            <div className="flex-1" />
+            {node.threadId === "" || maximized ? null : (
+              <>
+                <IconButton label="Terminal" onClick={() => tools.open("terminal")}>
+                  <SquareTerminalIcon size={15} />
+                </IconButton>
+                <IconButton label="Browser" onClick={() => tools.open("browser")}>
+                  <GlobeIcon size={15} />
+                </IconButton>
+              </>
+            )}
+            {node.threadId === "" ? null : (
+              <IconButton
+                label={maximized ? "Minimize" : "Full screen"}
+                onClick={() => toggleMaximized(!maximized)}
+              >
+                {maximized ? <Minimize2Icon size={15} /> : <Maximize2Icon size={15} />}
+              </IconButton>
+            )}
+            <IconButton label={`${node.name} settings`} onClick={() => setConfiguring(true)}>
+              <SettingsIcon size={15} />
+            </IconButton>
+            <IconButton label="Close" onClick={onClose}>
+              <XIcon size={15} />
+            </IconButton>
+          </>
+        }
+      >
+        {configuring ? (
+          <AgentSettingsDialog
+            node={node}
+            onClose={() => setConfiguring(false)}
+            onRemoved={onClose}
+          />
+        ) : null}
+        <div className="relative isolate flex min-h-0 min-w-0 flex-1 rounded-b-xl [transform:translateZ(0)] flex-col overflow-hidden">
+          {node.threadId === "" ? (
+            <div className="grid content-start gap-3 p-4 text-sm">
+              <p className="text-muted-foreground">{node.name} has no chat yet.</p>
+              <div>
+                <Button size="sm" variant="outline" onClick={() => void openNodeChat(node.id)}>
+                  Start chat
+                </Button>
+              </div>
+            </div>
+          ) : connectedIds.includes(node.environmentId) ? (
+            <ChatView
+              environmentId={node.environmentId}
+              threadId={node.threadId}
+              routeKind="server"
             />
           ) : (
-            <button
-              type="button"
-              className="min-w-0 truncate rounded px-1 text-left text-sm font-medium hover:bg-accent"
-              onClick={() => {
-                setName(node.name);
-                setEditingName(true);
-              }}
-            >
-              {node.name}
-            </button>
-          )}
-          <div className="flex-1" />
-          {node.threadId === "" || maximized ? null : (
-            <>
-              <IconButton
-                label="Terminal"
-                onClick={() => clickChatControl("Toggle terminal drawer")}
-              >
-                <PanelBottomIcon size={15} />
-              </IconButton>
-              <IconButton label="Browser" onClick={() => clickChatControl("Toggle right panel")}>
-                <PanelRightIcon size={15} />
-              </IconButton>
-            </>
-          )}
-          {node.threadId === "" ? null : (
-            <IconButton
-              label={maximized ? "Minimize" : "Full screen"}
-              onClick={() => toggleMaximized(!maximized)}
-            >
-              {maximized ? <Minimize2Icon size={15} /> : <Maximize2Icon size={15} />}
-            </IconButton>
-          )}
-          <IconButton label={`${node.name} settings`} onClick={() => setConfiguring(true)}>
-            <SettingsIcon size={15} />
-          </IconButton>
-          <IconButton label="Close" onClick={onClose}>
-            <XIcon size={15} />
-          </IconButton>
-        </>
-      }
-    >
-      {configuring ? (
-        <AgentSettingsDialog
-          node={node}
-          onClose={() => setConfiguring(false)}
-          onRemoved={onClose}
-        />
-      ) : null}
-      <div className="relative isolate flex min-h-0 min-w-0 flex-1 rounded-b-xl [transform:translateZ(0)] flex-col overflow-hidden">
-        {node.threadId === "" ? (
-          <div className="grid content-start gap-3 p-4 text-sm">
-            <p className="text-muted-foreground">{node.name} has no chat yet.</p>
-            <div>
-              <Button size="sm" variant="outline" onClick={() => void openNodeChat(node.id)}>
-                Start chat
-              </Button>
+            <div className="grid content-start gap-3 p-4 text-sm">
+              <p>Connect {machine} in Connections to view and use this thread.</p>
+              <div>
+                <Button size="sm" variant="outline" render={<Link to="/settings/connections" />}>
+                  Connections
+                </Button>
+              </div>
             </div>
-          </div>
-        ) : connectedIds.includes(node.environmentId) ? (
-          <ChatView
-            environmentId={node.environmentId}
-            threadId={node.threadId}
-            routeKind="server"
-          />
-        ) : (
-          <div className="grid content-start gap-3 p-4 text-sm">
-            <p>Connect {machine} in Connections to view and use this thread.</p>
-            <div>
-              <Button size="sm" variant="outline" render={<Link to="/settings/connections" />}>
-                Connections
-              </Button>
-            </div>
-          </div>
-        )}
-      </div>
-    </FloatingPanel>
+          )}
+        </div>
+      </FloatingPanel>
+    </>
   );
 }
