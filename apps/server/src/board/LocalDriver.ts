@@ -98,7 +98,8 @@ const make = Effect.gen(function* () {
             return {
               thread: input.thread,
               runId: run.id,
-              messageId: run.userMessageId,
+              // waitForThread follows restart continuations; the settle belongs to the message that started the cut run.
+              messageId: stored.event.payload.userMessageId,
               status: run.status as
                 | "completed"
                 | "failed"
