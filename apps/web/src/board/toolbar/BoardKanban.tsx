@@ -91,11 +91,6 @@ export function BoardKanban(props: {
                       onClick={() => toggle(card.id)}
                     >
                       <span className="min-w-0 flex-1 truncate font-medium">{card.title}</span>
-                      {assignee ? (
-                        <small className="shrink-0 truncate text-muted-foreground">
-                          {assignee}
-                        </small>
-                      ) : null}
                     </button>
                     {open ? (
                       <div className="grid gap-1 border-t px-2 py-1.5">
@@ -103,6 +98,9 @@ export function BoardKanban(props: {
                           <p className="break-words whitespace-pre-wrap text-muted-foreground">
                             {card.body}
                           </p>
+                        ) : null}
+                        {assignee ? (
+                          <small className="text-muted-foreground">{assignee}</small>
                         ) : null}
                         {card.reason ? (
                           <p className="break-words text-muted-foreground italic">{card.reason}</p>
