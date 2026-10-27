@@ -3,33 +3,48 @@ import { useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
-import { useStopWorkflow } from "./BoardEngine";
-import { useNodeCards } from "./toolbar/useNodeStatuses";
-import { activeRunOf, appendLog, requestRun, useCurrentWorkflow } from "./boardStore";
+import { activeRunOf, useCurrentWorkflow } from "./boardStore";
+import { runBoardMutation } from "./boardApi";
+import { randomUUID } from "../lib/utils";
+import { toastManager } from "../components/ui/toast";
 
 const FIELD_CLASS = "w-full rounded-md border bg-background px-2 py-1.5 text-sm";
 
 /** Foreman's run action: Run (entry agent + task), the Running chip while a run is live, and an always-visible Stop. */
 export function RunControl() {
   const workflow = useCurrentWorkflow();
-  const stopWorkflow = useStopWorkflow();
   const { nodes } = workflow;
   const [open, setOpen] = useState(false);
   const [nodeId, setNodeId] = useState("");
   const [task, setTask] = useState("");
   const [stopping, setStopping] = useState(false);
+  const [starting, setStarting] = useState(false);
   const entry = nodes.find((node) => node.id === nodeId) ?? nodes[0];
-  const canStart = entry !== undefined && task.trim().length > 0;
   const running = activeRunOf(workflow) !== undefined || workflow.runQueue.length > 0;
-
-  const anyWorking = useNodeCards(workflow).some((card) => card.status === "working");
+  const canStart = entry !== undefined && task.trim().length > 0 && !starting && !running;
 
   const start = () => {
     if (!entry || !canStart) return;
-    requestRun(entry.id, task.trim());
-    appendLog("info", `Run requested at ${entry.name}.`, workflow.id);
-    setTask("");
-    setOpen(false);
+    setStarting(true);
+    void runBoardMutation((client) =>
+      client.startRun({
+        headers: {},
+        params: { workflowId: workflow.id },
+        payload: { id: randomUUID(), nodeId: entry.id, task: task.trim() },
+      }),
+    )
+      .then(() => {
+        setTask("");
+        setOpen(false);
+      })
+      .catch((error: unknown) =>
+        toastManager.add({
+          type: "error",
+          title: "Could not start run",
+          description: error instanceof Error ? error.message : String(error),
+        }),
+      )
+      .finally(() => setStarting(false));
   };
 
   return (
@@ -76,7 +91,7 @@ export function RunControl() {
                   Cancel
                 </Button>
                 <Button size="sm" disabled={!canStart} onClick={start}>
-                  Start run
+                  {starting ? "Starting…" : "Start run"}
                 </Button>
               </div>
             </div>
@@ -92,10 +107,22 @@ export function RunControl() {
       <Button
         size="sm"
         variant="destructive-outline"
-        disabled={stopping || !(running || anyWorking)}
+        disabled={stopping || !activeRunOf(workflow)}
         onClick={() => {
           setStopping(true);
-          void stopWorkflow(workflow.id).finally(() => setStopping(false));
+          const run = activeRunOf(workflow);
+          if (run)
+            void runBoardMutation((client) =>
+              client.stopRun({ headers: {}, params: { workflowId: workflow.id, runId: run.id } }),
+            )
+              .catch((error: unknown) =>
+                toastManager.add({
+                  type: "error",
+                  title: "Could not stop run",
+                  description: error instanceof Error ? error.message : String(error),
+                }),
+              )
+              .finally(() => setStopping(false));
         }}
       >
         <SquareIcon />

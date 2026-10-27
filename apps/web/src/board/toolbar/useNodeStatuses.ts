@@ -1,6 +1,6 @@
 import { useThreadShells } from "../../state/entities";
 import { useConnectedEnvironmentIds, useEnvironmentIdentities } from "../../state/environments";
-import type { BoardNode, Workflow } from "../boardStore";
+import { useBoardPeers, type BoardNode, type Workflow } from "../boardStore";
 
 export type NodeStatus = "idle" | "working" | "waiting" | "disconnected";
 
@@ -18,6 +18,7 @@ const ACTIVE_STATUSES = new Set(["preparing", "queued", "starting", "running", "
 export function useNodeCards(workflow: Pick<Workflow, "nodes" | "pending">): NodeCardInfo[] {
   const connectedIds = useConnectedEnvironmentIds();
   const environments = useEnvironmentIdentities();
+  const peers = useBoardPeers();
   const threads = useThreadShells();
   return workflow.nodes.map((node) => {
     const shell = threads.find(
@@ -35,7 +36,9 @@ export function useNodeCards(workflow: Pick<Workflow, "nodes" | "pending">): Nod
       status,
       machine:
         environments.find((environment) => environment.environmentId === node.environmentId)
-          ?.label ?? "Unknown",
+          ?.label ??
+        peers.find((peer) => peer.environmentId === node.environmentId)?.name ??
+        "Unknown",
       model: shell?.modelSelection.model ?? null,
       instanceId: shell ? String(shell.modelSelection.instanceId) : null,
     };

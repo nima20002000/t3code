@@ -1,6 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useNavigate } from "@tanstack/react-router";
+import { ProjectId, ThreadId, type EnvironmentId } from "@t3tools/contracts";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   applyNodeChanges,
   Background,
@@ -25,18 +25,22 @@ import { useConnectedEnvironmentIds, useEnvironmentIdentities } from "../state/e
 import { buildThreadRouteParams } from "../threadRoutes";
 import { NodeSettingsPanel } from "./NodeSettingsPanel";
 import { AddAgentDialog } from "./AddAgentDialog";
-import { useSendToBoardNode } from "./BoardEngine";
 import {
   addEdge,
-  addNode,
-  appendLog,
+  createNode,
+  nextNodePosition,
+  useBoardConnection,
+  useBoardState,
   getCurrentWorkflow,
+  getWorkflow,
   isThreadOnBoard,
   recordHistoryStep,
   removeEdge,
   removeNode,
+  retryBoardImport,
   updateNode,
   useCurrentWorkflow,
+  useBoardPeers,
   type BoardNode,
 } from "./boardStore";
 import { AgentHandles } from "./foreman/AgentHandles";
@@ -44,27 +48,26 @@ import { AgentNodeView, type AgentNodeAction } from "./foreman/AgentNodeView";
 import { SignalEdgeShape } from "./foreman/SignalEdgeShape";
 import { AGENT_NODE_SIZE, useFloatingCurve } from "./foreman/signalEdge";
 import "./foreman/foreman.css";
-import {
-  buildBoardInstructions,
-  connectedNodeNames,
-  incomingNodeNames,
-} from "@t3tools/board-core/resultProtocol";
 import { BoardToolbar } from "./BoardToolbar";
+import { randomUUID } from "../lib/utils";
+import { useBoardMachines } from "./useBoardMachines";
 import { BoardKanban } from "./toolbar/BoardKanban";
 import { RunDetails } from "./toolbar/RunDetails";
+import { useBoardPending } from "./boardApi";
 
 const ACTIVE_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 
 function AddNodeForm({ onDone }: { onDone: () => void }) {
-  const environments = useEnvironmentIdentities();
-  const connectedIds = useConnectedEnvironmentIds();
+  const connected = useBoardMachines();
   const threads = useThreadShells();
+  const workflow = useCurrentWorkflow();
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [environmentId, setEnvironmentId] = useState<EnvironmentId | "">("");
   const [threadId, setThreadId] = useState<ThreadId | "">("");
   const [name, setName] = useState("");
-  const connected = environments.filter((environment) =>
-    connectedIds.includes(environment.environmentId),
-  );
+  const [manualProject, setManualProject] = useState("");
+  const [manualThread, setManualThread] = useState("");
   const environmentThreads = threads.filter(
     (thread) =>
       thread.environmentId === environmentId &&
@@ -75,10 +78,30 @@ function AddNodeForm({ onDone }: { onDone: () => void }) {
   const environmentLabel =
     connected.find((env) => env.environmentId === environmentId)?.label ?? "";
 
-  const submit = () => {
-    if (environmentId === "" || threadId === "") return;
-    addNode({ name: name.trim() || environmentLabel || "Agent", environmentId, threadId });
-    onDone();
+  const submit = async () => {
+    const thread = environmentThreads.find((candidate) => candidate.id === threadId);
+    const projectId =
+      thread?.projectId ?? (manualProject.trim() ? ProjectId.make(manualProject.trim()) : null);
+    const chosenThreadId =
+      thread?.id ?? (manualThread.trim() ? ThreadId.make(manualThread.trim()) : null);
+    if (environmentId === "" || !projectId || !chosenThreadId || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await createNode(workflow.id, {
+        kind: "bind",
+        id: randomUUID(),
+        name: name.trim() || environmentLabel || "Agent",
+        environmentId,
+        projectId,
+        threadId: chosenThreadId,
+        ...nextNodePosition(workflow),
+      });
+      onDone();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      setBusy(false);
+    }
   };
 
   return (
@@ -90,6 +113,8 @@ function AddNodeForm({ onDone }: { onDone: () => void }) {
           onChange={(event) => {
             setEnvironmentId(event.target.value as EnvironmentId | "");
             setThreadId("");
+            setManualProject("");
+            setManualThread("");
           }}
         >
           <option value="">Select...</option>
@@ -102,18 +127,37 @@ function AddNodeForm({ onDone }: { onDone: () => void }) {
       </label>
       <label>
         Thread
-        <select
-          value={threadId}
-          onChange={(event) => setThreadId(event.target.value as ThreadId | "")}
-        >
-          <option value="">Select...</option>
-          {environmentThreads.map((thread) => (
-            <option key={thread.id} value={thread.id}>
-              {thread.title}
-            </option>
-          ))}
-        </select>
+        {environmentThreads.length ? (
+          <select
+            value={threadId}
+            onChange={(event) => setThreadId(event.target.value as ThreadId | "")}
+          >
+            <option value="">Select...</option>
+            {environmentThreads.map((thread) => (
+              <option key={thread.id} value={thread.id}>
+                {thread.title}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            className="h-8 rounded-md border bg-background px-2 text-sm"
+            placeholder="Thread ID on this machine"
+            value={manualThread}
+            onChange={(event) => setManualThread(event.target.value)}
+          />
+        )}
       </label>
+      {environmentThreads.length === 0 ? (
+        <label>
+          Project ID
+          <input
+            className="h-8 rounded-md border bg-background px-2 text-sm"
+            value={manualProject}
+            onChange={(event) => setManualProject(event.target.value)}
+          />
+        </label>
+      ) : null}
       <label>
         Name
         <input
@@ -123,11 +167,24 @@ function AddNodeForm({ onDone }: { onDone: () => void }) {
           onChange={(event) => setName(event.target.value)}
         />
       </label>
+      {error ? (
+        <p role="alert" className="text-destructive">
+          {error}
+        </p>
+      ) : null}
       <div className="flex justify-end gap-2">
         <Button size="sm" variant="ghost" onClick={onDone}>
           Cancel
         </Button>
-        <Button size="sm" disabled={threadId === ""} onClick={submit}>
+        <Button
+          size="sm"
+          disabled={
+            busy ||
+            environmentId === "" ||
+            (threadId === "" && (!manualProject.trim() || !manualThread.trim()))
+          }
+          onClick={() => void submit()}
+        >
           Add node
         </Button>
       </div>
@@ -149,6 +206,7 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
   const navigate = useNavigate();
   const connectedIds = useConnectedEnvironmentIds();
   const environments = useEnvironmentIdentities();
+  const peers = useBoardPeers();
   const threads = useThreadShells();
   const openSettings = useContext(OpenSettingsContext);
 
@@ -157,6 +215,7 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
   );
   const machine =
     environments.find((environment) => environment.environmentId === node.environmentId)?.label ??
+    peers.find((peer) => peer.environmentId === node.environmentId)?.name ??
     "Unknown";
   const status = !connectedIds.includes(node.environmentId)
     ? "disconnected"
@@ -191,7 +250,9 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
       harnessLabel={shell ? instanceId : "Thread not found"}
       model={shell?.modelSelection.model ?? null}
       machine={machine}
-      statusLabel={status === "working" ? "Working" : status === "idle" ? "Idle" : "Disconnected"}
+      statusLabel={
+        status === "working" ? "Working" : status === "idle" ? "Idle" : "Chat not connected"
+      }
       state={status === "working" ? "running" : status === "disconnected" ? "unavailable" : "idle"}
       selected={selected}
       actions={actions}
@@ -211,7 +272,11 @@ const EDGE_TYPES = { signal: SignalEdge };
 
 function toFlowNode(node: BoardNode, previous?: AgentFlowNode): AgentFlowNode {
   return previous
-    ? { ...previous, position: { x: node.x, y: node.y }, data: { node } }
+    ? {
+        ...previous,
+        position: previous.dragging ? previous.position : { x: node.x, y: node.y },
+        data: { node },
+      }
     : {
         id: node.id,
         type: "agent",
@@ -224,17 +289,36 @@ function toFlowNode(node: BoardNode, previous?: AgentFlowNode): AgentFlowNode {
 
 /** Keyed by workflow id so switching workflows resets the canvas, its selection and the fit. */
 export function BoardPage() {
-  const { id } = useCurrentWorkflow();
-  return <BoardCanvasPage key={id} />;
+  useBoardConnection();
+  const { snapshot, currentId, status, error } = useBoardState();
+  const workflow =
+    snapshot?.workflows.find((item) => item.id === currentId) ?? snapshot?.workflows[0];
+  if (!workflow)
+    return (
+      <SidebarInset className="h-dvh">
+        <div className="grid content-start gap-3 p-6">
+          <p role="status">
+            {status === "offline" ? `Board unavailable: ${error}` : "Connecting to board…"}
+          </p>
+          <div>
+            <Button size="sm" variant="outline" render={<Link to="/" />}>
+              Back
+            </Button>
+          </div>
+        </div>
+      </SidebarInset>
+    );
+  return <BoardCanvasPage key={workflow.id} />;
 }
 
 function BoardCanvasPage() {
   const workflow = useCurrentWorkflow();
+  const { importError } = useBoardState();
+  const pending = useBoardPending();
   const { nodes, edges } = workflow;
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [kanban, setKanban] = useState(false);
   const selectedRun = workflow.runs.find((run) => run.id === selectedRunId) ?? null;
-  const send = useSendToBoardNode();
   const [flowNodes, setFlowNodes] = useState<AgentFlowNode[]>(() =>
     nodes.map((n) => toFlowNode(n)),
   );
@@ -274,8 +358,15 @@ function BoardCanvasPage() {
   const onNodesChange = (changes: NodeChange<AgentFlowNode>[]) => {
     setFlowNodes((previous) => applyNodeChanges(changes, previous));
     for (const change of changes) {
-      if (change.type === "position" && change.position) {
-        updateNode(change.id, { x: change.position.x, y: change.position.y });
+      if (change.type === "position" && change.position && change.dragging === false) {
+        void updateNode(change.id, { x: change.position.x, y: change.position.y }).then((saved) => {
+          if (saved) return;
+          const persisted = getWorkflow(workflow.id)?.nodes.find((node) => node.id === change.id);
+          if (persisted)
+            setFlowNodes((previous) =>
+              previous.map((node) => (node.id === change.id ? toFlowNode(persisted, node) : node)),
+            );
+        });
       } else if (change.type === "remove") {
         removeNode(change.id);
       }
@@ -301,27 +392,7 @@ function BoardCanvasPage() {
   };
 
   const onConnect = (connection: Connection) => {
-    if (!addEdge(connection.source, connection.target)) return;
-    const board = getCurrentWorkflow();
-    for (const id of [connection.source, connection.target]) {
-      const node = board.nodes.find((candidate) => candidate.id === id);
-      if (!node) continue;
-      void send(
-        node,
-        buildBoardInstructions(
-          node.name,
-          connectedNodeNames(board.nodes, board.edges, id),
-          incomingNodeNames(board.nodes, board.edges, id),
-        ),
-      ).then((sent) => {
-        appendLog(
-          "info",
-          sent
-            ? `Sent updated board instructions to ${node.name}.`
-            : `Updated instructions to ${node.name} failed.`,
-        );
-      });
-    }
+    addEdge(connection.source, connection.target);
   };
 
   const deleteSelectedEdges = () => {
@@ -375,6 +446,19 @@ function BoardCanvasPage() {
           selectedEdgeCount={selectedEdgeIds.size}
           onDeleteSelectedEdges={deleteSelectedEdges}
         />
+        {importError ? (
+          <div className="absolute top-16 left-4 z-20 grid max-w-md gap-2 rounded-lg border bg-background p-3 text-sm shadow-lg">
+            <p role="alert">Local workflows have not been imported. {importError}</p>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={() => void retryBoardImport()} disabled={pending}>
+                Retry import
+              </Button>
+              <Button size="sm" variant="outline" render={<Link to="/settings/connections" />}>
+                Connections
+              </Button>
+            </div>
+          </div>
+        ) : null}
         {selectedRun ? (
           <RunDetails run={selectedRun} onClose={() => setSelectedRunId(null)} />
         ) : null}

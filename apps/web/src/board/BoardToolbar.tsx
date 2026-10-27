@@ -19,13 +19,16 @@ import {
   undo,
   useBoardHistory,
   useCurrentWorkflow,
+  useBoardState,
 } from "./boardStore";
+import { useBoardPending } from "./boardApi";
 import { RunControl } from "./RunControl";
 import { ActivitiesButton } from "./toolbar/ActivitiesButton";
 import { ApprovalsButton } from "./toolbar/ApprovalsButton";
 import { BrowsersButton } from "./toolbar/BrowsersButton";
 import { FilesButton } from "./toolbar/FilesButton";
 import { IconButton } from "./toolbar/IconButton";
+import { MachinesButton } from "./toolbar/MachinesButton";
 import { RunsSelector } from "./toolbar/RunsSelector";
 import { ScheduleButton } from "./toolbar/ScheduleButton";
 import { WorkflowMenu } from "./toolbar/WorkflowMenu";
@@ -66,6 +69,8 @@ export function BoardToolbar(props: {
   readonly onDeleteSelectedEdges: () => void;
 }) {
   const workflow = useCurrentWorkflow();
+  const { status, error } = useBoardState();
+  const pending = useBoardPending();
   const { canUndo, canRedo, dirty } = useBoardHistory();
   const name = useRef<WorkflowNameHandle>(null);
 
@@ -83,18 +88,30 @@ export function BoardToolbar(props: {
       </div>
       <div className="board-control-cluster">
         <div className="board-bar" role="toolbar" aria-label="Draft actions">
-          <IconButton label="Undo" disabled={!canUndo} onClick={undo}>
+          <IconButton
+            label="Undo"
+            disabled={!canUndo || pending || status !== "connected"}
+            onClick={undo}
+          >
             <Undo2Icon />
           </IconButton>
-          <IconButton label="Redo" disabled={!canRedo} onClick={redo}>
+          <IconButton
+            label="Redo"
+            disabled={!canRedo || pending || status !== "connected"}
+            onClick={redo}
+          >
             <Redo2Icon />
           </IconButton>
-          <IconButton label="Discard changes" disabled={!dirty} onClick={discardChanges}>
+          <IconButton
+            label="Discard changes"
+            disabled={!dirty || pending || status !== "connected"}
+            onClick={discardChanges}
+          >
             <RotateCcwIcon />
           </IconButton>
-          <span className="board-saved" title="The board saves automatically">
+          <span className="board-saved" title={error ?? "The board saves automatically"}>
             <CheckIcon aria-hidden="true" />
-            Saved
+            {status !== "connected" ? "Offline" : pending ? "Saving…" : "Saved"}
           </span>
         </div>
         <div className="board-bar" role="toolbar" aria-label="Board controls">
@@ -114,6 +131,7 @@ export function BoardToolbar(props: {
             <LinkIcon />
           </IconButton>
           <WorkflowSettings />
+          <MachinesButton />
           {/* t3-backed buttons: approvals, files, browsers, schedule */}
           <ApprovalsButton nodes={workflow.nodes} />
           <FilesButton nodes={workflow.nodes} />

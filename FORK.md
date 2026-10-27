@@ -13,11 +13,10 @@ a merge (the server route is reserved for the later server phase):
 - `apps/server/src/server.ts`: mount the board HTTP layer at the route merge.
 - `apps/server/package.json`: the `@t3tools/board-core` workspace dependency.
 - `apps/web/package.json`: `@t3tools/board-core` and `@xyflow/react` dependencies.
-- `apps/web/src/routes/_chat.tsx`: mount the board engine.
 - `apps/web/src/routes/_chat.board.tsx`: the board route.
-- `apps/web/src/components/AppSidebarLayout.tsx`: hide the sidebar on the board.
+- `apps/web/src/components/AppSidebarLayout.tsx`: call the board-owned sidebar visibility helper.
 - `apps/web/src/components/Sidebar.tsx` and `apps/web/src/components/sidebar/SidebarChrome.tsx`:
-  board navigation.
+  mount board-owned navigation components.
 - `apps/web/src/components/sidebar/mainAppLocation.ts`: board location.
 - `apps/web/src/routeTree.gen.ts`: generated board route registration.
 - `pnpm-lock.yaml`: workspace and board dependency lock entries.
@@ -39,6 +38,7 @@ Never run upstream test suites. Board CI typechecks board-core, web, and the
 server workspace (named `t3`); it runs only changed tests under
 `packages/board-core`, `apps/server/src/board`, and `apps/web/src/board`, plus
 board-owned seam tests named `*.seam.test.ts` or `*.seam.test.tsx` on every push.
+The web layout seam uses `*.seam.browser.test.tsx` and runs with the browser project as a changed board test.
 A manual CI run may name only board-owned test paths. Seam tests must exercise
 real upstream interfaces while replacing only the necessary external transport.
 The seams cover real orchestration services and settled replies; board migrations
