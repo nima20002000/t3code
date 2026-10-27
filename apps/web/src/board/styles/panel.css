@@ -30,3 +30,8 @@
 .board-chat-panel:not([data-full]) [data-chat-column] {
   overflow-y: hidden;
 }
+
+/* The timeline scrolls under the composer; its scrollbar stops above it instead of running beside. */
+.board-chat-panel:not([data-full]) .messages-timeline-scroll::-webkit-scrollbar-track {
+  margin-bottom: 8rem;
+}
