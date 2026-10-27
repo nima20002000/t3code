@@ -13,6 +13,7 @@ import {
   useBoardState,
   useBoardWorkspaces,
 } from "./boardStore";
+import { markSettingsFromBoard } from "./BoardNavigation";
 import { ConfirmDialog, NameDialog, WorkspaceSettingsDialog } from "./WorkspaceDialogs";
 import { IconButton } from "./toolbar/IconButton";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "./upstream";
@@ -291,7 +292,10 @@ export function BoardSidebarPanel() {
         <Row
           icon={<SettingsIcon className="size-4" />}
           label="Settings"
-          onClick={() => void navigate({ to: "/settings" })}
+          onClick={() => {
+            markSettingsFromBoard();
+            void navigate({ to: "/settings" });
+          }}
         />
       </div>
       <div

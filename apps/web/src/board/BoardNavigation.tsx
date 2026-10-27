@@ -13,8 +13,17 @@ import {
   useSidebar,
 } from "./upstream";
 
+// Settings opened from the board keep the board's sidebar behind them instead of t3's thread list.
+let settingsFromBoard = false;
+export function markSettingsFromBoard() {
+  settingsFromBoard = true;
+}
+
 export function boardHidesSidebar(pathname: string) {
-  return pathname === "/board";
+  if (pathname === "/board") return true;
+  if (pathname.startsWith("/settings")) return settingsFromBoard;
+  settingsFromBoard = false;
+  return false;
 }
 
 export function BoardSidebar(props: ComponentProps<typeof Sidebar>) {
