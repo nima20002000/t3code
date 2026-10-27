@@ -105,15 +105,25 @@ export function FloatingPanel(props: {
     const from = lastRect.current;
     if ((props.maximized ?? false) !== wasMaximized.current && from) {
       wasMaximized.current = props.maximized ?? false;
+      const radius = props.maximized ? ["12px", "0px"] : ["0px", "12px"];
       element.animate(
         [
           {
-            transformOrigin: "0 0",
-            transform: `translate(${from.left - next.left}px, ${from.top - next.top}px) scale(${from.width / next.width}, ${from.height / next.height})`,
+            transform: `translate(${from.left - next.left}px, ${from.top - next.top}px)`,
+            width: `${from.width}px`,
+            height: `${from.height}px`,
+            borderRadius: radius[0],
+            overflow: "hidden",
           },
-          { transformOrigin: "0 0", transform: "none" },
+          {
+            transform: "none",
+            width: `${next.width}px`,
+            height: `${next.height}px`,
+            borderRadius: radius[1],
+            overflow: "hidden",
+          },
         ],
-        { duration: 200, easing: "ease-out" },
+        { duration: 200, easing: "cubic-bezier(0.2, 0, 0, 1)" },
       );
     }
     lastRect.current = next;
