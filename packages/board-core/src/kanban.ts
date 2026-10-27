@@ -23,7 +23,34 @@ export interface KanbanCard {
   /** The node id that last changed the card, or "engine". */
   readonly updatedBy: string;
   readonly updatedAt: string;
+  /** The run the card was created in; cards from before runs were recorded have none. */
+  readonly runId?: string;
+  /** Status changes, oldest first: who moved the card where and when (the newest MAX_CARD_MOVES). */
+  readonly moves?: ReadonlyArray<KanbanMove>;
 }
+
+export interface KanbanMove {
+  readonly status: KanbanStatus;
+  readonly by: string;
+  readonly at: string;
+}
+export const MAX_CARD_MOVES = 20;
+const withMove = (
+  card: Omit<KanbanCard, "moves"> & { readonly moves?: ReadonlyArray<KanbanMove> | undefined },
+  previous: KanbanCard | undefined,
+): KanbanCard => {
+  const moves = previous?.moves ?? [];
+  const { moves: _ignored, ...rest } = card;
+  return {
+    ...rest,
+    moves:
+      previous?.status === card.status
+        ? moves
+        : [...moves, { status: card.status, by: card.updatedBy, at: card.updatedAt }].slice(
+            -MAX_CARD_MOVES,
+          ),
+  };
+};
 
 export type KanbanOp =
   | {
@@ -141,6 +168,8 @@ export function applyKanban(input: {
   readonly actor: string;
   readonly at: string;
   readonly newId: () => string;
+  /** The run new cards belong to. */
+  readonly runId?: string | undefined;
 }): Parsed<KanbanChange> {
   const cards = new Map(input.cards.map((card) => [card.id, card]));
   const upserted = new Set<string>();
@@ -160,6 +189,7 @@ export function applyKanban(input: {
       readonly assigneeNodeId?: string | undefined;
     },
     where: string,
+    previous?: KanbanCard,
   ): Parsed<KanbanCard> => {
     if (draft.title.length > MAX_CARD_TITLE)
       return { ok: false, reason: `${where}: title is longer than ${MAX_CARD_TITLE} characters` };
@@ -169,18 +199,23 @@ export function applyKanban(input: {
       return { ok: false, reason: `${where}: a ${draft.status} card needs a "reason"` };
     if (draft.reason !== undefined && draft.reason.length > MAX_CARD_REASON)
       return { ok: false, reason: `${where}: reason is longer than ${MAX_CARD_REASON} characters` };
+    const runId = previous ? previous.runId : input.runId;
     return {
       ok: true,
-      value: {
-        id: draft.id,
-        title: draft.title,
-        body: draft.body,
-        status: draft.status,
-        ...(needsReason(draft.status) && draft.reason ? { reason: draft.reason } : {}),
-        ...(draft.assigneeNodeId === undefined ? {} : { assigneeNodeId: draft.assigneeNodeId }),
-        updatedBy: input.actor,
-        updatedAt: input.at,
-      },
+      value: withMove(
+        {
+          id: draft.id,
+          title: draft.title,
+          body: draft.body,
+          status: draft.status,
+          ...(needsReason(draft.status) && draft.reason ? { reason: draft.reason } : {}),
+          ...(draft.assigneeNodeId === undefined ? {} : { assigneeNodeId: draft.assigneeNodeId }),
+          updatedBy: input.actor,
+          updatedAt: input.at,
+          ...(runId === undefined ? {} : { runId }),
+        },
+        previous,
+      ),
     };
   };
   for (const [index, op] of input.ops.entries()) {
@@ -228,6 +263,7 @@ export function applyKanban(input: {
           op.assignee === null ? undefined : (assignee?.value ?? current.assigneeNodeId),
       },
       where,
+      current,
     );
     if (!card.ok) return card;
     cards.set(current.id, card.value);
@@ -260,13 +296,16 @@ export function moveCard(
   reason?: string,
 ): KanbanCard {
   const { reason: _previous, ...rest } = card;
-  return {
-    ...rest,
-    status,
-    ...(status === "blocked" ? { reason: reason ?? "The agent could not finish." } : {}),
-    updatedBy: "engine",
-    updatedAt: at,
-  };
+  return withMove(
+    {
+      ...rest,
+      status,
+      ...(status === "blocked" ? { reason: reason ?? "The agent could not finish." } : {}),
+      updatedBy: "engine",
+      updatedAt: at,
+    },
+    card,
+  );
 }
 
 /**

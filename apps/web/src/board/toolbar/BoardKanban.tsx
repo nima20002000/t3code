@@ -1,8 +1,10 @@
 import { KANBAN_STATUSES, type KanbanStatus } from "@t3tools/board-core/kanban";
 import { LayoutGridIcon, XIcon } from "lucide-react";
+import { useState } from "react";
 
 import { useKanbanCards, type Workflow } from "../boardStore";
 import { FloatingPanel } from "../FloatingPanel";
+import { Button } from "../upstream";
 import { IconButton } from "./IconButton";
 
 const LABELS: Record<KanbanStatus, string> = {
@@ -13,11 +15,22 @@ const LABELS: Record<KanbanStatus, string> = {
   done: "Done",
 };
 
-/** The workflow's kanban as a window over the board: cards the orchestrator keeps, by status. */
-export function BoardKanban(props: { readonly workflow: Workflow; readonly onClose: () => void }) {
-  const cards = useKanbanCards(props.workflow.id);
+/**
+ * The workflow's kanban as a window over the board: cards the orchestrator keeps, by status. It shows
+ * `runId`'s cards and every open card; done cards of earlier runs stay folded until asked for.
+ */
+export function BoardKanban(props: {
+  readonly workflow: Workflow;
+  readonly runId: string | null;
+  readonly onClose: () => void;
+}) {
+  const allCards = useKanbanCards(props.workflow.id);
+  const [showEarlier, setShowEarlier] = useState(false);
+  const earlier = allCards.filter((card) => card.status === "done" && card.runId !== props.runId);
+  const cards = showEarlier ? allCards : allCards.filter((card) => !earlier.includes(card));
   const nameOf = (nodeId: string | undefined) =>
     props.workflow.nodes.find((node) => node.id === nodeId)?.name;
+  const moverName = (by: string) => (by === "engine" ? "board" : (nameOf(by) ?? "agent"));
   return (
     <FloatingPanel
       storageKey="board:kanban-panel"
@@ -27,8 +40,15 @@ export function BoardKanban(props: { readonly workflow: Workflow; readonly onClo
         <>
           <LayoutGridIcon className="size-3.5 text-muted-foreground" />
           <span className="text-sm font-medium">Kanban</span>
-          <small className="text-xs text-muted-foreground">{cards.length} cards</small>
+          <small className="text-xs text-muted-foreground">
+            {props.runId ? "this run" : "all runs"}
+          </small>
           <div className="flex-1" />
+          {earlier.length > 0 ? (
+            <Button size="xs" variant="ghost" onClick={() => setShowEarlier((value) => !value)}>
+              {showEarlier ? "Hide earlier runs" : `Earlier runs (${earlier.length})`}
+            </Button>
+          ) : null}
           <IconButton label="Close kanban" onClick={props.onClose}>
             <XIcon size={15} />
           </IconButton>
@@ -66,6 +86,12 @@ export function BoardKanban(props: { readonly workflow: Workflow; readonly onClo
                       <p className="break-words text-muted-foreground italic">{card.reason}</p>
                     ) : null}
                     {assignee ? <small className="text-muted-foreground">{assignee}</small> : null}
+                    {card.moves && card.moves.length > 0 ? (
+                      <small className="text-2xs text-muted-foreground/80">
+                        {card.moves.map((move) => LABELS[move.status]).join(" → ")} ·{" "}
+                        {moverName(card.moves.at(-1)!.by)}
+                      </small>
+                    ) : null}
                   </article>
                 );
               })}

@@ -196,3 +196,27 @@ describe("kanbanDuty", () => {
     ).toBeUndefined();
   });
 });
+
+describe("card trail", () => {
+  it("records the run and every status move, by whom", () => {
+    const created = applyKanban({
+      cards: [],
+      ops: [{ op: "create", id: "c", title: "Work", assignee: "Worker" }],
+      nodes: [{ id: "w", name: "Worker" }],
+      actor: "root",
+      at: "t1",
+      newId: () => "unused",
+      runId: "run-1",
+    });
+    if (!created.ok) throw new Error(created.reason);
+    const card = created.value.cards[0]!;
+    expect(card.runId).toBe("run-1");
+    const moved = moveCard(moveCard(card, "doing", "t2"), "done", "t3");
+    expect(moved.runId).toBe("run-1");
+    expect(moved.moves).toEqual([
+      { status: "todo", by: "root", at: "t1" },
+      { status: "doing", by: "engine", at: "t2" },
+      { status: "done", by: "engine", at: "t3" },
+    ]);
+  });
+});

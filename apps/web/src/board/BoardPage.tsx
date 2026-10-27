@@ -30,6 +30,7 @@ import {
   removeNode,
   updateNode,
   useCurrentWorkflow,
+  type Workflow,
   useBoardPeers,
   type BoardNode,
 } from "./boardStore";
@@ -360,6 +361,11 @@ export function BoardPage() {
 }
 
 const KANBAN_OPEN_KEY = "board:kanban-open";
+const newestRunId = (workflow: Workflow) =>
+  workflow.runs.reduce<{ id: string; startedAt: string } | null>(
+    (newest, run) => (newest === null || run.startedAt > newest.startedAt ? run : newest),
+    null,
+  )?.id ?? null;
 /** The kanban shows by default; closing it is remembered per viewer. */
 function readKanbanOpen() {
   try {
@@ -523,7 +529,13 @@ function BoardCanvasPage() {
             </OpenActivityContext.Provider>
           </ConfigureContext.Provider>
         </OpenSettingsContext.Provider>
-        {kanban ? <BoardKanban workflow={workflow} onClose={() => toggleKanban(false)} /> : null}
+        {kanban ? (
+          <BoardKanban
+            workflow={workflow}
+            runId={selectedRun?.id ?? newestRunId(workflow)}
+            onClose={() => toggleKanban(false)}
+          />
+        ) : null}
         {selectedRun ? (
           <RunDetails run={selectedRun} onClose={() => setSelectedRunId(null)} />
         ) : null}

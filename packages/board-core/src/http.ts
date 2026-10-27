@@ -57,6 +57,16 @@ export const BoardKanbanCardSchema = Schema.Struct({
   assigneeNodeId: Schema.optionalKey(Id),
   updatedBy: Schema.String,
   updatedAt: Schema.String,
+  runId: Schema.optionalKey(Schema.String),
+  moves: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        status: Schema.Literals(["todo", "doing", "waiting_for_human", "blocked", "done"]),
+        by: Schema.String,
+        at: Schema.String,
+      }),
+    ),
+  ),
 });
 export const BoardEdgeSchema = Schema.Struct({ a: Id, b: Id });
 export const BoardPendingWakeSchema = Schema.Struct({ id: Id, from: Id, to: Id });

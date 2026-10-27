@@ -203,6 +203,7 @@ const make = Effect.gen(function* () {
       nodes: workflow.nodes,
       actor: node.id,
       at: yield* now,
+      runId: workflow.runs[0]?.id,
       newId: () => `pending-${(pending += 1)}`,
     });
     if (!applied.ok) return `kanban: ${applied.reason}`;
@@ -243,6 +244,7 @@ const make = Effect.gen(function* () {
       nodes: workflow.nodes,
       actor: node.id,
       at: yield* now,
+      runId: workflow.runs[0]?.id,
       newId: () => NodeCrypto.randomUUID(),
     });
     if (!applied.ok) {
