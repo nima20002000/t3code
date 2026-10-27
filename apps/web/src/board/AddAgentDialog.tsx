@@ -270,13 +270,7 @@ export function AgentDialog(props: {
               Cancel
             </Button>
             <Button type="submit" disabled={!canSubmit}>
-              {node
-                ? submitting
-                  ? "Saving..."
-                  : "Save"
-                : submitting
-                  ? "Starting..."
-                  : "Start agent"}
+              {node ? (submitting ? "Saving..." : "Save") : submitting ? "Adding..." : "Add agent"}
             </Button>
           </DialogFooter>
         </form>

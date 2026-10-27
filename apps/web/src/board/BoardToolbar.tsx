@@ -7,7 +7,7 @@ import {
   CloudOffIcon,
   KanbanIcon,
   Loader2Icon,
-  PlusIcon,
+  BotIcon,
   Redo2Icon,
   RotateCcwIcon,
   Undo2Icon,
@@ -187,22 +187,16 @@ export function BoardToolbar(props: {
       <div
         className="flex items-center gap-0.5 rounded-lg border border-border bg-card p-1 shadow-lg"
         role="toolbar"
-        aria-label="Board controls"
+        aria-label="Workflow controls"
       >
         <RunsSelector
           runs={workflow.runs}
           selectedRunId={props.selectedRunId}
           onSelect={props.onSelectRun}
         />
-      </div>
-      <div
-        className="flex items-center gap-0.5 rounded-lg border border-border bg-card p-1 shadow-lg"
-        role="toolbar"
-        aria-label="Workflow controls"
-      >
         <WorkflowMenu onRename={() => window.setTimeout(props.onRename, 150)} />
         <IconButton label="Add agent" onClick={props.onAddAgent}>
-          <PlusIcon />
+          <BotIcon />
         </IconButton>
         <WorkflowSettings />
         <MachinesButton />

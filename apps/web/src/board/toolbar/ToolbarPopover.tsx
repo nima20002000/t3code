@@ -18,7 +18,9 @@ export function ToolbarPopover(props: {
   return (
     <Popover>
       <PopoverTrigger
-        render={<Button size="sm" variant="outline" aria-label={props.label} title={props.label} />}
+        render={
+          <Button size="icon-sm" variant="ghost" aria-label={props.label} title={props.label} />
+        }
       >
         {props.icon}
         {props.badge ? (

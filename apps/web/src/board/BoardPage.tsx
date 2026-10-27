@@ -359,6 +359,16 @@ export function BoardPage() {
   return <BoardCanvasPage key={workflow.id} />;
 }
 
+const KANBAN_OPEN_KEY = "board:kanban-open";
+/** The kanban shows by default; closing it is remembered per viewer. */
+function readKanbanOpen() {
+  try {
+    return localStorage.getItem(KANBAN_OPEN_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
 function BoardCanvasPage() {
   const workflow = useCurrentWorkflow();
   const { nodes, edges } = workflow;
@@ -366,7 +376,15 @@ function BoardCanvasPage() {
   const flights = useFlights(views.edges, edges);
   const [editingName, setEditingName] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const [kanban, setKanban] = useState(false);
+  const [kanban, setKanban] = useState(readKanbanOpen);
+  const toggleKanban = (open: boolean) => {
+    setKanban(open);
+    try {
+      localStorage.setItem(KANBAN_OPEN_KEY, String(open));
+    } catch {
+      // Storage can be unavailable; the kanban then just opens by default.
+    }
+  };
   const selectedRun = workflow.runs.find((run) => run.id === selectedRunId) ?? null;
   const [flowNodes, setFlowNodes] = useState<AgentFlowNode[]>(() =>
     nodes.map((n) => toFlowNode(n)),
@@ -473,7 +491,7 @@ function BoardCanvasPage() {
             selectedRunId={selectedRun?.id ?? null}
             onSelectRun={setSelectedRunId}
             kanban={kanban}
-            onToggleKanban={() => setKanban((value) => !value)}
+            onToggleKanban={() => toggleKanban(!kanban)}
             onAddAgent={() => setAddingAgent(true)}
           />
         </div>
@@ -505,7 +523,7 @@ function BoardCanvasPage() {
             </OpenActivityContext.Provider>
           </ConfigureContext.Provider>
         </OpenSettingsContext.Provider>
-        {kanban ? <BoardKanban workflow={workflow} onClose={() => setKanban(false)} /> : null}
+        {kanban ? <BoardKanban workflow={workflow} onClose={() => toggleKanban(false)} /> : null}
         {selectedRun ? (
           <RunDetails run={selectedRun} onClose={() => setSelectedRunId(null)} />
         ) : null}
