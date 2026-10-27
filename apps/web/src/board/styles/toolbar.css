@@ -76,3 +76,11 @@
     --col: var(--destructive);
   }
 }
+
+/* The chat panel floats over the board; t3's thread header inside it must not drag the window. */
+@utility board-chat-panel {
+  & .drag-region,
+  & .drag-region > * {
+    -webkit-app-region: no-drag !important;
+  }
+}

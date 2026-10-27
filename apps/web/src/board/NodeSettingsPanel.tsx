@@ -143,7 +143,7 @@ export function NodeSettingsPanel(props: {
   return (
     <aside
       aria-label={`${node.name} chat`}
-      className="absolute top-16 right-3 bottom-auto z-20 flex h-[70%] w-[420px] max-w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-xl border bg-background shadow-lg"
+      className="board-chat-panel absolute top-16 right-3 bottom-auto z-20 flex h-[70%] w-[420px] max-w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-xl border bg-background shadow-lg"
       style={position ? { left: position.x, top: position.y, right: "auto" } : undefined}
     >
       <div
