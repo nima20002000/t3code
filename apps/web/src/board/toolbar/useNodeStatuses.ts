@@ -1,7 +1,8 @@
 import { runToShow, runViews, type NodeRunView } from "@t3tools/board-core/runView";
 
+import { useNodeConnections } from "../useNodeConnection";
 import { useBoardPeers, type BoardNode, type Workflow } from "../boardStore";
-import { useConnectedEnvironmentIds, useEnvironmentIdentities, useThreadShells } from "../upstream";
+import { useEnvironmentIdentities, useThreadShells } from "../upstream";
 
 const ACTIVE_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 
@@ -15,14 +16,14 @@ export interface NodeCardInfo {
 
 /** The same node states the canvas shows, from the drawn run and each node's live thread. */
 export function useNodeRunViews(workflow: Pick<Workflow, "nodes" | "edges" | "runs">) {
-  const connectedIds = useConnectedEnvironmentIds();
+  const connectionOf = useNodeConnections();
   const threads = useThreadShells();
   return runViews(runToShow(workflow.runs), workflow.nodes, workflow.edges, (node) => {
     const shell = threads.find(
       (thread) => thread.environmentId === node.environmentId && thread.id === node.threadId,
     );
     return {
-      connected: connectedIds.includes(node.environmentId),
+      connection: connectionOf(node.environmentId),
       turnActive: shell !== undefined && ACTIVE_STATUSES.has(shell.source.status),
     };
   });

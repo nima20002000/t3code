@@ -15,7 +15,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ActivityIcon, MessageSquareIcon, SettingsIcon, XIcon } from "lucide-react";
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { EdgeRunView, NodeRunView } from "@t3tools/board-core/runView";
 
 import { NodeSettingsPanel } from "./NodeSettingsPanel";
@@ -52,6 +52,7 @@ import { BoardTitle, BoardToolbar } from "./BoardToolbar";
 import { useBoardMachines } from "./useBoardMachines";
 import { BoardKanban } from "./toolbar/BoardKanban";
 import { useNodeRunViews } from "./toolbar/useNodeStatuses";
+import { useNodeConnections } from "./useNodeConnection";
 import { RunActivityCard, type ActivityTarget } from "./RunActivity";
 import { RunDetails } from "./toolbar/RunDetails";
 import { useBoardPending } from "./boardApi";
@@ -62,7 +63,6 @@ import {
   buildThreadRouteParams,
   isElectron,
   randomUUID,
-  useConnectedEnvironmentIds,
   useEnvironmentIdentities,
   useThreadShells,
 } from "./upstream";
@@ -215,7 +215,10 @@ const OpenActivityContext = createContext<(nodeId: string) => void>(() => {});
 const RunViewsContext = createContext<{
   nodes: ReadonlyMap<string, NodeRunView>;
   edges: ReadonlyMap<string, EdgeRunView>;
-}>({ nodes: new Map(), edges: new Map() });
+  pulses: ReadonlyMap<string, EdgePulse[]>;
+  /** Nodes with a pulse still flying toward them; they keep their previous status until it lands. */
+  arriving: ReadonlySet<string>;
+}>({ nodes: new Map(), edges: new Map(), pulses: new Map(), arriving: new Set() });
 
 function transitionFor(
   before: AgentNodeState,
@@ -244,29 +247,89 @@ function useStateCue(state: AgentNodeState) {
 }
 
 const TRAVEL_GAP_MS = 180;
+const TRAVEL_MS = 1400;
 
-/** Crossings that appear after the edge mounted fly once; older ones are history and do not. */
-function useEdgePulses(view: EdgeRunView | undefined): EdgePulse[] {
+interface Flight {
+  readonly pulse: EdgePulse;
+  readonly edgeId: string;
+  /** The node the pulse lands on: task pulses reach the target, return pulses the requester. */
+  readonly to: string;
+}
+
+/**
+ * Pulse start times live here, once per canvas. Crossings present on first render are history and
+ * do not fly. A node's arrival is its incoming pulse landing, so the card can hold its previous
+ * status until then.
+ */
+function useFlights(
+  edgeViews: ReadonlyMap<string, EdgeRunView>,
+  edges: ReadonlyArray<{ readonly a: string; readonly b: string }>,
+) {
   const [state, setState] = useState(() => ({
-    seen: new Set(view?.crossings.map((crossing) => crossing.key)),
-    pulses: [] as EdgePulse[],
+    seen: new Set([...edgeViews.values()].flatMap((view) => view.crossings.map((c) => c.key))),
+    flights: [] as Flight[],
+    landed: new Set<string>(),
   }));
-  const fresh = view?.crossings.filter((crossing) => !state.seen.has(crossing.key)) ?? [];
-  if (fresh.length > 0) {
-    setState({
-      seen: new Set([...state.seen, ...fresh.map((crossing) => crossing.key)]),
-      pulses: [
-        ...state.pulses,
-        ...fresh.map((crossing, index) => ({
+  const fresh: Flight[] = [];
+  for (const edge of edges) {
+    const edgeId = `${edge.a}:${edge.b}`;
+    const crossings = (edgeViews.get(edgeId)?.crossings ?? []).filter(
+      (c) => !state.seen.has(c.key),
+    );
+    crossings.forEach((crossing, index) =>
+      fresh.push({
+        edgeId,
+        to: crossing.signal === "task" ? edge.b : edge.a,
+        pulse: {
           key: crossing.key,
           signal: crossing.signal,
           reversed: crossing.signal !== "task",
           delay: index * TRAVEL_GAP_MS,
-        })),
-      ].slice(-20),
-    });
+        },
+      }),
+    );
   }
-  return state.pulses;
+  if (fresh.length > 0)
+    setState({
+      ...state,
+      seen: new Set([...state.seen, ...fresh.map((flight) => flight.pulse.key)]),
+      flights: [...state.flights, ...fresh].slice(-40),
+    });
+
+  const deadlines = useRef(new Map<string, number>());
+  // oxlint-disable-next-line t3code/react-effect-budget -- arrival is a timer that outlives the render: pulse start and travel time cannot be read in render
+  useEffect(() => {
+    const timers: number[] = [];
+    for (const { pulse } of state.flights) {
+      if (state.landed.has(pulse.key)) continue;
+      const deadline =
+        deadlines.current.get(pulse.key) ?? performance.now() + pulse.delay + TRAVEL_MS;
+      deadlines.current.set(pulse.key, deadline);
+      timers.push(
+        window.setTimeout(
+          () =>
+            setState((current) => ({ ...current, landed: new Set(current.landed).add(pulse.key) })),
+          Math.max(0, deadline - performance.now()),
+        ),
+      );
+    }
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, [state.flights, state.landed]);
+
+  const pulses = new Map<string, EdgePulse[]>();
+  const arriving = new Set<string>();
+  for (const flight of [...state.flights, ...fresh]) {
+    pulses.set(flight.edgeId, [...(pulses.get(flight.edgeId) ?? []), flight.pulse].slice(-20));
+    if (!state.landed.has(flight.pulse.key)) arriving.add(flight.to);
+  }
+  return { pulses, arriving };
+}
+
+/** Shows the node's previous status while a pulse is still on its way, then switches. */
+function useHeldView(view: NodeRunView, held: boolean) {
+  const [shown, setShown] = useState(view);
+  if (!held && (shown.state !== view.state || shown.label !== view.label)) setShown(view);
+  return held ? shown : view;
 }
 
 type AgentFlowNode = Node<{ readonly node: BoardNode }, "agent">;
@@ -279,13 +342,14 @@ function harnessOf(instanceId: string): "codex" | "claude" | "neutral" {
 function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
   const { node } = data;
   const navigate = useNavigate();
-  const connectedIds = useConnectedEnvironmentIds();
+  const connectionOf = useNodeConnections();
   const environments = useEnvironmentIdentities();
   const peers = useBoardPeers();
   const threads = useThreadShells();
   const openSettings = useContext(OpenSettingsContext);
   const openActivity = useContext(OpenActivityContext);
-  const runView = useContext(RunViewsContext).nodes.get(node.id);
+  const { nodes: runViews, arriving } = useContext(RunViewsContext);
+  const runView = runViews.get(node.id);
 
   const shell = threads.find(
     (thread) => thread.environmentId === node.environmentId && thread.id === node.threadId,
@@ -294,12 +358,17 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
     environments.find((environment) => environment.environmentId === node.environmentId)?.label ??
     peers.find((peer) => peer.environmentId === node.environmentId)?.name ??
     "Unknown";
-  const fallback: NodeRunView = !connectedIds.includes(node.environmentId)
-    ? { state: "unavailable", label: "Machine offline" }
-    : shell && ACTIVE_STATUSES.has(shell.source.status)
-      ? { state: "running", label: "Working" }
-      : { state: "idle", label: "Idle" };
-  const view = runView ?? fallback;
+  const connection = connectionOf(node.environmentId);
+  const fallback: NodeRunView =
+    connection !== "connected"
+      ? {
+          state: "unavailable",
+          label: connection === "offline" ? "Machine offline" : "Reconnecting…",
+        }
+      : shell && ACTIVE_STATUSES.has(shell.source.status)
+        ? { state: "running", label: "Working" }
+        : { state: "idle", label: "Idle" };
+  const view = useHeldView(runView ?? fallback, arriving.has(node.id));
   const cue = useStateCue(view.state);
   const instanceId = shell ? String(shell.modelSelection.instanceId) : "";
 
@@ -348,8 +417,9 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
 
 function SignalEdge({ id, source, target, selected }: EdgeProps) {
   const curve = useFloatingCurve(source, target);
-  const view = useContext(RunViewsContext).edges.get(id);
-  const pulses = useEdgePulses(view);
+  const { edges, pulses: allPulses } = useContext(RunViewsContext);
+  const view = edges.get(id);
+  const pulses = allPulses.get(id) ?? [];
   const hover = useHoverControls();
   if (!curve) return null;
   const visible = hover.hovered || Boolean(selected);
@@ -445,6 +515,7 @@ function BoardCanvasPage() {
   const pending = useBoardPending();
   const { nodes, edges } = workflow;
   const views = useNodeRunViews(workflow);
+  const flights = useFlights(views.edges, edges);
   const [editingName, setEditingName] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [kanban, setKanban] = useState(false);
@@ -566,7 +637,7 @@ function BoardCanvasPage() {
         ) : (
           <OpenSettingsContext.Provider value={setSettingsNodeId}>
             <OpenActivityContext.Provider value={setActivityNodeId}>
-              <RunViewsContext.Provider value={views}>
+              <RunViewsContext.Provider value={{ ...views, ...flights }}>
                 <ReactFlow
                   className="absolute! inset-0"
                   nodes={displayedNodes}

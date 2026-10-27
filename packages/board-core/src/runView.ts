@@ -32,8 +32,8 @@ export interface EdgeRunView {
 }
 
 export interface NodeLiveFacts {
-  /** The node's machine is connected. */
-  readonly connected: boolean;
+  /** The node's machine: connected, reconnecting (a blip, such as a restart), or offline. */
+  readonly connection: "connected" | "reconnecting" | "offline";
   /** The node's thread has a turn in progress. */
   readonly turnActive: boolean;
 }
@@ -84,7 +84,10 @@ export function runViews(
     const openOut = outgoing.some((request) => request.status === "pending");
 
     let view: NodeRunView;
-    if (!facts.connected) view = { state: "unavailable", label: "Machine offline" };
+    if (facts.connection === "reconnecting")
+      view = { state: "unavailable", label: "Reconnecting…" };
+    else if (facts.connection === "offline")
+      view = { state: "unavailable", label: "Machine offline" };
     else if (!inRun) view = facts.turnActive ? { state: "running", label: "Working" } : IDLE;
     else if (active && run.status === "stopping")
       view = facts.turnActive

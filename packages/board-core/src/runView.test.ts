@@ -43,9 +43,17 @@ const run = (status: RunRecord["status"], requests: RunRequestRecord[]): RunReco
   requests,
 });
 const facts =
-  (working: ReadonlyArray<string> = [], offline: ReadonlyArray<string> = []) =>
+  (
+    working: ReadonlyArray<string> = [],
+    offline: ReadonlyArray<string> = [],
+    reconnecting: ReadonlyArray<string> = [],
+  ) =>
   (target: BoardNode): NodeLiveFacts => ({
-    connected: !offline.includes(target.id),
+    connection: offline.includes(target.id)
+      ? "offline"
+      : reconnecting.includes(target.id)
+        ? "reconnecting"
+        : "connected",
     turnActive: working.includes(target.id),
   });
 const states = (views: ReturnType<typeof runViews>) =>
@@ -102,6 +110,14 @@ describe("board run views", () => {
       Home: "idle: Stopped",
       Italy: "waiting: Stopping",
       Researcher: "unavailable: Machine offline",
+    });
+  });
+
+  it("says a machine is reconnecting during a blip and offline only when it is down", () => {
+    const views = runViews(undefined, nodes, edges, facts([], ["Italy"], ["Home"]));
+    expect(states(views)).toMatchObject({
+      Home: "unavailable: Reconnecting…",
+      Italy: "unavailable: Machine offline",
     });
   });
 
