@@ -99,13 +99,31 @@ export function markProcessed(messageIds: ReadonlyArray<string>) {
   writeJson(PROCESSED_STORAGE_KEY, [...next].slice(-MAX_PROCESSED));
 }
 
+const GRID_COLUMNS = 4;
+const GRID_STEP_X = 300;
+const GRID_STEP_Y = 230;
+
+function nextFreeSlot(nodes: ReadonlyArray<BoardNode>): { x: number; y: number } {
+  for (let index = 0; ; index++) {
+    const x = 40 + (index % GRID_COLUMNS) * GRID_STEP_X;
+    const y = 40 + Math.floor(index / GRID_COLUMNS) * GRID_STEP_Y;
+    if (
+      !nodes.some(
+        (node) => Math.abs(node.x - x) < GRID_STEP_X && Math.abs(node.y - y) < GRID_STEP_Y,
+      )
+    ) {
+      return { x, y };
+    }
+  }
+}
+
 export function addNode(input: Pick<BoardNode, "name" | "environmentId" | "threadId">) {
-  const offset = state.nodes.length * 30;
+  const { x, y } = nextFreeSlot(state.nodes);
   const node: BoardNode = {
     ...input,
     id: randomUUID(),
-    x: 40 + offset,
-    y: 40 + offset,
+    x,
+    y,
     baselined: false,
   };
   setState({ ...state, nodes: [...state.nodes, node] });
@@ -128,7 +146,9 @@ export function removeNode(id: string) {
 }
 
 export function areConnected(a: string, b: string): boolean {
-  return state.edges.some((edge) => (edge.a === a && edge.b === b) || (edge.a === b && edge.b === a));
+  return state.edges.some(
+    (edge) => (edge.a === a && edge.b === b) || (edge.a === b && edge.b === a),
+  );
 }
 
 export function toggleEdge(a: string, b: string) {

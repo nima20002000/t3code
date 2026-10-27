@@ -33,12 +33,17 @@ function AddNodeForm() {
   const [environmentId, setEnvironmentId] = useState<EnvironmentId | "">("");
   const [threadId, setThreadId] = useState<ThreadId | "">("");
   const [name, setName] = useState("");
-  const connected = environments.filter((environment) => connectedIds.includes(environment.environmentId));
+  const connected = environments.filter((environment) =>
+    connectedIds.includes(environment.environmentId),
+  );
   const environmentThreads = threads.filter(
     (thread) =>
-      thread.environmentId === environmentId && thread.archivedAt === null && thread.deletedAt === null,
+      thread.environmentId === environmentId &&
+      thread.archivedAt === null &&
+      thread.deletedAt === null,
   );
-  const environmentLabel = connected.find((env) => env.environmentId === environmentId)?.label ?? "";
+  const environmentLabel =
+    connected.find((env) => env.environmentId === environmentId)?.label ?? "";
 
   const submit = () => {
     if (environmentId === "" || threadId === "") return;
@@ -138,7 +143,10 @@ function NodeCard(props: {
 
   const sendInstructions = async () => {
     const sent = await send(node, buildBoardInstructions(node.name, peerNames));
-    appendLog("info", sent ? `Sent board instructions to ${node.name}.` : `Instructions to ${node.name} failed.`);
+    appendLog(
+      "info",
+      sent ? `Sent board instructions to ${node.name}.` : `Instructions to ${node.name} failed.`,
+    );
   };
 
   return (
@@ -184,6 +192,11 @@ function NodeCard(props: {
           Remove
         </Button>
       </div>
+      {peerNames.length > 0 ? (
+        <div className="absolute top-full mt-1 w-full truncate text-xs text-muted-foreground">
+          Connected: {peerNames.join(", ")}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -197,7 +210,8 @@ export function BoardPage() {
       setConnectFrom(nodeId);
       return;
     }
-    if (connectFrom !== nodeId && !areConnected(connectFrom, nodeId)) toggleEdge(connectFrom, nodeId);
+    if (connectFrom !== nodeId && !areConnected(connectFrom, nodeId))
+      toggleEdge(connectFrom, nodeId);
     setConnectFrom(null);
   };
 
