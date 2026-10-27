@@ -51,3 +51,14 @@
   inset: 0;
   visibility: visible;
 }
+
+/* The small chat's composer is plain gray throughout: t3 swaps its glass between layers while the
+   settings strip slides in, which shows here as a dark, blurred flash. */
+.board-chat-panel:not([data-full]) [data-slot="composer-shell"]::before,
+.board-chat-panel:not([data-full]) [data-model-strip-transition] [data-chat-composer-main-surface],
+.board-chat-panel:not([data-full])
+  [data-model-strip-transition]
+  [data-composer-model-strip]::before {
+  background-color: var(--chat-composer-glass-surface);
+  backdrop-filter: none;
+}
