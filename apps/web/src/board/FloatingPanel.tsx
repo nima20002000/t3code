@@ -21,87 +21,49 @@ function savePanelPosition(key: string, position: PanelPosition) {
   }
 }
 
-const floatingRects = new WeakMap<Element, DOMRect>();
 let morphing = false;
-const FADE_MS = 70;
-const MOVE_MS = 220;
-const REVEAL_MS = 110;
+const FADE_MS = 110;
 const BLUR_MS = 160;
 const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+const easing = "cubic-bezier(0.2, 0, 0, 1)";
 
 /**
- * Toggles full screen behind an empty panel frame that moves on the compositor (transform and
- * opacity only), so the chat re-laying out at its new size can block the main thread without a
- * dropped frame. The board blurs first and the frame fades in over the panel, then moves; the panel
- * crossfades back in as it lands, and only then does the blur clear.
+ * Toggles full screen behind a blur of the board: the panel fades out with a slight shrink, changes
+ * size while hidden, and fades back in. Resizing re-lays out the whole chat, which blocks the main
+ * thread, so it happens while nothing on screen moves. Opening blurs first; closing clears last.
  */
 export async function morphPanel(panel: HTMLElement | null, maximize: boolean, update: () => void) {
   if (morphing) return;
-  const window_ = new DOMRect(0, 0, window.innerWidth, window.innerHeight);
-  if (maximize && panel) floatingRects.set(panel, panel.getBoundingClientRect());
-  const target = maximize ? window_ : panel && floatingRects.get(panel);
-  if (!panel || !target || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  if (!panel || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
     update();
     return;
   }
   morphing = true;
-  const { width: W, height: H } = window_;
-  // The fill scales freely; each 1px edge scales along its length only, so the border stays crisp.
-  const parts = {
-    fill: (r: DOMRect) => `translate(${r.x}px, ${r.y}px) scale(${r.width / W}, ${r.height / H})`,
-    top: (r: DOMRect) => `translate(${r.x}px, ${r.y}px) scale(${r.width / W}, 1)`,
-    bottom: (r: DOMRect) => `translate(${r.x}px, ${r.bottom - 1}px) scale(${r.width / W}, 1)`,
-    left: (r: DOMRect) => `translate(${r.x}px, ${r.y}px) scale(1, ${r.height / H})`,
-    right: (r: DOMRect) => `translate(${r.right - 1}px, ${r.y}px) scale(1, ${r.height / H})`,
-  };
-  const card = document.createElement("div");
-  card.className = "board-panel-morph";
-  const from = panel.getBoundingClientRect();
-  // Opening blurs the board before growing; closing shrinks as soon as the frame hides the panel.
-  const lead = maximize ? BLUR_MS : FADE_MS + 20;
-  const moves = Object.entries(parts).map(([part, place]) => {
-    const element = document.createElement("div");
-    element.dataset.part = part;
-    card.append(element);
-    return element.animate([{ transform: place(from) }, { transform: place(target) }], {
-      delay: lead,
-      duration: MOVE_MS,
-      // A long shrink that starts at full speed reads as a jump, so closing eases in as well.
-      easing: maximize ? "cubic-bezier(0.2, 0, 0, 1)" : "cubic-bezier(0.4, 0, 0.2, 1)",
-      fill: "both",
-    });
-  });
   const backdrop = document.createElement("div");
   backdrop.className = "board-panel-backdrop";
-  document.body.append(backdrop, card);
+  document.body.append(backdrop);
+  const blurIn = backdrop.animate([{ opacity: 0 }, { opacity: 1 }], {
+    // Closing starts under the full panel, where the blur is not seen yet.
+    duration: maximize ? BLUR_MS : 1,
+    fill: "forwards",
+  });
+  const hidden = { opacity: 0, transform: "scale(0.97)" };
   try {
-    backdrop.animate([{ opacity: 0 }, { opacity: 1 }], {
-      duration: maximize ? BLUR_MS : FADE_MS,
+    await panel.animate([{ opacity: 1, transform: "none" }, hidden], {
+      duration: FADE_MS,
+      easing,
       fill: "forwards",
-    });
-    await card.animate([{ opacity: 0 }, { opacity: 1 }], { duration: FADE_MS, fill: "forwards" })
-      .finished;
-    // The frame now covers the panel, so it can vanish and re-lay out unseen. The re-layout blocks
-    // the main thread, which makes Chrome skip a running move ahead, so it runs while the frame
-    // stands still: before growing (during the blur), or after shrinking.
-    const hide = panel.animate([{ opacity: 0 }, { opacity: 0 }], { duration: 1, fill: "forwards" });
-    if (maximize) {
-      flushSync(update);
-      await nextFrame();
-      // At 90% of its time the eased move is within a few pixels of landing; reveal over the rest.
-      const left = lead + MOVE_MS * 0.9 - Number(moves[0]?.currentTime ?? 0);
-      if (left > 0) await new Promise((resolve) => setTimeout(resolve, left));
-    } else {
-      await moves[0]?.finished;
-      flushSync(update);
-      // The chat re-renders once more when it observes its new size.
-      await nextFrame();
-      await nextFrame();
-    }
-    // The panel shows whole under the frame, which shares its fill, so no board bleeds through.
-    hide.cancel();
-    await card.animate([{ opacity: 1 }, { opacity: 0 }], { duration: REVEAL_MS, fill: "forwards" })
-      .finished;
+    }).finished;
+    await blurIn.finished;
+    flushSync(update);
+    // The chat re-renders once more when it observes its new size; let that pass before fading in.
+    await nextFrame();
+    await nextFrame();
+    await panel.animate([hidden, { opacity: 1, transform: "none" }], {
+      duration: FADE_MS,
+      easing,
+      fill: "forwards",
+    }).finished;
     if (!maximize) {
       await backdrop.animate([{ opacity: 1 }, { opacity: 0 }], {
         duration: BLUR_MS,
@@ -109,7 +71,7 @@ export async function morphPanel(panel: HTMLElement | null, maximize: boolean, u
       }).finished;
     }
   } finally {
-    card.remove();
+    for (const animation of panel.getAnimations()) animation.cancel();
     backdrop.remove();
     morphing = false;
   }

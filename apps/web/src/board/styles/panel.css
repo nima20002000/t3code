@@ -1,38 +1,4 @@
-/* The empty panel frame morphPanel moves between the chat panel's floating and full-window rects. */
-.board-panel-morph {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  pointer-events: none;
-}
-
-.board-panel-morph > div {
-  position: absolute;
-  top: 0;
-  left: 0;
-  transform-origin: 0 0;
-  background: var(--border);
-}
-
-.board-panel-morph > [data-part="fill"] {
-  width: 100vw;
-  height: 100vh;
-  background: var(--background);
-}
-
-.board-panel-morph > [data-part="top"],
-.board-panel-morph > [data-part="bottom"] {
-  width: 100vw;
-  height: 1px;
-}
-
-.board-panel-morph > [data-part="left"],
-.board-panel-morph > [data-part="right"] {
-  width: 1px;
-  height: 100vh;
-}
-
-/* Under both panel states (z-20 floating, z-50 full) and over the board while the frame moves. */
+/* Under both panel states (z-20 floating, z-50 full) and over the board while the panel changes size. */
 .board-panel-backdrop {
   position: fixed;
   inset: 0;
