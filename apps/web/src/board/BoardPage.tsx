@@ -16,14 +16,14 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { MessageSquareIcon, SettingsIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 
 import { SidebarInset } from "../components/ui/sidebar";
 import { Button } from "../components/ui/button";
 import { useThreadShells } from "../state/entities";
 import { useConnectedEnvironmentIds, useEnvironmentIdentities } from "../state/environments";
 import { buildThreadRouteParams } from "../threadRoutes";
-import { NodeSettingsDialog } from "./NodeSettingsDialog";
+import { NodeSettingsPanel } from "./NodeSettingsPanel";
 import { AddAgentDialog } from "./AddAgentDialog";
 import { useSendToBoardNode } from "./BoardEngine";
 import {
@@ -131,6 +131,8 @@ function AddNodeForm({ onDone }: { onDone: () => void }) {
   );
 }
 
+const OpenSettingsContext = createContext<(nodeId: string) => void>(() => {});
+
 type AgentFlowNode = Node<{ readonly node: BoardNode }, "agent">;
 
 function harnessOf(instanceId: string): "codex" | "claude" | "neutral" {
@@ -144,7 +146,7 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
   const connectedIds = useConnectedEnvironmentIds();
   const environments = useEnvironmentIdentities();
   const threads = useThreadShells();
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const openSettings = useContext(OpenSettingsContext);
 
   const shell = threads.find(
     (thread) => thread.environmentId === node.environmentId && thread.id === node.threadId,
@@ -174,7 +176,7 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
       slot: "settings",
       label: `${node.name} settings`,
       icon: <SettingsIcon size={15} />,
-      onClick: () => setSettingsOpen(true),
+      onClick: () => openSettings(node.id),
     },
   ];
 
@@ -191,9 +193,6 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
       actions={actions}
     >
       <AgentHandles name={node.name} />
-      {settingsOpen ? (
-        <NodeSettingsDialog node={node} onClose={() => setSettingsOpen(false)} />
-      ) : null}
     </AgentNodeView>
   );
 }
@@ -239,6 +238,8 @@ function BoardCanvasPage() {
   const [addingAgent, setAddingAgent] = useState(false);
   const [addingThread, setAddingThread] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [settingsNodeId, setSettingsNodeId] = useState<string | null>(null);
+  const settingsNode = nodes.find((n) => n.id === settingsNodeId) ?? null;
 
   // Store -> canvas: keep React Flow's own state (size, selection) for nodes that already exist.
   useEffect(() => {
@@ -333,27 +334,29 @@ function BoardCanvasPage() {
         {kanban ? (
           <BoardKanban workflow={workflow} />
         ) : (
-          <ReactFlow
-            className="absolute! inset-0"
-            nodes={flowNodes}
-            edges={flowEdges}
-            nodeTypes={NODE_TYPES}
-            edgeTypes={EDGE_TYPES}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeDragStart={() => recordHistoryStep()}
-            onConnectStart={() => setConnecting(true)}
-            onConnectEnd={() => setConnecting(false)}
-            deleteKeyCode={["Backspace", "Delete"]}
-            proOptions={{ hideAttribution: true }}
-            fitView
-            minZoom={0.2}
-            maxZoom={1.6}
-          >
-            <Background color="var(--border)" gap={24} size={1} />
-            <Controls showInteractive={false} />
-          </ReactFlow>
+          <OpenSettingsContext.Provider value={setSettingsNodeId}>
+            <ReactFlow
+              className="absolute! inset-0"
+              nodes={flowNodes}
+              edges={flowEdges}
+              nodeTypes={NODE_TYPES}
+              edgeTypes={EDGE_TYPES}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onNodeDragStart={() => recordHistoryStep()}
+              onConnectStart={() => setConnecting(true)}
+              onConnectEnd={() => setConnecting(false)}
+              deleteKeyCode={["Backspace", "Delete"]}
+              proOptions={{ hideAttribution: true }}
+              fitView
+              minZoom={0.2}
+              maxZoom={1.6}
+            >
+              <Background color="var(--border)" gap={24} size={1} />
+              <Controls showInteractive={false} />
+            </ReactFlow>
+          </OpenSettingsContext.Provider>
         )}
         <BoardToolbar
           selectedRunId={selectedRun?.id ?? null}
@@ -370,6 +373,13 @@ function BoardCanvasPage() {
         />
         {selectedRun ? (
           <RunDetails run={selectedRun} onClose={() => setSelectedRunId(null)} />
+        ) : null}
+        {settingsNode ? (
+          <NodeSettingsPanel
+            key={settingsNode.id}
+            node={settingsNode}
+            onClose={() => setSettingsNodeId(null)}
+          />
         ) : null}
         {addingThread ? <AddNodeForm onDone={() => setAddingThread(false)} /> : null}
       </div>
