@@ -13,7 +13,30 @@
   display: none;
 }
 
-/* In the small chat the composer sits on the panel's bottom edge. */
+/* In the small chat the composer spans the panel's bottom edge. */
+.board-chat-panel:not([data-full]) .chat-composer-lane {
+  padding-inline: 0;
+}
+
+.board-chat-panel:not([data-full]) [data-chat-composer-stack] {
+  max-width: none;
+}
+
 .board-chat-panel:not([data-full]) [data-chat-composer-stack] [class*="safe-area-inset-bottom"] {
   display: none;
+}
+
+/* The composer meets the panel's own border, so it drops its side and bottom edge and corners. */
+.board-chat-panel:not([data-full]) [data-chat-composer-stack] .rounded-2xl {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.board-chat-panel:not([data-full]) [data-chat-composer-stack] .p-px {
+  padding: 1px 0 0;
+}
+
+/* The column overflows by a few pixels in the small panel; its stray scrollbar narrowed the chat. */
+.board-chat-panel:not([data-full]) [data-chat-column] {
+  overflow-y: hidden;
 }
