@@ -48,9 +48,15 @@ function waitingLabel(outgoing: ReadonlyArray<RunRequestRecord>): string {
   return `Waiting for ${outgoing.length - open.length} of ${outgoing.length} returns`;
 }
 
-/** The run to draw: the active one, else the newest. */
+/** The run to draw: the active one, else the newest by start time. */
 export function runToShow(runs: ReadonlyArray<RunRecord>): RunRecord | undefined {
-  return runs.find(isActive) ?? runs.at(-1);
+  return (
+    runs.find(isActive) ??
+    runs.reduce<RunRecord | undefined>(
+      (newest, run) => (newest && newest.startedAt >= run.startedAt ? newest : run),
+      undefined,
+    )
+  );
 }
 
 /**

@@ -48,29 +48,31 @@ export function RunsSelector(props: {
             </span>
             <span style={{ gridColumn: "2 / -1" }}>Workflow (no run selected)</span>
           </button>
-          {props.runs.map((run) => (
-            <button
-              key={run.id}
-              type="button"
-              role="menuitemradio"
-              aria-checked={props.selectedRunId === run.id}
-              className={`runs-selector-row min-h-9.5 cursor-pointer border-b border-border/50 text-xs whitespace-nowrap hover:bg-accent focus-visible:bg-accent ${props.selectedRunId === run.id ? "font-semibold" : ""}`}
-              onClick={() => props.onSelect(run.id)}
-            >
-              <span className="text-primary" aria-hidden="true">
-                {props.selectedRunId === run.id ? <CheckIcon size={12} /> : null}
-              </span>
-              <span className="inline-flex items-center gap-1.5 text-xs">
-                <span
-                  className={`size-2 flex-none rounded-full ${RUN_STATUS_DOT[run.status]}`}
-                  aria-hidden="true"
-                />
-                {RUN_STATUS_LABELS[run.status]}
-              </span>
-              <span>{formatRunTime(run.startedAt)}</span>
-              <span className="text-muted-foreground">{run.nodeName}</span>
-            </button>
-          ))}
+          {props.runs
+            .toSorted((a, b) => b.startedAt.localeCompare(a.startedAt))
+            .map((run) => (
+              <button
+                key={run.id}
+                type="button"
+                role="menuitemradio"
+                aria-checked={props.selectedRunId === run.id}
+                className={`runs-selector-row min-h-9.5 cursor-pointer border-b border-border/50 text-xs whitespace-nowrap hover:bg-accent focus-visible:bg-accent ${props.selectedRunId === run.id ? "font-semibold" : ""}`}
+                onClick={() => props.onSelect(run.id)}
+              >
+                <span className="text-primary" aria-hidden="true">
+                  {props.selectedRunId === run.id ? <CheckIcon size={12} /> : null}
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-xs">
+                  <span
+                    className={`size-2 flex-none rounded-full ${RUN_STATUS_DOT[run.status]}`}
+                    aria-hidden="true"
+                  />
+                  {RUN_STATUS_LABELS[run.status]}
+                </span>
+                <span>{formatRunTime(run.startedAt)}</span>
+                <span className="text-muted-foreground">{run.nodeName}</span>
+              </button>
+            ))}
           {props.runs.length === 0 ? (
             <p className="m-0 px-3 py-2 text-xs text-muted-foreground">No runs yet</p>
           ) : null}

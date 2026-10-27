@@ -231,11 +231,14 @@ const make = Effect.gen(function* () {
             ...workflow,
             pending: [],
             runQueue: [],
-            runs: workflow.runs.map((run) =>
-              run.status === "running" || run.status === "stopping"
-                ? { ...run, status: "stopped" as const }
-                : run,
-            ),
+            // Runs are stored oldest first; the old local board kept them newest first.
+            runs: workflow.runs
+              .toSorted((a, b) => a.startedAt.localeCompare(b.startedAt))
+              .map((run) =>
+                run.status === "running" || run.status === "stopping"
+                  ? { ...run, status: "stopped" as const }
+                  : run,
+              ),
           };
           imported.push(yield* save(safe));
         }

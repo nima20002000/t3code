@@ -53,7 +53,7 @@ export function applyBoardEvent(snapshot: BoardSnapshot, event: BoardEvent): Boa
                 pending: event.pending ?? w.pending,
                 runs: w.runs.some((run) => run.id === event.run.id)
                   ? upsert(w.runs, event.run)
-                  : [event.run, ...w.runs],
+                  : [...w.runs, event.run],
               }
             : w,
         ),

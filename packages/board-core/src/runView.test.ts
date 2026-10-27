@@ -123,6 +123,13 @@ describe("board run views", () => {
     expect(views.edges.get("Home:Italy")?.signal).toBeUndefined();
   });
 
+  it("draws the newest finished run by start time, whatever the stored order", () => {
+    const older = { ...run("finished", []), id: "older", startedAt: "2026-10-27T10:00:00.000Z" };
+    const newer = { ...run("stopped", []), id: "newer", startedAt: "2026-10-27T11:00:00.000Z" };
+    expect(runToShow([newer, older])?.id).toBe("newer");
+    expect(runToShow([older, newer])?.id).toBe("newer");
+  });
+
   it("draws the active run over newer finished ones", () => {
     const active = run("running", []);
     expect(runToShow([run("finished", []), active, { ...run("stopped", []), id: "later" }])).toBe(
