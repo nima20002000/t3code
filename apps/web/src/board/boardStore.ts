@@ -387,6 +387,10 @@ export function renameNode(id: string, name: string) {
   patchNode(id, { name: trimmed }, true);
 }
 
+export function setNodeRole(id: string, role: string) {
+  patchNode(id, { role }, false);
+}
+
 export function removeNode(id: string) {
   const owner = findWorkflowOfNode(id);
   if (!owner) return;

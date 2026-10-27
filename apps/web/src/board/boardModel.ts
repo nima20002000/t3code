@@ -13,6 +13,8 @@ export interface BoardNode {
   readonly baselined: boolean;
   /** Set for agents the board started: their first reply answers the setup prompt and is skipped. */
   readonly awaitingFirstReply?: boolean;
+  /** Free-form note about what this agent does; edited in the node settings. */
+  readonly role?: string;
 }
 
 /** Directed work connection: `a` (source) may send work requests to `b` (target), which returns to `a`. */

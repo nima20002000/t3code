@@ -15,7 +15,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { MessageSquareIcon, SendIcon, Trash2Icon } from "lucide-react";
+import { MessageSquareIcon, SettingsIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { SidebarInset } from "../components/ui/sidebar";
@@ -23,6 +23,7 @@ import { Button } from "../components/ui/button";
 import { useThreadShells } from "../state/entities";
 import { useConnectedEnvironmentIds, useEnvironmentIdentities } from "../state/environments";
 import { buildThreadRouteParams } from "../threadRoutes";
+import { NodeSettingsDialog } from "./NodeSettingsDialog";
 import { AddAgentDialog } from "./AddAgentDialog";
 import { useSendToBoardNode } from "./BoardEngine";
 import {
@@ -140,11 +141,10 @@ function harnessOf(instanceId: string): "codex" | "claude" | "neutral" {
 function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
   const { node } = data;
   const navigate = useNavigate();
-  const { nodes, edges } = useCurrentWorkflow();
   const connectedIds = useConnectedEnvironmentIds();
   const environments = useEnvironmentIdentities();
   const threads = useThreadShells();
-  const send = useSendToBoardNode();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const shell = threads.find(
     (thread) => thread.environmentId === node.environmentId && thread.id === node.threadId,
@@ -159,16 +159,6 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
       : "idle";
   const instanceId = shell ? String(shell.modelSelection.instanceId) : "";
 
-  const sendInstructions = async () => {
-    const outgoing = connectedNodeNames(nodes, edges, node.id);
-    const incoming = incomingNodeNames(nodes, edges, node.id);
-    const sent = await send(node, buildBoardInstructions(node.name, outgoing, incoming));
-    appendLog(
-      "info",
-      sent ? `Sent board instructions to ${node.name}.` : `Instructions to ${node.name} failed.`,
-    );
-  };
-
   const actions: AgentNodeAction[] = [
     {
       slot: "chat",
@@ -182,15 +172,9 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
     },
     {
       slot: "settings",
-      label: `Send board instructions to ${node.name}`,
-      icon: <SendIcon size={15} />,
-      onClick: () => void sendInstructions(),
-    },
-    {
-      slot: "info",
-      label: `Remove ${node.name}`,
-      icon: <Trash2Icon size={15} />,
-      onClick: () => removeNode(node.id),
+      label: `${node.name} settings`,
+      icon: <SettingsIcon size={15} />,
+      onClick: () => setSettingsOpen(true),
     },
   ];
 
@@ -207,6 +191,9 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
       actions={actions}
     >
       <AgentHandles name={node.name} />
+      {settingsOpen ? (
+        <NodeSettingsDialog node={node} onClose={() => setSettingsOpen(false)} />
+      ) : null}
     </AgentNodeView>
   );
 }
