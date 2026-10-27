@@ -4,4 +4,4 @@ export {
   buildBoardInstructions,
   connectedNodeNames,
   incomingNodeNames,
-} from "./resultProtocol";
+} from "@t3tools/board-core/resultProtocol";

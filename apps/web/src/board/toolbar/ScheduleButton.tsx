@@ -18,7 +18,7 @@ import { serverEnvironment } from "../../state/server";
 import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { BoardNode } from "../boardStore";
-import { buildStartMessage } from "../resultProtocol";
+import { buildStartMessage } from "@t3tools/board-core/resultProtocol";
 import { ToolbarPopover, useMachineLabel } from "./ToolbarPopover";
 
 const FIELD_CLASS = "h-8 w-full rounded-md border bg-background px-2 text-sm";

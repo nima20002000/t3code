@@ -17,7 +17,7 @@ import {
   undoHistory,
   type BoardNode,
   type EditSnapshot,
-} from "./boardModel";
+} from "./boardModel.ts";
 
 const node = (id: string, patch: Partial<BoardNode> = {}): BoardNode => ({
   id,

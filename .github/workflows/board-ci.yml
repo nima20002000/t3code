@@ -1,6 +1,4 @@
-# Fork-only CI. Upstream workflows use Blacksmith runners and are disabled here.
-# Runs web typecheck plus only the web unit tests changed on the branch (or the
-# files passed to a manual run).
+# Fork-only CI: compile touched packages and run board-owned tests only.
 name: Board CI
 
 on:
@@ -10,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       tests:
-        description: Space-separated test files under apps/web (empty = changed tests)
+        description: Space-separated board-owned test paths (empty = changed tests and seams)
         required: false
         default: ""
 
@@ -32,25 +30,16 @@ jobs:
 
       - uses: ./.github/actions/setup-ci-deps
 
+      - name: Typecheck board core
+        run: vp run --filter @t3tools/board-core typecheck
+
+      - name: Typecheck server
+        run: vp run --filter t3 typecheck
+
       - name: Typecheck web
         run: vp run --filter @t3tools/web typecheck
 
-      - name: Select tests
-        id: select
+      - name: Run board-owned changed tests and seams
         env:
           INPUT_TESTS: ${{ inputs.tests }}
-        run: |
-          if test -n "$INPUT_TESTS"; then
-            files="$INPUT_TESTS"
-          else
-            base="$(git merge-base origin/main HEAD)"
-            files="$(git diff --name-only "$base" HEAD -- 'apps/web/src/**/*.test.ts' 'apps/web/src/**/*.test.tsx' \
-              | grep -v '\.browser\.test\.' | sed 's#^apps/web/##' | tr '\n' ' ')"
-          fi
-          echo "files=$files" >> "$GITHUB_OUTPUT"
-          echo "Selected tests: ${files:-none}"
-
-      - name: Run selected tests
-        if: steps.select.outputs.files != ''
-        working-directory: apps/web
-        run: vp test run --project unit ${{ steps.select.outputs.files }}
+        run: scripts/fork-sync.sh --ci

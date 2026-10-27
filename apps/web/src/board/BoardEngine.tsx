@@ -40,7 +40,7 @@ import {
   parseResult,
   type BoardResult,
   type WorkRequest,
-} from "./resultProtocol";
+} from "@t3tools/board-core/resultProtocol";
 
 type ThreadData = OrchestrationV2ThreadProjection;
 

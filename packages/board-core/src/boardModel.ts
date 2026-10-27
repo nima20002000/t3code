@@ -1,4 +1,4 @@
-import type { EnvironmentId, RuntimeMode, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, RuntimeMode, ThreadId } from "@t3tools/contracts";
 
 /** Pure board data model: types, defaults, storage migration and undo history. No React, no storage. */
 
@@ -6,6 +6,7 @@ export interface BoardNode {
   readonly id: string;
   readonly name: string;
   readonly environmentId: EnvironmentId;
+  readonly projectId?: ProjectId;
   readonly threadId: ThreadId;
   readonly x: number;
   readonly y: number;
@@ -82,6 +83,8 @@ export interface WorkflowSettings {
   readonly runtimeMode: RuntimeMode;
   /** Max requests per edge per run; null means unlimited. */
   readonly maxHandoffsPerEdge: number | null;
+  /** Omitted means allSettled. */
+  readonly waitPolicy?: "allSettled" | "failFast";
 }
 
 export interface Workflow {

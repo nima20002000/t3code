@@ -18,7 +18,11 @@ import {
   useCurrentWorkflow,
   type BoardNode,
 } from "./boardStore";
-import { buildBoardInstructions, connectedNodeNames, incomingNodeNames } from "./resultProtocol";
+import {
+  buildBoardInstructions,
+  connectedNodeNames,
+  incomingNodeNames,
+} from "@t3tools/board-core/resultProtocol";
 
 function InfoLine({ label, value }: { readonly label: string; readonly value: string }) {
   return (

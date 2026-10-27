@@ -44,7 +44,11 @@ import { AgentNodeView, type AgentNodeAction } from "./foreman/AgentNodeView";
 import { SignalEdgeShape } from "./foreman/SignalEdgeShape";
 import { AGENT_NODE_SIZE, useFloatingCurve } from "./foreman/signalEdge";
 import "./foreman/foreman.css";
-import { buildBoardInstructions, connectedNodeNames, incomingNodeNames } from "./resultProtocol";
+import {
+  buildBoardInstructions,
+  connectedNodeNames,
+  incomingNodeNames,
+} from "@t3tools/board-core/resultProtocol";
 import { BoardToolbar } from "./BoardToolbar";
 import { BoardKanban } from "./toolbar/BoardKanban";
 import { RunDetails } from "./toolbar/RunDetails";

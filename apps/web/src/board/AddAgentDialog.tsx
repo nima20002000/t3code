@@ -36,7 +36,7 @@ import { EMPTY_SERVER_PROVIDERS } from "../state/server";
 import { threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { addNode, appendLog, useCurrentWorkflow } from "./boardStore";
-import { buildAgentFirstPrompt } from "./resultProtocol";
+import { buildAgentFirstPrompt } from "@t3tools/board-core/resultProtocol";
 
 const FIELD_CLASS = "h-8 w-full rounded-md border bg-background px-2 text-sm";
 

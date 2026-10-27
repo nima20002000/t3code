@@ -25,7 +25,7 @@ import {
   type RunRequestRecord,
   type Workflow,
   type WorkflowSettings,
-} from "./boardModel";
+} from "@t3tools/board-core/boardModel";
 
 export type {
   BoardEdge,
@@ -39,7 +39,7 @@ export type {
   RunStatus,
   Workflow,
   WorkflowSettings,
-} from "./boardModel";
+} from "@t3tools/board-core/boardModel";
 
 const BOARD_STORAGE_KEY = "t3.board.v2";
 const LEGACY_BOARD_STORAGE_KEY = "t3.board.v1";

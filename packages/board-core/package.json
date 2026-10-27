@@ -1,0 +1,24 @@
+{
+  "name": "@t3tools/board-core",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./boardModel": "./src/boardModel.ts",
+    "./resultProtocol": "./src/resultProtocol.ts",
+    "./routing": "./src/routing.ts",
+    "./http": "./src/http.ts",
+    "./NodeDriver": "./src/NodeDriver.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "vite-plus": "catalog:"
+  }
+}

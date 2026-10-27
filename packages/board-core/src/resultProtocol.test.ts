@@ -8,7 +8,7 @@ import {
   incomingNodeNames,
   matchNodeName,
   parseResult,
-} from "./resultProtocol";
+} from "./resultProtocol.ts";
 
 const fence = (value: unknown) => "```json\n" + JSON.stringify(value) + "\n```";
 
