@@ -1,6 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useNavigate, useRouter } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import {
   applyNodeChanges,
   Background,
@@ -15,7 +15,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ArrowLeftIcon, MessageSquareIcon, SendIcon, Trash2Icon } from "lucide-react";
+import { MessageSquareIcon, SendIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { SidebarInset } from "../components/ui/sidebar";
@@ -30,6 +30,8 @@ import {
   addNode,
   appendLog,
   getCurrentWorkflow,
+  isThreadOnBoard,
+  recordHistoryStep,
   removeEdge,
   removeNode,
   updateNode,
@@ -42,7 +44,9 @@ import { SignalEdgeShape } from "./foreman/SignalEdgeShape";
 import { AGENT_NODE_SIZE, useFloatingCurve } from "./foreman/signalEdge";
 import "./foreman/foreman.css";
 import { buildBoardInstructions, connectedNodeNames, incomingNodeNames } from "./resultProtocol";
-import { RunControl } from "./RunControl";
+import { BoardToolbar } from "./BoardToolbar";
+import { BoardKanban } from "./toolbar/BoardKanban";
+import { RunDetails } from "./toolbar/RunDetails";
 
 const ACTIVE_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 
@@ -60,7 +64,8 @@ function AddNodeForm({ onDone }: { onDone: () => void }) {
     (thread) =>
       thread.environmentId === environmentId &&
       thread.archivedAt === null &&
-      thread.deletedAt === null,
+      thread.deletedAt === null &&
+      !isThreadOnBoard(thread.environmentId, thread.id),
   );
   const environmentLabel =
     connected.find((env) => env.environmentId === environmentId)?.label ?? "";
@@ -216,7 +221,7 @@ const EDGE_TYPES = { signal: SignalEdge };
 
 function toFlowNode(node: BoardNode, previous?: AgentFlowNode): AgentFlowNode {
   return previous
-    ? { ...previous, data: { node } }
+    ? { ...previous, position: { x: node.x, y: node.y }, data: { node } }
     : {
         id: node.id,
         type: "agent",
@@ -227,26 +232,18 @@ function toFlowNode(node: BoardNode, previous?: AgentFlowNode): AgentFlowNode {
       };
 }
 
-function BackButton() {
-  const router = useRouter();
-  const navigate = useNavigate();
-  return (
-    <Button
-      size="sm"
-      variant="outline"
-      onClick={() => {
-        if (router.state.location.state.__TSR_index > 0) router.history.back();
-        else void navigate({ to: "/" });
-      }}
-    >
-      <ArrowLeftIcon />
-      Back
-    </Button>
-  );
+/** Keyed by workflow id so switching workflows resets the canvas, its selection and the fit. */
+export function BoardPage() {
+  const { id } = useCurrentWorkflow();
+  return <BoardCanvasPage key={id} />;
 }
 
-export function BoardPage() {
-  const { nodes, edges, pending } = useCurrentWorkflow();
+function BoardCanvasPage() {
+  const workflow = useCurrentWorkflow();
+  const { nodes, edges } = workflow;
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [kanban, setKanban] = useState(false);
+  const selectedRun = workflow.runs.find((run) => run.id === selectedRunId) ?? null;
   const send = useSendToBoardNode();
   const [flowNodes, setFlowNodes] = useState<AgentFlowNode[]>(() =>
     nodes.map((n) => toFlowNode(n)),
@@ -346,53 +343,47 @@ export function BoardPage() {
   return (
     <SidebarInset className="h-dvh">
       <div className={`board-canvas relative min-h-0 flex-1${connecting ? " is-connecting" : ""}`}>
-        <ReactFlow
-          className="absolute! inset-0"
-          nodes={flowNodes}
-          edges={flowEdges}
-          nodeTypes={NODE_TYPES}
-          edgeTypes={EDGE_TYPES}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          onConnectStart={() => setConnecting(true)}
-          onConnectEnd={() => setConnecting(false)}
-          deleteKeyCode={["Backspace", "Delete"]}
-          proOptions={{ hideAttribution: true }}
-          fitView
-          minZoom={0.2}
-          maxZoom={1.6}
-        >
-          <Background color="var(--border)" gap={24} size={1} />
-          <Controls showInteractive={false} />
-        </ReactFlow>
-        <div
-          className="board-toolbar"
-          style={{ left: "max(1.25rem, var(--workspace-controls-left))" }}
-        >
-          <BackButton />
-          <div className="board-toolbar-group">
-            <Button
-              size="sm"
-              onClick={() => {
-                setAddingAgent(true);
-                setAddingThread(false);
-              }}
-            >
-              Add agent
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setAddingThread((value) => !value)}>
-              Add existing thread
-            </Button>
-            <RunControl />
-          </div>
-          {selectedEdgeIds.size > 0 ? (
-            <Button size="sm" variant="outline" onClick={deleteSelectedEdges}>
-              Delete selected edge
-            </Button>
-          ) : null}
-          <span className="text-xs text-muted-foreground">{pending.length} pending</span>
-        </div>
+        {kanban ? (
+          <BoardKanban workflow={workflow} />
+        ) : (
+          <ReactFlow
+            className="absolute! inset-0"
+            nodes={flowNodes}
+            edges={flowEdges}
+            nodeTypes={NODE_TYPES}
+            edgeTypes={EDGE_TYPES}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onNodeDragStart={() => recordHistoryStep()}
+            onConnectStart={() => setConnecting(true)}
+            onConnectEnd={() => setConnecting(false)}
+            deleteKeyCode={["Backspace", "Delete"]}
+            proOptions={{ hideAttribution: true }}
+            fitView
+            minZoom={0.2}
+            maxZoom={1.6}
+          >
+            <Background color="var(--border)" gap={24} size={1} />
+            <Controls showInteractive={false} />
+          </ReactFlow>
+        )}
+        <BoardToolbar
+          selectedRunId={selectedRun?.id ?? null}
+          onSelectRun={setSelectedRunId}
+          kanban={kanban}
+          onToggleKanban={() => setKanban((value) => !value)}
+          onAddAgent={() => {
+            setAddingAgent(true);
+            setAddingThread(false);
+          }}
+          onAddThread={() => setAddingThread((value) => !value)}
+          selectedEdgeCount={selectedEdgeIds.size}
+          onDeleteSelectedEdges={deleteSelectedEdges}
+        />
+        {selectedRun ? (
+          <RunDetails run={selectedRun} onClose={() => setSelectedRunId(null)} />
+        ) : null}
         {addingThread ? <AddNodeForm onDone={() => setAddingThread(false)} /> : null}
       </div>
       {addingAgent ? <AddAgentDialog onClose={() => setAddingAgent(false)} /> : null}
