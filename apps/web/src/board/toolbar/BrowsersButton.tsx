@@ -13,6 +13,7 @@ import { buildThreadRouteParams, useRightPanelStore } from "../upstream";
 export function BrowsersButton(props: { readonly nodes: ReadonlyArray<BoardNode> }) {
   const navigate = useNavigate();
   const machineLabel = useMachineLabel();
+  const withChat = props.nodes.filter((node) => node.threadId !== "");
 
   const open = (node: BoardNode) => {
     const ref = scopeThreadRef(node.environmentId, node.threadId);
@@ -22,11 +23,13 @@ export function BrowsersButton(props: { readonly nodes: ReadonlyArray<BoardNode>
 
   return (
     <ToolbarPopover label="Browsers" icon={<GlobeIcon />}>
-      {props.nodes.length === 0 ? (
-        <p className="text-muted-foreground">Add an agent to the board first.</p>
+      {withChat.length === 0 ? (
+        <p className="text-muted-foreground">
+          Agents appear here once they have a chat: open one from its node, or start a run.
+        </p>
       ) : (
         <ul className="grid gap-1">
-          {props.nodes.map((node) => (
+          {withChat.map((node) => (
             <li key={node.id}>
               <button
                 type="button"

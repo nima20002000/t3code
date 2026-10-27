@@ -12,7 +12,7 @@ import {
   RotateCcwIcon,
   Undo2Icon,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import {
   discardChanges,
@@ -46,6 +46,28 @@ function readCollapsed() {
   } catch {
     return false;
   }
+}
+
+/** Folds its children sideways to nothing; inert while folded so hidden controls take no focus. */
+function Collapsible(props: {
+  readonly collapsed: boolean;
+  readonly spaced?: boolean;
+  readonly children: ReactNode;
+}) {
+  return (
+    <div
+      className={`grid transition-[grid-template-columns,opacity] duration-200 ease-out motion-reduce:transition-none ${
+        props.collapsed ? "grid-cols-[0fr] opacity-0" : "grid-cols-[1fr] opacity-100"
+      }`}
+      inert={props.collapsed}
+    >
+      <div
+        className={`-my-3 min-w-0 overflow-hidden py-3 ${!props.collapsed && props.spaced ? "pr-2" : ""}`}
+      >
+        {props.children}
+      </div>
+    </div>
+  );
 }
 
 function BackButton() {
@@ -126,96 +148,89 @@ export function BoardToolbar(props: {
     </IconButton>
   );
 
-  if (collapsed) {
-    return (
-      <div className="flex flex-wrap justify-end gap-2">
+  return (
+    <div className="flex flex-wrap justify-end">
+      <Collapsible collapsed={collapsed} spaced>
         <div
           className="flex items-center gap-0.5 rounded-lg border border-border bg-card p-1 shadow-lg"
           role="toolbar"
-          aria-label="Board controls"
+          aria-label="Draft actions"
         >
-          <RunControl />
-          {collapseButton}
+          <IconButton
+            label="Undo"
+            disabled={!canUndo || pending || status !== "connected"}
+            onClick={undo}
+          >
+            <Undo2Icon />
+          </IconButton>
+          <IconButton
+            label="Redo"
+            disabled={!canRedo || pending || status !== "connected"}
+            onClick={redo}
+          >
+            <Redo2Icon />
+          </IconButton>
+          <IconButton
+            label="Discard changes"
+            disabled={!dirty || pending || status !== "connected"}
+            onClick={discardChanges}
+          >
+            <RotateCcwIcon />
+          </IconButton>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  className="inline-flex items-center gap-1 px-1.5 text-2xs text-muted-foreground [&>svg]:size-3"
+                  role="status"
+                  aria-label={savedLabel}
+                >
+                  <SavedIcon aria-hidden="true" />
+                </span>
+              }
+            />
+            <TooltipPopup>{error ?? savedLabel}</TooltipPopup>
+          </Tooltip>
         </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-wrap justify-end gap-2">
+      </Collapsible>
       <div
-        className="flex items-center gap-0.5 rounded-lg border border-border bg-card p-1 shadow-lg"
-        role="toolbar"
-        aria-label="Draft actions"
-      >
-        <IconButton
-          label="Undo"
-          disabled={!canUndo || pending || status !== "connected"}
-          onClick={undo}
-        >
-          <Undo2Icon />
-        </IconButton>
-        <IconButton
-          label="Redo"
-          disabled={!canRedo || pending || status !== "connected"}
-          onClick={redo}
-        >
-          <Redo2Icon />
-        </IconButton>
-        <IconButton
-          label="Discard changes"
-          disabled={!dirty || pending || status !== "connected"}
-          onClick={discardChanges}
-        >
-          <RotateCcwIcon />
-        </IconButton>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span
-                className="inline-flex items-center gap-1 px-1.5 text-2xs text-muted-foreground [&>svg]:size-3"
-                role="status"
-                aria-label={savedLabel}
-              >
-                <SavedIcon aria-hidden="true" />
-              </span>
-            }
-          />
-          <TooltipPopup>{error ?? savedLabel}</TooltipPopup>
-        </Tooltip>
-      </div>
-      <div
-        className="flex items-center gap-0.5 rounded-lg border border-border bg-card p-1 shadow-lg"
+        className="flex items-center rounded-lg border border-border bg-card p-1 shadow-lg"
         role="toolbar"
         aria-label="Workflow controls"
       >
-        <RunsSelector
-          runs={workflow.runs}
-          selectedRunId={props.selectedRunId}
-          onSelect={props.onSelectRun}
-        />
-        <WorkflowMenu onRename={() => window.setTimeout(props.onRename, 150)} />
-        <IconButton label="Add agent" onClick={props.onAddAgent}>
-          <BotIcon />
-        </IconButton>
-        <WorkflowSettings />
-        <MachinesButton />
-        {/* t3-backed buttons: approvals, files, browsers, schedule */}
-        <ApprovalsButton nodes={workflow.nodes} />
-        <FilesButton nodes={workflow.nodes} />
-        <BrowsersButton nodes={workflow.nodes} />
-        <ScheduleButton nodes={workflow.nodes} />
-        <ActivitiesButton log={workflow.log} />
-        <IconButton
-          label="Kanban"
-          variant={props.kanban ? "secondary" : "ghost"}
-          aria-pressed={props.kanban}
-          onClick={props.onToggleKanban}
-        >
-          <KanbanIcon />
-        </IconButton>
-        <RunControl />
-        {collapseButton}
+        <Collapsible collapsed={collapsed}>
+          <div className="flex items-center gap-0.5 pr-0.5">
+            <RunsSelector
+              runs={workflow.runs}
+              selectedRunId={props.selectedRunId}
+              onSelect={props.onSelectRun}
+            />
+            <WorkflowMenu onRename={() => window.setTimeout(props.onRename, 150)} />
+            <IconButton label="Add agent" onClick={props.onAddAgent}>
+              <BotIcon />
+            </IconButton>
+            <WorkflowSettings />
+            <MachinesButton />
+            {/* t3-backed buttons: approvals, files, browsers, schedule */}
+            <ApprovalsButton nodes={workflow.nodes} />
+            <FilesButton nodes={workflow.nodes} />
+            <BrowsersButton nodes={workflow.nodes} />
+            <ScheduleButton nodes={workflow.nodes} />
+            <ActivitiesButton log={workflow.log} />
+            <IconButton
+              label="Kanban"
+              variant={props.kanban ? "secondary" : "ghost"}
+              aria-pressed={props.kanban}
+              onClick={props.onToggleKanban}
+            >
+              <KanbanIcon />
+            </IconButton>
+          </div>
+        </Collapsible>
+        <div className="flex items-center gap-0.5">
+          <RunControl />
+          {collapseButton}
+        </div>
       </div>
     </div>
   );

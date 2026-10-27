@@ -357,12 +357,12 @@ const newestRunId = (workflow: Workflow) =>
     (newest, run) => (newest === null || run.startedAt > newest.startedAt ? run : newest),
     null,
   )?.id ?? null;
-/** The kanban shows by default; closing it is remembered per viewer. */
+/** The kanban starts closed, opens when a run starts, and the viewer's choice is remembered. */
 function readKanbanOpen() {
   try {
-    return localStorage.getItem(KANBAN_OPEN_KEY) !== "false";
+    return localStorage.getItem(KANBAN_OPEN_KEY) === "true";
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -378,6 +378,11 @@ function BoardCanvasPage() {
   const flow = useRef<ReactFlowInstance<AgentFlowNode, Edge> | null>(null);
   const canvas = useRef<HTMLDivElement>(null);
   const runningId = activeRunOf(workflow)?.id ?? null;
+  const [seenRunId, setSeenRunId] = useState(runningId);
+  if (runningId !== seenRunId) {
+    setSeenRunId(runningId);
+    if (runningId) setKanban(true);
+  }
   // oxlint-disable-next-line t3code/react-effect-budget -- Frame React Flow's viewport when a run starts.
   useEffect(() => {
     if (!runningId) return;
@@ -397,7 +402,7 @@ function BoardCanvasPage() {
     try {
       localStorage.setItem(KANBAN_OPEN_KEY, String(open));
     } catch {
-      // Storage can be unavailable; the kanban then just opens by default.
+      // Storage can be unavailable; the kanban then just starts closed.
     }
   };
   const selectedRun = workflow.runs.find((run) => run.id === selectedRunId) ?? null;
