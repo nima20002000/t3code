@@ -14,6 +14,12 @@ export interface BoardNode {
   readonly modelSelection: ModelSelection;
   /** Replaces the profile's role text in the node's instructions. */
   readonly prompt?: string;
+  /** The node's own chat thread outside runs, launched on first open. */
+  readonly chat?: {
+    readonly environmentId: EnvironmentId;
+    readonly projectId: ProjectId;
+    readonly threadId: ThreadId;
+  };
   readonly x: number;
   readonly y: number;
 }
@@ -168,12 +174,6 @@ export function workspaceSlug(name: string): string {
   return slug.length > 0 ? slug : "workspace";
 }
 
-export const WORKSPACES_ROOT = "~/t3-workspaces";
-
-/**
- * The folder a workspace gets on a machine it has none on yet; `~` expands on that machine.
- * t3 never reuses a project id, so each folder needs a fresh `uniqueId`.
- */
 /** The name is the default folder name on every machine, so two workspaces cannot share its slug. */
 export function workspaceNameTaken(
   workspaces: ReadonlyArray<Pick<Workspace, "id" | "name">>,
@@ -184,6 +184,12 @@ export function workspaceNameTaken(
   return workspaces.some((entry) => entry.id !== ownId && workspaceSlug(entry.name) === wanted);
 }
 
+export const WORKSPACES_ROOT = "~/t3-workspaces";
+
+/**
+ * The folder a workspace gets on a machine it has none on yet; `~` expands on that machine.
+ * t3 never reuses a project id, so each folder needs a fresh `uniqueId`.
+ */
 export function defaultFolder(
   workspace: Workspace,
   environmentId: EnvironmentId,

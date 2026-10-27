@@ -80,6 +80,7 @@ export class BoardService extends Context.Service<
       input: BoardStartRunInput,
     ) => Effect.Effect<RunRecord, EngineError>;
     readonly stopRun: (id: string, runId: string) => Effect.Effect<RunRecord, EngineError>;
+    readonly openNodeChat: (id: string, nodeId: string) => Effect.Effect<BoardNode, EngineError>;
   }
 >()("t3/board/BoardService") {}
 
@@ -527,6 +528,7 @@ const make = Effect.gen(function* () {
     deleteSchedule,
     startRun: engine.start,
     stopRun: engine.stop,
+    openNodeChat: engine.openNodeChat,
   });
 });
 

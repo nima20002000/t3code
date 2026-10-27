@@ -504,6 +504,17 @@ export async function updateNode(id: string, patch: { x: number; y: number }) {
     return false;
   }
 }
+/** Launches the node's own chat thread if it has none; the snapshot event then carries it. */
+export async function openNodeChat(id: string) {
+  const workflow = getCurrentWorkflow();
+  try {
+    await runBoardMutation((client) =>
+      client.openNodeChat({ headers: {}, params: { workflowId: workflow.id, nodeId: id } }),
+    );
+  } catch (error) {
+    reportError("Could not open the chat", error);
+  }
+}
 export function renameNode(id: string, name: string) {
   if (name.trim()) patchNode(id, { name: name.trim() });
 }

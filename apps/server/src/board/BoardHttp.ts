@@ -77,6 +77,9 @@ const handlers = HttpApiBuilder.group(
       .handle("updateNode", ({ params, payload }) =>
         operate(board.updateNode(params.workflowId, params.nodeId, payload)),
       )
+      .handle("openNodeChat", ({ params }) =>
+        operate(board.openNodeChat(params.workflowId, params.nodeId)),
+      )
       .handle("deleteNode", ({ params }) =>
         operate(board.deleteNode(params.workflowId, params.nodeId)),
       )

@@ -34,7 +34,7 @@ import {
   type RunThread,
   type Workflow,
 } from "@t3tools/board-core";
-import { CommandId, MessageId, ThreadId, type RunId } from "@t3tools/contracts";
+import { CommandId, MessageId, ThreadId, type EnvironmentId, type RunId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -90,6 +90,10 @@ export class TaskEngine extends Context.Service<
       claim: Effect.Effect<boolean, SqlError>,
     ) => Effect.Effect<RunRecord | undefined, EngineError>;
     readonly stop: (workflowId: string, runId: string) => Effect.Effect<RunRecord, EngineError>;
+    readonly openNodeChat: (
+      workflowId: string,
+      nodeId: string,
+    ) => Effect.Effect<BoardNode, EngineError>;
   }
 >()("t3/board/TaskEngine") {}
 
@@ -394,6 +398,101 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /** The workspace's folder on a machine, registered there as a t3 project. */
+  const workspaceFolder = Effect.fn("TaskEngine.workspaceFolder")(function* (
+    workspaceId: string,
+    environmentId: EnvironmentId,
+  ) {
+    const workspace = yield* store.getWorkspace(workspaceId);
+    if (!workspace) return yield* new BoardNotFoundError({ message: "Workspace not found." });
+    const withFolders = withFolder(workspace, environmentId, NodeCrypto.randomUUID());
+    if (withFolders !== workspace)
+      yield* store.transaction(
+        Effect.gen(function* () {
+          yield* store.putWorkspace(withFolders);
+          yield* store.appendEvent({ kind: "workspace.upserted", workspace: withFolders });
+        }),
+      );
+    const folder = withFolders.folders.find((entry) => entry.environmentId === environmentId)!;
+    const driver = yield* drivers.get(environmentId);
+    const { adopted } = yield* driver.ensureProject({
+      environmentId,
+      projectId: folder.projectId,
+      title: workspace.name,
+      path: folder.path,
+    });
+    if (adopted && folder.managed) {
+      const kept = {
+        ...withFolders,
+        folders: withFolders.folders.map((entry) =>
+          entry === folder ? { ...entry, managed: false } : entry,
+        ),
+      };
+      yield* store.transaction(
+        Effect.gen(function* () {
+          yield* store.putWorkspace(kept);
+          yield* store.appendEvent({ kind: "workspace.upserted", workspace: kept });
+        }),
+      );
+    }
+    return { folder, driver };
+  });
+
+  /** The node's own chat outside runs: one thread per node and machine, launched on first open. */
+  const openNodeChat = Effect.fn("TaskEngine.openNodeChat")(
+    function* (workflowId: string, nodeId: string) {
+      const workflow = yield* store.getWorkflow(workflowId);
+      const node = workflow?.nodes.find((entry) => entry.id === nodeId);
+      if (!workflow || !node) return yield* new BoardNotFoundError({ message: "Node not found." });
+      if (node.chat?.environmentId === node.environmentId) return node;
+      const { folder, driver } = yield* workspaceFolder(workflow.workspaceId, node.environmentId);
+      const key = `chat\0${workflowId}\0${node.id}\0${node.environmentId}`;
+      const threadId = ThreadId.make(stableId(key, "thread"));
+      yield* driver.launch({
+        environmentId: node.environmentId,
+        launch: {
+          commandId: CommandId.make(stableId(key, "launch")),
+          threadId,
+          projectId: folder.projectId,
+          title: `${node.name} · ${workflow.name}`,
+          modelSelection: node.modelSelection,
+          runtimeMode: workflow.settings.runtimeMode,
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+        },
+      });
+      const chat = { environmentId: node.environmentId, projectId: folder.projectId, threadId };
+      return yield* store.transaction(
+        Effect.gen(function* () {
+          const current = yield* store.getWorkflow(workflowId);
+          const currentNode = current?.nodes.find((entry) => entry.id === nodeId);
+          if (!current || !currentNode)
+            return yield* new BoardNotFoundError({ message: "Node not found." });
+          const next = { ...currentNode, chat };
+          const saved = {
+            ...current,
+            nodes: current.nodes.map((entry) => (entry.id === nodeId ? next : entry)),
+          };
+          yield* store.putWorkflow(saved);
+          yield* store.appendEvent({ kind: "workflow.upserted", workflow: saved });
+          return next;
+        }),
+      );
+    },
+    Effect.catchTags({
+      SqlError: (cause) =>
+        Effect.logError("Could not open board node chat", { cause }).pipe(
+          Effect.andThen(
+            Effect.fail(new BoardInternalError({ message: "Could not open the chat." })),
+          ),
+        ),
+      NodeDriverError: (cause) =>
+        Effect.fail(
+          new BoardInternalError({ message: `Could not open the chat: ${cause.message}` }),
+        ),
+    }),
+  );
+
   /** Launches the node's fresh thread in the workspace folder on its machine, once per run. */
   const prepareThread = Effect.fn("TaskEngine.prepareThread")(function* (
     workflowId: string,
@@ -405,24 +504,7 @@ const make = Effect.gen(function* () {
     if (!workflow || !run) return yield* new BoardNotFoundError({ message: "Run not found." });
     const existing = run.threads[node.id];
     if (existing) return existing;
-    const workspace = yield* store.getWorkspace(workflow.workspaceId);
-    if (!workspace) return yield* new BoardNotFoundError({ message: "Workspace not found." });
-    const withFolders = withFolder(workspace, node.environmentId, NodeCrypto.randomUUID());
-    if (withFolders !== workspace)
-      yield* store.transaction(
-        Effect.gen(function* () {
-          yield* store.putWorkspace(withFolders);
-          yield* store.appendEvent({ kind: "workspace.upserted", workspace: withFolders });
-        }),
-      );
-    const folder = withFolders.folders.find((entry) => entry.environmentId === node.environmentId)!;
-    const driver = yield* drivers.get(node.environmentId);
-    yield* driver.ensureProject({
-      environmentId: node.environmentId,
-      projectId: folder.projectId,
-      title: workspace.name,
-      path: folder.path,
-    });
+    const { folder, driver } = yield* workspaceFolder(workflow.workspaceId, node.environmentId);
     const key = `${runId}\0${node.id}`;
     const threadId = ThreadId.make(stableId(key, "thread"));
     yield* driver.launch({
@@ -1111,7 +1193,7 @@ const make = Effect.gen(function* () {
   const startClaimed: TaskEngine["Service"]["startClaimed"] = Effect.fn("TaskEngine.startClaimed")(
     (workflowId, input, claim) => startWith(workflowId, input, claim),
   );
-  return TaskEngine.of({ start, startClaimed, stop });
+  return TaskEngine.of({ start, startClaimed, stop, openNodeChat });
 });
 
 export const layer = Layer.effect(TaskEngine, make);

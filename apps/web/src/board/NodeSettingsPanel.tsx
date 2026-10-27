@@ -6,6 +6,7 @@ import { Link } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useSendBoardInstructions } from "./useSendBoardInstructions";
 import {
+  openNodeChat,
   removeNode,
   renameNode,
   setNodeRole,
@@ -163,9 +164,14 @@ export function NodeSettingsPanel(props: {
       </div>
       <div className="relative isolate flex min-h-0 min-w-0 flex-1 [transform:translateZ(0)] flex-col overflow-hidden">
         {node.threadId === "" ? (
-          <p className="p-4 text-sm text-muted-foreground">
-            {node.name} has no chat yet. Its thread starts with the next run.
-          </p>
+          <div className="grid content-start gap-3 p-4 text-sm">
+            <p className="text-muted-foreground">{node.name} has no chat yet.</p>
+            <div>
+              <Button size="sm" variant="outline" onClick={() => void openNodeChat(node.id)}>
+                Start chat
+              </Button>
+            </div>
+          </div>
         ) : connectedIds.includes(node.environmentId) ? (
           <ChatView
             environmentId={node.environmentId}

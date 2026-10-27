@@ -26,6 +26,7 @@ import {
   getWorkflow,
   recordHistoryStep,
   removeEdge,
+  openNodeChat,
   removeNode,
   updateNode,
   useCurrentWorkflow,
@@ -225,7 +226,10 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
       slot: "chat",
       label: `Open ${node.name} thread`,
       icon: <MessageSquareIcon size={15} />,
-      onClick: () => openSettings(node.id),
+      onClick: () => {
+        openSettings(node.id);
+        if (node.threadId === "") void openNodeChat(node.id);
+      },
     },
     {
       slot: "settings",

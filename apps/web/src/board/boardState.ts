@@ -6,8 +6,8 @@ import type { BoardEvent, BoardSnapshot } from "@t3tools/board-core/http";
 import type { ThreadId } from "@t3tools/contracts";
 
 /**
- * Until the UI works with per-run threads: a node's thread is the one its newest run launched
- * for it. Nodes that never ran have none (an empty id matches no thread).
+ * A node's thread is the one its newest run launched for it, else its own chat thread. A node with
+ * neither has none (an empty id matches no thread).
  */
 export type BoardNode = CoreNode & { readonly threadId: ThreadId };
 export type Workflow = Omit<CoreWorkflow, "nodes"> & { readonly nodes: ReadonlyArray<BoardNode> };
@@ -24,6 +24,7 @@ export function workflowView(workflow: CoreWorkflow): Workflow {
       ...node,
       threadId:
         newestFirst.find((run) => run.threads[node.id] !== undefined)?.threads[node.id]?.threadId ??
+        node.chat?.threadId ??
         NO_THREAD,
     })),
   };

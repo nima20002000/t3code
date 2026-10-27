@@ -30,6 +30,9 @@ export const BoardNodeSchema = Schema.Struct({
   environmentId: EnvironmentId,
   modelSelection: ModelSelection,
   prompt: Schema.optionalKey(Schema.String),
+  chat: Schema.optionalKey(
+    Schema.Struct({ environmentId: EnvironmentId, projectId: ProjectId, threadId: ThreadId }),
+  ),
   x: Schema.Number,
   y: Schema.Number,
 });
@@ -451,6 +454,14 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
       headers: OptionalAuthHeaders,
       params: NodeParams,
       payload: BoardUpdateNodeInput,
+      success: BoardNodeSchema,
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("openNodeChat", "/workflows/:workflowId/nodes/:nodeId/chat", {
+      headers: OptionalAuthHeaders,
+      params: NodeParams,
       success: BoardNodeSchema,
       error: Errors,
     }),

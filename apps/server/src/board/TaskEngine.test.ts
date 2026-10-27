@@ -186,6 +186,33 @@ it.effect("removes schedules when their node or workflow is deleted", () =>
   }),
 );
 
+it.effect("opens a node's own chat once, without a run, in the workspace folder", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const layer = TaskEngine.layer.pipe(
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(seed(store, setupWorkflow()));
+      const opened = yield* engine.openNodeChat("workflow", "one");
+      const again = yield* engine.openNodeChat("workflow", "one");
+      const launched = yield* Queue.takeAll(harness.launches);
+      assert.strictEqual(launched.length, 1);
+      assert.strictEqual(launched[0]!.launch.threadId, opened.chat?.threadId);
+      assert.deepStrictEqual(again.chat, opened.chat);
+      const workflow = yield* store.getWorkflow("workflow");
+      assert.deepStrictEqual(
+        workflow?.nodes.find((entry) => entry.id === "one")?.chat,
+        opened.chat,
+      );
+      assert.deepStrictEqual(workflow?.runs, []);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 it.effect("joins all child returns before sending one combined message", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness;
