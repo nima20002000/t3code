@@ -22,21 +22,20 @@ function savePanelPosition(key: string, position: PanelPosition) {
 }
 
 let morphing = false;
-const BLUR_MS = 320;
+const SWAP_MS = 100;
+const BLUR_MS = 280;
 const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
-const fade = (element: Element, to: number, duration: number, delay = 0) =>
+const fade = (element: Element, to: number, duration: number) =>
   element.animate([{ opacity: 1 - to }, { opacity: to }], {
     duration,
-    delay,
     easing: "ease-out",
     fill: "forwards",
   }).finished;
 
 /**
- * Toggles full screen through a blur of the board. Opening: the blur comes in, the small panel
- * fades into it, and the full panel fades in over the still-growing blur. Minimizing runs that in
- * reverse. Resizing re-lays out the whole chat and blocks the main thread, so it happens while the
- * panel is invisible.
+ * Toggles full screen through a blur of the board. Opening: the small panel fades out, then the
+ * full panel and the blur fade in together. Minimizing reverses it. Resizing re-lays out the whole
+ * chat and blocks the main thread, so it happens while the panel is invisible.
  */
 export async function morphPanel(panel: HTMLElement | null, maximize: boolean, update: () => void) {
   if (morphing) return;
@@ -47,22 +46,19 @@ export async function morphPanel(panel: HTMLElement | null, maximize: boolean, u
   morphing = true;
   const backdrop = document.createElement("div");
   backdrop.className = "board-panel-backdrop";
+  backdrop.style.opacity = maximize ? "0" : "1";
   document.body.append(backdrop);
   try {
-    // Minimizing starts under the full panel, where the blur already shows as it fades.
-    const blurIn = fade(backdrop, 1, maximize ? BLUR_MS : 1);
-    await fade(panel, 0, maximize ? 100 : 240);
+    if (maximize) await fade(panel, 0, SWAP_MS);
+    else await Promise.all([fade(panel, 0, BLUR_MS), fade(backdrop, 0, BLUR_MS)]);
     flushSync(update);
     // The chat re-renders once more when it observes its new size; let that pass before fading in.
     await nextFrame();
     await nextFrame();
-    const reveal = fade(panel, 1, maximize ? 240 : 160);
-    if (maximize) await Promise.all([reveal, blurIn]);
-    else await Promise.all([reveal, fade(backdrop, 0, BLUR_MS, 60)]);
+    if (maximize) await Promise.all([fade(panel, 1, BLUR_MS), fade(backdrop, 1, BLUR_MS)]);
+    else await fade(panel, 1, SWAP_MS);
   } finally {
-    for (const animation of [...panel.getAnimations(), ...backdrop.getAnimations()]) {
-      animation.cancel();
-    }
+    for (const animation of panel.getAnimations()) animation.cancel();
     backdrop.remove();
     morphing = false;
   }
