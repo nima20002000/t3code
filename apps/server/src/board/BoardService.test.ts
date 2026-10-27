@@ -150,7 +150,6 @@ it.effect(
         yield* board.createSchedule({
           id: "s",
           workflowId: "w",
-          nodeId: "a",
           task: "Work",
           everyMs: 60_000,
           enabled: true,

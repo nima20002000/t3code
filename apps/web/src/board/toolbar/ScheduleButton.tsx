@@ -1,4 +1,5 @@
 import { ClockIcon, Trash2Icon } from "lucide-react";
+import { entryNodeOf } from "@t3tools/board-core/routing";
 import { useState } from "react";
 
 import { runBoardMutation } from "../boardApi";
@@ -11,12 +12,11 @@ const FIELD_CLASS = "h-8 w-full rounded-md border bg-background px-2 text-sm";
 export function ScheduleButton(props: { readonly nodes: ReadonlyArray<BoardNode> }) {
   const workflow = useCurrentWorkflow();
   const schedules = useBoardSchedules().filter((schedule) => schedule.workflowId === workflow.id);
-  const [nodeId, setNodeId] = useState("");
   const [task, setTask] = useState("");
   const [minutes, setMinutes] = useState("60");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const entry = props.nodes.find((node) => node.id === nodeId) ?? props.nodes[0];
+  const entry = entryNodeOf(props.nodes);
   const everyMs = Math.round(Number(minutes) * 60_000);
   const valid =
     entry !== undefined &&
@@ -34,7 +34,6 @@ export function ScheduleButton(props: { readonly nodes: ReadonlyArray<BoardNode>
           payload: {
             id: randomUUID(),
             workflowId: workflow.id,
-            nodeId: entry.id,
             task: task.trim(),
             everyMs,
             enabled: true,
@@ -70,24 +69,10 @@ export function ScheduleButton(props: { readonly nodes: ReadonlyArray<BoardNode>
   };
   return (
     <ToolbarPopover label="Schedule" icon={<ClockIcon />}>
-      {props.nodes.length === 0 ? (
-        <p className="text-muted-foreground">Add an agent to the board first.</p>
+      {!entry ? (
+        <p className="text-muted-foreground">Add an orchestrator to the board first.</p>
       ) : (
         <div className="grid gap-2">
-          <label className="grid gap-1 text-xs text-muted-foreground">
-            Entry agent
-            <select
-              className={FIELD_CLASS}
-              value={entry?.id ?? ""}
-              onChange={(event) => setNodeId(event.target.value)}
-            >
-              {props.nodes.map((node) => (
-                <option key={node.id} value={node.id}>
-                  {node.name}
-                </option>
-              ))}
-            </select>
-          </label>
           <label className="grid gap-1 text-xs text-muted-foreground">
             Task
             <textarea

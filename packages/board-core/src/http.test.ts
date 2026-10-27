@@ -21,7 +21,7 @@ const decodeUnknownSyncBoardPeerSchema = Schema.decodeUnknownSync(BoardPeerSchem
 
 describe("board wire contract", () => {
   it("validates run, node, and cap input", () => {
-    expect(() => decodeSyncBoardStartRunInput({ id: "r", nodeId: "n", task: "  " })).toThrow();
+    expect(() => decodeSyncBoardStartRunInput({ id: "r", task: "  " })).toThrow();
     expect(() =>
       decodeSyncBoardWorkflowSettingsSchema({
         defaultInstanceId: "codex",

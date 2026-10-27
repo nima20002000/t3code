@@ -172,14 +172,9 @@ const make = Effect.gen(function* () {
   });
   const deleteSchedulesFor = Effect.fn("BoardService.deleteSchedulesFor")(function* (
     workflowId: string,
-    nodeId?: string,
   ) {
     for (const schedule of yield* store.listSchedules()) {
-      if (
-        schedule.workflowId !== workflowId ||
-        (nodeId !== undefined && schedule.nodeId !== nodeId)
-      )
-        continue;
+      if (schedule.workflowId !== workflowId) continue;
       yield* store.deleteSchedule(schedule.id);
       yield* store.appendEvent({ kind: "schedule.deleted", scheduleId: schedule.id });
     }
@@ -391,7 +386,6 @@ const make = Effect.gen(function* () {
         yield* checkEditable(workflow);
         if (!workflow.nodes.some((node) => node.id === nodeId))
           return yield* new BoardNotFoundError({ message: "Node not found." });
-        yield* deleteSchedulesFor(id, nodeId);
         for (const card of yield* store.listKanban(id)) {
           if (card.assigneeNodeId !== nodeId) continue;
           const { assigneeNodeId: _gone, ...unassigned } = card;
@@ -453,9 +447,7 @@ const make = Effect.gen(function* () {
   ) {
     return yield* store.transaction(
       Effect.gen(function* () {
-        const workflow = yield* getWorkflow(input.workflowId);
-        if (!workflow.nodes.some((node) => node.id === input.nodeId))
-          return yield* new BoardInvalidRequestError({ message: "Schedule node not found." });
+        yield* getWorkflow(input.workflowId);
         if ((yield* store.listSchedules()).some((entry) => entry.id === input.id))
           return yield* new BoardConflictError({ message: "Schedule id already exists." });
         const schedule: BoardSchedule = {
@@ -475,9 +467,6 @@ const make = Effect.gen(function* () {
     return yield* store.transaction(
       Effect.gen(function* () {
         const current = yield* findSchedule(id);
-        const workflow = yield* getWorkflow(current.workflowId);
-        if (input.nodeId !== undefined && !workflow.nodes.some((node) => node.id === input.nodeId))
-          return yield* new BoardInvalidRequestError({ message: "Schedule node not found." });
         const merged = { ...current, ...input };
         const schedule: BoardSchedule = {
           ...merged,

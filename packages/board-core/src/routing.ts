@@ -47,6 +47,11 @@ export function validateRunnable(
   return problems;
 }
 
+/** Runs, scheduled or not, always start at the workflow's one orchestrator. */
+export function entryNodeOf(nodes: ReadonlyArray<BoardNode>): BoardNode | undefined {
+  return nodes.find((node) => node.profile === "orchestrator");
+}
+
 export interface SettledMessage {
   readonly id: string;
   readonly role: string;

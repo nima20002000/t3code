@@ -144,7 +144,7 @@ const waitForRun = (
     Effect.map(Option.getOrThrow),
   );
 
-it.effect("removes schedules when their node or workflow is deleted", () =>
+it.effect("schedules outlive a deleted node and go with their workflow", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness;
     const layer = BoardService.layer.pipe(
@@ -156,11 +156,10 @@ it.effect("removes schedules when their node or workflow is deleted", () =>
       const board = yield* BoardService.BoardService;
       const store = yield* BoardStore.BoardStore;
       yield* store.transaction(seed(store, setupWorkflow()));
-      for (const nodeId of ["root", "one"]) {
+      for (const id of ["a", "b"]) {
         yield* board.createSchedule({
-          id: `schedule:${nodeId}`,
+          id: `schedule:${id}`,
           workflowId: "workflow",
-          nodeId,
           task: "Work",
           everyMs: 60_000,
           enabled: true,
@@ -169,7 +168,7 @@ it.effect("removes schedules when their node or workflow is deleted", () =>
       yield* board.deleteNode("workflow", "one");
       assert.deepStrictEqual(
         (yield* board.listSchedules()).map((entry) => entry.id),
-        ["schedule:root"],
+        ["schedule:a", "schedule:b"],
       );
       yield* board.deleteWorkflow("workflow");
       assert.deepStrictEqual(yield* board.listSchedules(), []);
@@ -180,7 +179,7 @@ it.effect("removes schedules when their node or workflow is deleted", () =>
       );
       assert.deepStrictEqual(
         deleted.map((event) => event.kind === "schedule.deleted" && event.scheduleId),
-        ["schedule:one", "schedule:root"],
+        ["schedule:a", "schedule:b"],
       );
     }).pipe(Effect.provide(layer));
   }),
@@ -225,7 +224,7 @@ it.effect("joins all child returns before sending one combined message", () =>
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
       yield* store.transaction(seed(store, setupWorkflow()));
-      yield* engine.start("workflow", { id: "run:join", nodeId: "root", task: "Delegate" });
+      yield* engine.start("workflow", { id: "run:join", task: "Delegate" });
       const root = yield* Queue.take(harness.sends);
       yield* harness.reply(root, request);
       const first = yield* Queue.take(harness.sends);
@@ -259,7 +258,7 @@ it.effect("failFast stops siblings when a child fails", () =>
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
       yield* store.transaction(seed(store, setupWorkflow("failFast")));
-      yield* engine.start("workflow", { id: "run:fail-fast", nodeId: "root", task: "Delegate" });
+      yield* engine.start("workflow", { id: "run:fail-fast", task: "Delegate" });
       yield* harness.reply(yield* Queue.take(harness.sends), request);
       const first = yield* Queue.take(harness.sends);
       const second = yield* Queue.take(harness.sends);
@@ -311,7 +310,7 @@ it.effect("joins the latest child results if a return commits during the join", 
     yield* store.transaction(seed(store, setupWorkflow()));
     yield* Effect.gen(function* () {
       const engine = yield* TaskEngine.TaskEngine;
-      yield* engine.start("workflow", { id: "run:join-race", nodeId: "root", task: "Delegate" });
+      yield* engine.start("workflow", { id: "run:join-race", task: "Delegate" });
       const root = yield* Queue.take(harness.sends);
       yield* Queue.take(subscribed);
       yield* harness.reply(root, request);
@@ -360,7 +359,7 @@ it.effect("stops all active tasks and interrupts their threads", () =>
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
       yield* store.transaction(seed(store, setupWorkflow()));
-      yield* engine.start("workflow", { id: "run:stop", nodeId: "root", task: "Delegate" });
+      yield* engine.start("workflow", { id: "run:stop", task: "Delegate" });
       yield* harness.reply(yield* Queue.take(harness.sends), request);
       const stoppedOne = yield* Queue.take(harness.sends);
       const stoppedTwo = yield* Queue.take(harness.sends);
@@ -409,7 +408,7 @@ it.effect("retries an interrupted stop after restart with the same command ID", 
     const first = yield* Effect.scoped(
       Effect.gen(function* () {
         const engine = yield* TaskEngine.TaskEngine;
-        yield* engine.start("workflow", { id: "run:stop-recovery", nodeId: "root", task: "Hold" });
+        yield* engine.start("workflow", { id: "run:stop-recovery", task: "Hold" });
         yield* Queue.take(harness.sends);
         yield* engine.stop("workflow", "run:stop-recovery").pipe(Effect.forkScoped);
         return yield* Queue.take(calls);
@@ -460,7 +459,7 @@ it.effect("allows a failed stop to be retried without restarting", () =>
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
       yield* store.transaction(seed(store, setupWorkflow()));
-      yield* engine.start("workflow", { id: "run:stop-retry", nodeId: "root", task: "Hold" });
+      yield* engine.start("workflow", { id: "run:stop-retry", task: "Hold" });
       yield* Queue.take(harness.sends);
       yield* engine.stop("workflow", "run:stop-retry").pipe(Effect.flip);
       assert.strictEqual((yield* store.getTask("run:stop-retry"))?.status, "completing");
@@ -486,7 +485,7 @@ it.effect("records capped requests as denied and returns them to the requester",
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
       yield* store.transaction(seed(store, setupWorkflow("allSettled", 0)));
-      yield* engine.start("workflow", { id: "run:capped", nodeId: "root", task: "Delegate" });
+      yield* engine.start("workflow", { id: "run:capped", task: "Delegate" });
       const rootSend = yield* Queue.take(harness.sends);
       yield* harness.reply(rootSend, request);
       const response = yield* Queue.take(harness.sends);
@@ -538,7 +537,7 @@ it.effect("replays an interrupted dispatch with the same command and message IDs
     const first = yield* Effect.scoped(
       Effect.gen(function* () {
         const engine = yield* TaskEngine.TaskEngine;
-        yield* engine.start("workflow", { id: "run:recovery", nodeId: "root", task: "Recover" });
+        yield* engine.start("workflow", { id: "run:recovery", task: "Recover" });
         return yield* Queue.take(calls);
       }).pipe(Effect.provide(engineLayer)),
     );
@@ -572,7 +571,6 @@ it.effect("starts due schedules without a client and advances the persisted dead
           yield* store.putSchedule({
             id: "schedule",
             workflowId: "workflow",
-            nodeId: "root",
             task: "Scheduled task",
             everyMs: 60_000,
             enabled: true,
@@ -623,7 +621,7 @@ it.effect("retries persisted stop intents in the background", () =>
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
       yield* store.transaction(seed(store, setupWorkflow()));
-      yield* engine.start("workflow", { id: "run:bg-stop", nodeId: "root", task: "Hold" });
+      yield* engine.start("workflow", { id: "run:bg-stop", task: "Hold" });
       yield* Queue.take(harness.sends);
       yield* engine.stop("workflow", "run:bg-stop").pipe(Effect.flip);
       yield* TestClock.adjust("30 seconds");
@@ -644,9 +642,9 @@ it.effect("stop cancels every active run of the workflow", () =>
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
       yield* store.transaction(seed(store, setupWorkflow()));
-      yield* engine.start("workflow", { id: "run:a", nodeId: "root", task: "A" });
+      yield* engine.start("workflow", { id: "run:a", task: "A" });
       yield* Queue.take(harness.sends);
-      yield* engine.start("workflow", { id: "run:b", nodeId: "root", task: "B" });
+      yield* engine.start("workflow", { id: "run:b", task: "B" });
       yield* Queue.take(harness.sends);
       yield* engine.stop("workflow", "run:a");
       const runs = (yield* store.getWorkflow("workflow"))?.runs ?? [];
@@ -671,7 +669,7 @@ it.effect("returns the existing run when a start is repeated with the same id", 
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
       yield* store.transaction(seed(store, setupWorkflow()));
-      const input = { id: "run:again", nodeId: "root", task: "Once" };
+      const input = { id: "run:again", task: "Once" };
       const first = yield* engine.start("workflow", input);
       yield* Queue.take(harness.sends);
       const repeated = yield* engine.start("workflow", input);
@@ -731,7 +729,7 @@ it.effect("keeps only the last 50 finished runs and never prunes active ones", (
       yield* store.transaction(
         Effect.all([store.putTask(oldTask("old:0")), store.putTask(oldTask("old:59"))]),
       );
-      yield* engine.start("workflow", { id: "run:new", nodeId: "root", task: "New" });
+      yield* engine.start("workflow", { id: "run:new", task: "New" });
       assert.deepStrictEqual(yield* store.listTasks("old:0"), []);
       assert.strictEqual((yield* store.listTasks("old:59")).length, 1);
       const runs = (yield* store.getWorkflow("workflow"))?.runs ?? [];
@@ -778,7 +776,7 @@ it.effect("retries an uncertain send with the same ids instead of failing the ta
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
       yield* store.transaction(seed(store, setupWorkflow()));
-      yield* engine.start("workflow", { id: "run:uncertain", nodeId: "root", task: "Go" });
+      yield* engine.start("workflow", { id: "run:uncertain", task: "Go" });
       const first = yield* Queue.take(calls);
       yield* TestClock.adjust("15 seconds");
       const second = yield* Queue.take(calls);
@@ -819,7 +817,7 @@ it.effect("interrupts the thread when Stop lands while an uncertain send waits t
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
       yield* store.transaction(seed(store, setupWorkflow()));
-      yield* engine.start("workflow", { id: "run:stop-uncertain", nodeId: "root", task: "Go" });
+      yield* engine.start("workflow", { id: "run:stop-uncertain", task: "Go" });
       yield* Queue.take(calls);
       const stopped = yield* engine.stop("workflow", "run:stop-uncertain");
       const interrupt = yield* Queue.take(interrupts);
@@ -850,7 +848,7 @@ it.effect("fails a task with the driver's message when the send is certain to ha
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
       yield* store.transaction(seed(store, setupWorkflow()));
-      yield* engine.start("workflow", { id: "run:expired", nodeId: "root", task: "Go" });
+      yield* engine.start("workflow", { id: "run:expired", task: "Go" });
       const event = yield* waitForRun(store, (run) => run.status === "failed");
       if (event.kind === "run.upserted")
         assert.strictEqual(event.run.summary, "Re-pair needed: expired");
@@ -938,7 +936,7 @@ it.effect(
         const engine = yield* TaskEngine.TaskEngine;
         const store = yield* BoardStore.BoardStore;
         yield* store.transaction(seed(store, setupWorkflow()));
-        yield* engine.start("workflow", { id: "run:cards", nodeId: "root", task: "Plan" });
+        yield* engine.start("workflow", { id: "run:cards", task: "Plan" });
         const root = yield* Queue.take(harness.sends);
         yield* harness.reply(
           root,
@@ -978,7 +976,7 @@ it.effect("a worker's return completes the card chosen for its own request", () 
       yield* store.putCard("workflow", card("card-b", "one"));
       const requestFrom = (runId: string) =>
         Effect.gen(function* () {
-          yield* engine.start("workflow", { id: runId, nodeId: "root", task: "Go" });
+          yield* engine.start("workflow", { id: runId, task: "Go" });
           const root = yield* Queue.take(harness.sends);
           yield* harness.reply(root, withKanban("[]", requestTo("one")));
           return yield* Queue.take(harness.sends);

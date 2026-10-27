@@ -21,6 +21,7 @@ import {
   incomingNodeNames,
   moveCard,
   parseResult,
+  entryNodeOf,
   validateRunnable,
   withFolder,
   type BoardNode,
@@ -1049,14 +1050,9 @@ const make = Effect.gen(function* () {
           if (!workflow) return yield* new BoardNotFoundError({ message: "Workflow not found." });
           if (yield* store.getTask(input.id)) {
             const existing = workflow.runs.find((entry) => entry.id === input.id);
-            if (existing?.nodeId === input.nodeId && existing.task === input.task) return existing;
+            if (existing?.task === input.task) return existing;
             return yield* new BoardConflictError({ message: "Run id already exists." });
           }
-          const node = workflow.nodes.find((entry) => entry.id === input.nodeId);
-          if (!node)
-            return yield* new BoardInvalidRequestError({
-              message: "The entry node was not found.",
-            });
           const [problem] = validateRunnable(workflow);
           if (problem)
             return yield* new BoardInvalidRequestError({
@@ -1066,6 +1062,11 @@ const make = Effect.gen(function* () {
                   : problem.kind === "several-orchestrators"
                     ? "A workflow has at most one orchestrator."
                     : "The workflow graph is invalid.",
+            });
+          const node = entryNodeOf(workflow.nodes);
+          if (!node)
+            return yield* new BoardInvalidRequestError({
+              message: "Add an orchestrator to run this workflow.",
             });
           const run: RunRecord = {
             id: input.id,

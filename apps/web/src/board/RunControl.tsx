@@ -1,4 +1,5 @@
 import { Loader2Icon, PlayIcon, SquareIcon } from "lucide-react";
+import { entryNodeOf } from "@t3tools/board-core/routing";
 import { useRef, useState } from "react";
 
 import { activeRunOf, useCurrentWorkflow } from "./boardStore";
@@ -14,17 +15,16 @@ import {
 
 const FIELD_CLASS = "w-full rounded-md border bg-background px-2 py-1.5 text-sm";
 
-/** Foreman's run action: one Run/Stop control: Run (entry agent + task) until a run is live, then Stop (Stopping while it winds down). */
+/** Foreman's run action: one Run/Stop control: Run (a task for the orchestrator) until a run is live, then Stop (Stopping while it winds down). */
 export function RunControl() {
   const workflow = useCurrentWorkflow();
   const { nodes } = workflow;
   const [open, setOpen] = useState(false);
-  const [nodeId, setNodeId] = useState("");
   const [task, setTask] = useState("");
   const [stopping, setStopping] = useState(false);
   const [starting, setStarting] = useState(false);
   const pendingStart = useRef<{ key: string; id: string } | null>(null);
-  const entry = nodes.find((node) => node.id === nodeId) ?? nodes[0];
+  const entry = entryNodeOf(nodes);
   const activeRun = activeRunOf(workflow);
   const running = activeRun !== undefined || workflow.runQueue.length > 0;
   const canStart = entry !== undefined && task.trim().length > 0 && !starting && !running;
@@ -32,14 +32,14 @@ export function RunControl() {
   const start = () => {
     if (!entry || !canStart) return;
     setStarting(true);
-    const key = JSON.stringify([workflow.id, entry.id, task.trim()]);
+    const key = JSON.stringify([workflow.id, task.trim()]);
     const id = pendingStart.current?.key === key ? pendingStart.current.id : randomUUID();
     pendingStart.current = { key, id };
     void runBoardMutation((client) =>
       client.startRun({
         headers: {},
         params: { workflowId: workflow.id },
-        payload: { id, nodeId: entry.id, task: task.trim() },
+        payload: { id, task: task.trim() },
       }),
     )
       .then(() => {
@@ -99,24 +99,10 @@ export function RunControl() {
         <PlayIcon />
       </PopoverTrigger>
       <PopoverPopup width="lg" align="end">
-        {nodes.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Add an agent to the board first.</p>
+        {!entry ? (
+          <p className="text-sm text-muted-foreground">Add an orchestrator to the board first.</p>
         ) : (
           <div className="grid gap-3 text-sm">
-            <label className="grid gap-1">
-              Entry agent
-              <select
-                className={FIELD_CLASS}
-                value={entry?.id ?? ""}
-                onChange={(event) => setNodeId(event.target.value)}
-              >
-                {nodes.map((node) => (
-                  <option key={node.id} value={node.id}>
-                    {node.name}
-                  </option>
-                ))}
-              </select>
-            </label>
             <label className="grid gap-1">
               Task
               <textarea

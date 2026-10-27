@@ -41,11 +41,7 @@ export const layer = Layer.effectDiscard(
         });
         const runId = `board:schedule:${encodeURIComponent(id)}:${encodeURIComponent(dueAt)}`;
         yield* engine
-          .startClaimed(
-            schedule.workflowId,
-            { id: runId, nodeId: schedule.nodeId, task: schedule.task },
-            claim,
-          )
+          .startClaimed(schedule.workflowId, { id: runId, task: schedule.task }, claim)
           .pipe(
             Effect.catch((cause) =>
               Effect.logWarning("Board schedule could not start", { scheduleId: id, cause }),

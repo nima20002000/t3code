@@ -150,7 +150,6 @@ export type BoardPeer = typeof BoardPeerSchema.Type;
 export const BoardScheduleSchema = Schema.Struct({
   id: Id,
   workflowId: Id,
-  nodeId: Id,
   task: TrimmedNonEmptyString,
   everyMs: PositiveInt,
   enabled: Schema.Boolean,
@@ -315,19 +314,16 @@ export const BoardPairPeerInput = Schema.Struct({
 });
 export const BoardStartRunInput = Schema.Struct({
   id: Id,
-  nodeId: Id,
   task: TrimmedNonEmptyString,
 });
 export const BoardCreateScheduleInput = Schema.Struct({
   id: Id,
   workflowId: Id,
-  nodeId: Id,
   task: TrimmedNonEmptyString,
   everyMs: PositiveInt,
   enabled: Schema.Boolean,
 });
 export const BoardUpdateScheduleInput = Schema.Struct({
-  nodeId: Schema.optionalKey(Id),
   task: Schema.optionalKey(TrimmedNonEmptyString),
   everyMs: Schema.optionalKey(PositiveInt),
   enabled: Schema.optionalKey(Schema.Boolean),
