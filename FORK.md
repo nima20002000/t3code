@@ -21,7 +21,7 @@ a merge (the server route is reserved for the later server phase):
 - `apps/web/src/routeTree.gen.ts`: generated board route registration.
 - `pnpm-lock.yaml`: workspace and board dependency lock entries.
 
-Fork tooling is `FORK.md`, `scripts/fork-sync.sh`, and the fork-only
+Fork tooling is `FORK.md`, `scripts/fork-sync.sh`, `scripts/board-test.mjs`, and the fork-only
 `.github/workflows/board-*.yml` workflows. Keep new board code in the owned
 folders; do not patch upstream internals to make the board work.
 
@@ -31,7 +31,11 @@ Run `scripts/fork-sync.sh` from a clean `board/mvp` checkout. It fetches upstrea
 selects and merges the highest stable `vX.Y.Z` upstream tag, reports conflicted
 files for comparison with the touch points above, and runs all board-owned tests.
 After resolving a conflicted merge, commit it and run `scripts/fork-sync.sh --tests`.
-It never merges `main`, preview tags, or nightly tags. Resolve conflicts before
+It never merges `main`, preview tags, or nightly tags.
+
+Run board tests locally with `node scripts/board-test.mjs`. It keeps a pass per test file in
+`~/.cache/t3-board-tests`, keyed by the file, everything it imports, setup files, configs and the
+lockfile, and runs only files without a pass (`--full` runs all). CI restores the same cache. Resolve conflicts before
 rerunning the board tests. Keep the VPS on the published stable `t3` release.
 
 Never run upstream test suites. Board CI typechecks board-core, web, and the

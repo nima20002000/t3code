@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       tests:
-        description: Space-separated board-owned test paths (empty = changed tests and seams)
+        description: Space-separated board-owned test paths to run without the cache (empty = every board test without a cached pass)
         required: false
         default: ""
 
@@ -39,7 +39,14 @@ jobs:
       - name: Typecheck web
         run: vp run --filter @t3tools/web typecheck
 
-      - name: Run board-owned changed tests and seams
+      # Per-file passes keyed by content (scripts/board-test.mjs); a run executes only unproven files.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/t3-board-tests
+          key: board-tests-${{ github.sha }}
+          restore-keys: board-tests-
+
+      - name: Run board tests without a cached pass
         env:
           INPUT_TESTS: ${{ inputs.tests }}
         run: scripts/fork-sync.sh --ci

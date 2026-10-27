@@ -3,75 +3,19 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-is_board_test() {
-  [[ "$1" =~ ^(packages/board-core|apps/server/src/board|apps/web/src/board)/[a-zA-Z0-9_./-]+\.test\.(ts|tsx)$ && "$1" != *..* ]]
-}
-
 run_board_tests() {
-  local selection="$1" file base
-  local -a candidates=() core=() server=() web=() browser=()
-  if [[ -n "${INPUT_TESTS:-}" ]]; then
-    read -r -a candidates <<< "$INPUT_TESTS"
-  elif [[ "$selection" == changed ]]; then
-    base="$(git merge-base origin/main HEAD)"
-    while IFS= read -r -d '' file; do candidates+=("$file"); done < <(
-      git diff --name-only -z --no-renames --diff-filter=ACMRT "$base" HEAD -- \
-        packages/board-core apps/server/src/board apps/web/src/board
-    )
-    while IFS= read -r -d '' file; do
-      if [[ "$file" == *.seam.test.ts || "$file" == *.seam.test.tsx ]]; then candidates+=("$file"); fi
-    done < <(git ls-files -z -- packages/board-core apps/server/src/board apps/web/src/board)
-  else
-    while IFS= read -r -d '' file; do candidates+=("$file"); done < <(
-      git ls-files -z -- packages/board-core apps/server/src/board apps/web/src/board
-    )
-  fi
-
-  local -A seen=()
-  for file in "${candidates[@]}"; do
-    if ! is_board_test "$file"; then
-      if [[ -n "${INPUT_TESTS:-}" ]]; then
-        printf 'Not a board-owned test: %s\n' "$file" >&2
-        return 1
-      fi
-      continue
-    fi
-    if ! git cat-file -e "HEAD:$file" 2>/dev/null; then
-      printf 'Test does not exist in HEAD: %s\n' "$file" >&2
-      return 1
-    fi
-    if [[ "$selection" == changed && -z "${INPUT_TESTS:-}" && ( "$file" == *.published.seam.test.ts || "$file" == *.published.seam.test.tsx ) ]]; then continue; fi
-    [[ -n "${seen[$file]:-}" ]] && continue
-    seen[$file]=1
-    case "$file" in
-      packages/board-core/*) core+=("${file#packages/board-core/}") ;;
-      apps/server/src/board/*) server+=("${file#apps/server/}") ;;
-      apps/web/src/board/*.browser.test.ts|apps/web/src/board/*.browser.test.tsx) browser+=("${file#apps/web/}") ;;
-      apps/web/src/board/*) web+=("${file#apps/web/}") ;;
-    esac
-  done
-  if ((${#seen[@]})); then
-    printf 'Board tests:\n'
-    printf '  %s\n' "${!seen[@]}"
-  else
-    printf 'Board tests: none\n'
-  fi
-  if ((${#core[@]})); then (cd packages/board-core && vp test run --config ../../vite.config.ts --dir . "${core[@]}"); fi
-  if ((${#server[@]})); then (cd apps/server && vp test run "${server[@]}"); fi
-  if ((${#web[@]})); then (cd apps/web && vp test run --project unit "${web[@]}"); fi
-  if ((${#browser[@]})); then
-    if [[ "${CI:-}" == true ]]; then (cd apps/web && vp exec playwright install --with-deps chromium); fi
-    (cd apps/web && vp test run --project browser "${browser[@]}")
-  fi
+  local -a named=()
+  if [[ -n "${INPUT_TESTS:-}" ]]; then read -r -a named <<< "$INPUT_TESTS"; fi
+  node scripts/board-test.mjs "${named[@]}"
 }
 
 if [[ "${1:-}" == --ci && $# == 1 ]]; then
-  run_board_tests changed
+  run_board_tests
   exit
 fi
 if [[ "${1:-}" == --tests && $# == 1 ]]; then
   unset INPUT_TESTS
-  run_board_tests all
+  run_board_tests
   exit
 fi
 if (($#)); then
@@ -101,4 +45,4 @@ if ! git merge --no-edit "refs/tags/$stable"; then
   exit 1
 fi
 unset INPUT_TESTS
-run_board_tests all
+run_board_tests
