@@ -1,4 +1,5 @@
-import { FolderIcon, MoreHorizontalIcon, PlusIcon, WorkflowIcon } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { FolderIcon, MoreHorizontalIcon, PlusIcon, SettingsIcon, WorkflowIcon } from "lucide-react";
 import { useState } from "react";
 
 import {
@@ -21,6 +22,7 @@ import {
   MenuSeparator,
   MenuTrigger,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarHeader,
   SidebarMenu,
@@ -30,6 +32,7 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarRail,
+  useSidebar,
 } from "./upstream";
 
 type Dialog =
@@ -48,6 +51,8 @@ export function BoardSidebarContent() {
   const workflows = snapshot?.workflows ?? [];
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const close = () => setDialog(null);
+  const navigate = useNavigate();
+  const { open, setOpen } = useSidebar();
   const settingsWorkspace =
     dialog?.kind === "workspace-settings"
       ? workspaces.find((workspace) => workspace.id === dialog.id)
@@ -56,15 +61,25 @@ export function BoardSidebarContent() {
   return (
     <>
       <SidebarHeader>
-        <div className="flex items-center justify-between gap-2">
-          <span className="flex items-center gap-2 text-sm font-medium">
-            <WorkflowIcon className="size-4" />
-            Board
-          </span>
-          <IconButton label="New workspace" onClick={() => setDialog({ kind: "new-workspace" })}>
-            <PlusIcon />
-          </IconButton>
-        </div>
+        {open ? (
+          <div className="flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2 text-sm font-medium">
+              <WorkflowIcon className="size-4" />
+              Board
+            </span>
+            <IconButton label="New workspace" onClick={() => setDialog({ kind: "new-workspace" })}>
+              <PlusIcon />
+            </IconButton>
+          </div>
+        ) : (
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton tooltip="Expand sidebar" onClick={() => setOpen(true)}>
+                <WorkflowIcon />
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        )}
       </SidebarHeader>
       <SidebarContent>
         {workspaces.length === 0 ? (
@@ -74,7 +89,12 @@ export function BoardSidebarContent() {
           <SidebarGroup key={workspace.id}>
             <SidebarMenu>
               <SidebarMenuItem>
-                <div className="flex items-center gap-1">
+                {open ? null : (
+                  <SidebarMenuButton tooltip={workspace.name} onClick={() => setOpen(true)}>
+                    <FolderIcon />
+                  </SidebarMenuButton>
+                )}
+                <div className="flex items-center gap-1 group-data-[collapsible=icon]:hidden">
                   <SidebarMenuButton className="flex-1" render={<div />}>
                     <FolderIcon />
                     <span className="truncate">{workspace.name}</span>
@@ -175,6 +195,19 @@ export function BoardSidebarContent() {
           </SidebarGroup>
         ))}
       </SidebarContent>
+      <SidebarFooter>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              tooltip="Settings"
+              onClick={() => void navigate({ to: "/settings" })}
+            >
+              <SettingsIcon />
+              <span>Settings</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
       <SidebarRail />
       {dialog?.kind === "new-workspace" ? (
         <NameDialog
