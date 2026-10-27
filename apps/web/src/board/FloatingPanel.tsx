@@ -50,10 +50,15 @@ export async function morphPanel(panel: HTMLElement | null, maximize: boolean, u
   backdrop.style.opacity = maximize ? "0" : "1";
   document.body.append(backdrop);
   const blur = maximize ? 1 : 0;
+  // Opening leaves a still copy of the small panel under the blur, so it blurs with the board
+  // while the full panel fades in over both.
+  const still = maximize ? snapshot(panel) : null;
   try {
-    // Most of the blur happens while the panel swaps; the rest finishes with the new panel.
-    void fade(backdrop, maximize ? 0.6 : 0.4, SWAP_MS * 3);
-    await fade(panel, 0, SWAP_MS);
+    if (still) panel.style.opacity = "0";
+    else {
+      void fade(backdrop, 0.4, SWAP_MS * 3);
+      await fade(panel, 0, SWAP_MS);
+    }
     flushSync(update);
     // The chat re-renders once more when it observes its new size; let that pass before fading in.
     await nextFrame();
@@ -61,9 +66,38 @@ export async function morphPanel(panel: HTMLElement | null, maximize: boolean, u
     await Promise.all([fade(panel, 1, BLUR_MS), fade(backdrop, blur, BLUR_MS)]);
   } finally {
     for (const animation of panel.getAnimations()) animation.cancel();
+    panel.style.opacity = "";
+    still?.remove();
     backdrop.remove();
     morphing = false;
   }
+}
+
+function snapshot(panel: HTMLElement) {
+  const copy = panel.cloneNode(true) as HTMLElement;
+  const rect = panel.getBoundingClientRect();
+  Object.assign(copy.style, {
+    position: "fixed",
+    inset: "auto",
+    left: `${rect.x}px`,
+    top: `${rect.y}px`,
+    width: `${rect.width}px`,
+    height: `${rect.height}px`,
+    margin: "0",
+    zIndex: "14",
+    pointerEvents: "none",
+  });
+  copy.inert = true;
+  document.body.append(copy);
+  // A clone starts scrolled to the top; match the chat's scroll positions.
+  const from = panel.querySelectorAll("*");
+  const to = copy.querySelectorAll("*");
+  from.forEach((element, index) => {
+    if (element.scrollTop || element.scrollLeft) {
+      to[index]?.scrollTo(element.scrollLeft, element.scrollTop);
+    }
+  });
+  return copy;
 }
 
 const MIN_PANEL = { w: 320, h: 260 };
