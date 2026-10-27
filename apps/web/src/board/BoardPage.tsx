@@ -221,7 +221,7 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
         : { state: "idle", label: "Idle" };
   const view = useHeldView(runView ?? fallback, arriving.has(node.id));
   const cue = useStateCue(view.state);
-  const instanceId = shell ? String(shell.modelSelection.instanceId) : "";
+  const instanceId = String(node.modelSelection.instanceId);
 
   const actions: AgentNodeAction[] = [
     {
@@ -252,8 +252,8 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
     <AgentNodeView
       name={node.name}
       harness={harnessOf(instanceId)}
-      harnessLabel={shell ? instanceId : "Thread not found"}
-      model={shell?.modelSelection.model ?? null}
+      harnessLabel={instanceId}
+      model={node.modelSelection.model}
       machine={machine}
       statusLabel={view.label}
       state={view.state}
