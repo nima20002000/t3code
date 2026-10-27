@@ -264,6 +264,7 @@ export function FloatingPanel(props: {
     <aside
       ref={ref}
       aria-label={props.label}
+      data-full={full || undefined}
       className={`board-chat-panel flex flex-col border bg-background shadow-lg ${
         full ? "fixed inset-0 z-50 rounded-none" : `absolute z-20 rounded-xl ${props.className}`
       }`}

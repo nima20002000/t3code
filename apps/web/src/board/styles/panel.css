@@ -7,3 +7,8 @@
   backdrop-filter: blur(8px);
   pointer-events: none;
 }
+
+/* The small chat panel drops the chat's breadcrumb header; its header carries the toggles. */
+.board-chat-panel:not([data-full]) [data-chat-header] {
+  display: none;
+}

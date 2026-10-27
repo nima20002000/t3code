@@ -1,4 +1,11 @@
-import { Maximize2Icon, Minimize2Icon, SettingsIcon, XIcon } from "lucide-react";
+import {
+  Maximize2Icon,
+  Minimize2Icon,
+  PanelBottomIcon,
+  PanelRightIcon,
+  SettingsIcon,
+  XIcon,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 
@@ -84,6 +91,9 @@ export function NodeSettingsPanel(props: {
   const [configuring, setConfiguring] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const panel = useRef<HTMLElement>(null);
+  // The small panel hides the chat's own header; these reach t3's toggles there.
+  const clickChatControl = (label: string) =>
+    panel.current?.querySelector<HTMLElement>(`[aria-label="${label}"]`)?.click();
   const toggleMaximized = (next: boolean) =>
     void morphPanel(panel.current, next, () => setMaximized(next));
 
@@ -148,6 +158,19 @@ export function NodeSettingsPanel(props: {
             </button>
           )}
           <div className="flex-1" />
+          {node.threadId === "" || maximized ? null : (
+            <>
+              <IconButton
+                label="Terminal"
+                onClick={() => clickChatControl("Toggle terminal drawer")}
+              >
+                <PanelBottomIcon size={15} />
+              </IconButton>
+              <IconButton label="Browser" onClick={() => clickChatControl("Toggle right panel")}>
+                <PanelRightIcon size={15} />
+              </IconButton>
+            </>
+          )}
           {node.threadId === "" ? null : (
             <IconButton
               label={maximized ? "Minimize" : "Full screen"}
