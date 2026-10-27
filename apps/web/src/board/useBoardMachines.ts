@@ -1,16 +1,21 @@
-import { useEnvironmentIdentities, usePrimaryEnvironmentId } from "../state/environments";
+import {
+  useConnectedEnvironmentIds,
+  useEnvironmentIdentities,
+  usePrimaryEnvironmentId,
+} from "../state/environments";
 import { useBoardPeers } from "./boardStore";
 
 export function useBoardMachines() {
-  const primaryId = usePrimaryEnvironmentId();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const connectedIds = useConnectedEnvironmentIds();
+  const primaryId = primaryEnvironmentId ?? connectedIds[0] ?? null;
   const identities = useEnvironmentIdentities();
   const peers = useBoardPeers();
   const primary = primaryId
     ? [
         {
           environmentId: primaryId,
-          label:
-            identities.find((item) => item.environmentId === primaryId)?.label ?? "Hub",
+          label: identities.find((item) => item.environmentId === primaryId)?.label ?? "Hub",
         },
       ]
     : [];

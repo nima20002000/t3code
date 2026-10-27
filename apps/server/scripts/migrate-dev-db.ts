@@ -211,6 +211,10 @@ const CLEARED_TABLES: ReadonlyArray<string> = [
   "provider_session_runtime",
   "auth_sessions",
   "auth_pairing_links",
+  "board_peers",
+  "board_tasks",
+  "board_task_events",
+  "board_schedules",
 ];
 
 const PROVIDER_SESSIONS_TABLE = "orchestration_v2_projection_provider_sessions";
@@ -393,7 +397,11 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
             AND stream_id NOT IN (SELECT thread_id FROM kept_threads))
            OR (aggregate_kind = 'project'
             AND stream_id NOT IN (SELECT project_id FROM kept_projects))`;
+      const existing = yield* sql<{
+        name: string;
+      }>`SELECT name FROM sqlite_master WHERE type = 'table'`;
       for (const table of CLEARED_TABLES) {
+        if (!existing.some((entry) => entry.name === table)) continue;
         yield* sql`DELETE FROM ${sql(table)}`;
       }
     }),

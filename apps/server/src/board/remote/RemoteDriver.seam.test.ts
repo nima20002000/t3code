@@ -221,7 +221,10 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
                 ? new TextDecoder().decode(data)
                 : "";
           if (frame.includes("board-test-race-cancel:cancel-queued")) {
-            Deferred.doneUnsafe(queuedCancel, Effect.succeed(() => super.send(data)));
+            Deferred.doneUnsafe(
+              queuedCancel,
+              Effect.succeed(() => super.send(data)),
+            );
             return;
           }
           super.send(data);

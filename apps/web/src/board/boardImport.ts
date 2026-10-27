@@ -14,19 +14,20 @@ export async function importLocalWorkflows(input: {
   readonly projectIdForNode: (node: Workflow["nodes"][number]) => ProjectId | undefined;
   readonly send: (workflows: ReadonlyArray<Workflow>) => Promise<unknown>;
 }) {
-  const storageKey = `t3.board.imported.v2:${input.origin}`;
+  const storageKey = `t3.board.imported.v3:${input.origin}`;
   if (input.storage.getItem(storageKey)) return;
   const raw = input.storage.getItem("t3.board.v2");
-  if (raw !== null) {
-    const parsed: unknown = JSON.parse(raw);
+  const rawV1 = input.storage.getItem("t3.board.v1");
+  if (raw !== null || rawV1 !== null) {
+    const parsed: unknown = raw === null ? null : JSON.parse(raw);
     if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      !Array.isArray((parsed as { workflows?: unknown }).workflows)
+      parsed !== null &&
+      (typeof parsed !== "object" || !Array.isArray((parsed as { workflows?: unknown }).workflows))
     ) {
       throw new Error("The local board data is invalid. It has not been imported or removed.");
     }
-    const source = (parsed as { workflows: unknown[] }).workflows;
+    const legacy: unknown = rawV1 === null ? null : JSON.parse(rawV1);
+    const source = (parsed as { workflows?: unknown[] } | null)?.workflows ?? [];
     if (
       source.some(
         (workflow) =>
@@ -37,8 +38,10 @@ export async function importLocalWorkflows(input: {
     ) {
       throw new Error("A local workflow is invalid. It has not been imported or removed.");
     }
-    const migrated = migrateBoards(parsed, null, input.newId);
-    const workflows = source.length === 0 ? [] : decodeWorkflows(migrated.workflows);
+    // A fixed id keeps a retried v1 import from creating a second workflow.
+    const migrated = migrateBoards(parsed, legacy, () => "legacy-board-v1");
+    const workflows =
+      source.length === 0 && legacy === null ? [] : decodeWorkflows(migrated.workflows);
     const missing = workflows
       .filter(
         (workflow) => !input.snapshot.workflows.some((existing) => existing.id === workflow.id),

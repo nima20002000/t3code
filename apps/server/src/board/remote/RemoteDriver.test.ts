@@ -110,3 +110,39 @@ it.live("reconnects after a transient descriptor failure and surfaces rejected c
     ]);
   }),
 );
+
+it.effect("fails with a re-pair error and sends nothing once the paired bearer expired", () =>
+  Effect.gen(function* () {
+    const environmentId = EnvironmentId.make("expired");
+    const store = PeerStore.makeMemory();
+    yield* store.put({
+      id: "expired",
+      name: "Remote",
+      environmentId,
+      url: "https://peer.test/",
+      bearer: "test-secret",
+      expiresAt: "1969-12-31T00:00:00.000Z",
+    });
+    const paths: string[] = [];
+    const fetch: typeof globalThis.fetch = (input) => {
+      paths.push(new URL(String(input)).pathname);
+      return Promise.resolve(new Response(null, { status: 500 }));
+    };
+    const result = yield* RemoteDriver.make(store)
+      .interrupt({
+        thread: {
+          environmentId,
+          projectId: ProjectId.make("project"),
+          threadId: ThreadId.make("thread"),
+        },
+        commandId: CommandId.make("interrupt"),
+      })
+      .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.result);
+    assert.isTrue(Result.isFailure(result));
+    if (Result.isFailure(result)) {
+      assert.include(result.failure.message, "Re-pair needed");
+      assert.isUndefined(result.failure.retryable);
+    }
+    assert.deepEqual(paths, []);
+  }),
+);

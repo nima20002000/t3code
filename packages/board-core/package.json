@@ -8,7 +8,8 @@
     "./resultProtocol": "./src/resultProtocol.ts",
     "./routing": "./src/routing.ts",
     "./http": "./src/http.ts",
-    "./NodeDriver": "./src/NodeDriver.ts"
+    "./NodeDriver": "./src/NodeDriver.ts",
+    "./runView": "./src/runView.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

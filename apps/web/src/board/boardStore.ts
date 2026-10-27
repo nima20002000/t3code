@@ -22,11 +22,17 @@ import { Atom } from "effect/reactivity";
 import { useEffect } from "react";
 
 import { toastManager } from "../components/ui/toast";
-import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary/target";
 import { randomUUID } from "../lib/utils";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readThreadShells } from "../state/entities";
-import { runBoardApi, runBoardMutation, streamBoardEvents } from "./boardApi";
+import { readEnvironmentScope } from "../state/session";
+import {
+  boardHubOrigin,
+  readBoardHubEnvironmentId,
+  runBoardApi,
+  runBoardMutation,
+  streamBoardEvents,
+} from "./boardApi";
 import { applyBoardEvent } from "./boardState";
 import { importLocalWorkflows } from "./boardImport";
 
@@ -78,7 +84,7 @@ function setSnapshot(snapshot: BoardSnapshot) {
 async function importToHub(snapshot: BoardSnapshot, signal?: AbortSignal) {
   await importLocalWorkflows({
     storage: localStorage,
-    origin: new URL(resolvePrimaryEnvironmentHttpUrl("/")).origin,
+    origin: boardHubOrigin(),
     snapshot,
     newId: randomUUID,
     projectIdForNode: (node) =>
@@ -115,8 +121,10 @@ export function useBoardConnection() {
           (client) => client.getSnapshot({ headers: {} }),
           controller.signal,
         );
+        const hubId = readBoardHubEnvironmentId();
+        const canMutate = hubId !== null && readEnvironmentScope(hubId, "orchestration:operate");
         try {
-          await importToHub(snapshot, controller.signal);
+          if (canMutate) await importToHub(snapshot, controller.signal);
           if (!controller.signal.aborted) setState({ importError: null });
         } catch (error) {
           if (controller.signal.aborted) return;
@@ -126,7 +134,7 @@ export function useBoardConnection() {
           (client) => client.getSnapshot({ headers: {} }),
           controller.signal,
         );
-        if (!snapshot.workflows.length) {
+        if (canMutate && !snapshot.workflows.length) {
           await runBoardApi(
             (client) =>
               client.createWorkflow({
@@ -187,7 +195,7 @@ export function useCurrentWorkflow(): Workflow {
   return (snapshot?.workflows.find((w) => w.id === currentId) ?? snapshot?.workflows[0])!;
 }
 export const activeRunOf = (workflow: Workflow) =>
-  workflow.runs.find((run) => run.status === "running");
+  workflow.runs.find((run) => run.status === "running" || run.status === "stopping");
 export function useBoardPeers(): ReadonlyArray<BoardPeer> {
   return useBoardState().snapshot?.peers ?? [];
 }
@@ -396,10 +404,7 @@ export async function createNode(workflowId: string, input: BoardCreateNodeInput
   histories.set(workflowId, history);
   changedHistory();
 }
-function patchNode(
-  id: string,
-  patch: { name?: string; role?: string; x?: number; y?: number },
-) {
+function patchNode(id: string, patch: { name?: string; role?: string; x?: number; y?: number }) {
   const action = (workflow: Workflow) =>
     runBoardMutation((client) =>
       client.updateNode({

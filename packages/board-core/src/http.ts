@@ -65,7 +65,7 @@ export const BoardRunSchema = Schema.Struct({
   nodeId: Id,
   nodeName: Schema.String,
   task: Schema.String,
-  status: Schema.Literals(["running", "finished", "stopped", "failed"]),
+  status: Schema.Literals(["running", "stopping", "finished", "stopped", "failed"]),
   startedAt: Schema.String,
   endedAt: Schema.optionalKey(Schema.String),
   summary: Schema.optionalKey(Schema.String),
@@ -97,6 +97,7 @@ export const BoardPeerSchema = Schema.Struct({
   url: TrimmedNonEmptyString,
   status: Schema.Literals(["connected", "disconnected", "connecting", "error"]),
   error: Schema.optionalKey(Schema.String),
+  expiresAt: Schema.optionalKey(Schema.String),
 });
 export type BoardPeer = typeof BoardPeerSchema.Type;
 export const BoardScheduleSchema = Schema.Struct({

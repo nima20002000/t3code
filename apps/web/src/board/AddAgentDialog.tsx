@@ -5,7 +5,7 @@ import {
   ProjectId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import * as Schema from "effect/Schema";
 
 import { ProviderModelPicker } from "../components/chat/ProviderModelPicker";
@@ -58,6 +58,10 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
   const [role, setRole] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const pendingSubmission = useRef<{
+    key: string;
+    ids: { id: string; threadId: ReturnType<typeof newThreadId> };
+  } | null>(null);
 
   const environmentProjects = projects.filter((project) => project.environmentId === environmentId);
   const project =
@@ -94,20 +98,24 @@ export function AddAgentDialog(props: { readonly onClose: () => void }) {
     setSubmitting(true);
     setError(null);
     try {
-      await createNode(workflowId, {
-        kind: "launch",
-        id: randomUUID(),
+      const input = {
+        kind: "launch" as const,
         name: agentName,
         environmentId,
         projectId,
-        threadId: newThreadId(),
         modelSelection: selection,
         runtimeMode: settings.runtimeMode,
-        interactionMode: "default",
-        workspaceStrategy: { type: "root" },
+        interactionMode: "default" as const,
+        workspaceStrategy: { type: "root" as const },
         role,
-        ...nextNodePosition(workflow),
-      });
+      };
+      const key = JSON.stringify([workflowId, input]);
+      const ids =
+        pendingSubmission.current?.key === key
+          ? pendingSubmission.current.ids
+          : { id: randomUUID(), threadId: newThreadId() };
+      pendingSubmission.current = { key, ids };
+      await createNode(workflowId, { ...input, ...ids, ...nextNodePosition(workflow) });
       props.onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));

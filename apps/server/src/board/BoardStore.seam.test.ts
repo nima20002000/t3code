@@ -65,7 +65,10 @@ it.effect("keeps core and board migration histories and board data across reopen
             readonly name: string;
           }>`SELECT migration_id, name FROM board_migrations ORDER BY migration_id`;
           assert.deepStrictEqual(core, first);
-          assert.deepStrictEqual(board, [{ migration_id: 1, name: "Board" }]);
+          assert.deepStrictEqual(board, [
+            { migration_id: 1, name: "Board" },
+            { migration_id: 2, name: "BoardIntents" },
+          ]);
           const snapshot = yield* store.snapshot();
           assert.strictEqual(snapshot.sequence, 2);
           assert.strictEqual(snapshot.workflows[0]?.id, "workflow");

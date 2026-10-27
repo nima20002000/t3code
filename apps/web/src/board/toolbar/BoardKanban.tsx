@@ -3,13 +3,20 @@ import { useNavigate } from "@tanstack/react-router";
 
 import { buildThreadRouteParams } from "../../threadRoutes";
 import type { Workflow } from "../boardStore";
-import { useNodeCards, type NodeStatus } from "./useNodeStatuses";
+import type { NodeRunState } from "@t3tools/board-core/runView";
+import { useNodeCards } from "./useNodeStatuses";
 
-const COLUMNS: ReadonlyArray<{ readonly status: NodeStatus; readonly label: string }> = [
-  { status: "idle", label: "Idle" },
-  { status: "working", label: "Working" },
-  { status: "waiting", label: "Waiting for return" },
-  { status: "disconnected", label: "Chat not connected" },
+const COLUMNS: ReadonlyArray<{
+  readonly status: string;
+  readonly label: string;
+  readonly states: ReadonlyArray<NodeRunState>;
+}> = [
+  { status: "working", label: "Working", states: ["running", "queued"] },
+  { status: "waiting", label: "Waiting", states: ["waiting"] },
+  { status: "done", label: "Done", states: ["completed"] },
+  { status: "failed", label: "Failed", states: ["failed"] },
+  { status: "idle", label: "Idle", states: ["idle"] },
+  { status: "disconnected", label: "Offline", states: ["unavailable"] },
 ];
 
 /** Foreman-style kanban of the workflow's agents by status; a card opens its thread. */
@@ -20,13 +27,13 @@ export function BoardKanban(props: { readonly workflow: Workflow }) {
     <section className="board-kanban" aria-label="Kanban">
       <div className="board-kanban-columns">
         {COLUMNS.map((column) => {
-          const columnCards = cards.filter((card) => card.status === column.status);
+          const columnCards = cards.filter((card) => column.states.includes(card.view.state));
           return (
             <div key={column.status} className="board-kanban-column" data-status={column.status}>
               <h3>
                 {column.label} <small>{columnCards.length}</small>
               </h3>
-              {columnCards.map(({ node, machine, model, instanceId }) => (
+              {columnCards.map(({ node, view, machine, model, instanceId }) => (
                 <button
                   key={node.id}
                   type="button"
@@ -42,6 +49,7 @@ export function BoardKanban(props: { readonly workflow: Workflow }) {
                   }
                 >
                   <strong>{node.name}</strong>
+                  <span>{view.label}</span>
                   <span>{machine}</span>
                   <small>
                     {[instanceId, model].filter(Boolean).join(" / ") || "Thread not found"}

@@ -19,6 +19,7 @@ a merge (the server route is reserved for the later server phase):
   mount board-owned navigation components.
 - `apps/web/src/components/sidebar/mainAppLocation.ts`: board location.
 - `apps/web/src/routeTree.gen.ts`: generated board route registration.
+- `apps/server/scripts/migrate-dev-db.ts`: dev seeding also clears the board execution and peer tables.
 - `pnpm-lock.yaml`: workspace and board dependency lock entries.
 
 Fork tooling is `FORK.md`, `scripts/fork-sync.sh`, `scripts/board-test.mjs`, and the fork-only

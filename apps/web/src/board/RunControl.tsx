@@ -1,5 +1,5 @@
 import { PlayIcon, SquareIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
@@ -19,21 +19,27 @@ export function RunControl() {
   const [task, setTask] = useState("");
   const [stopping, setStopping] = useState(false);
   const [starting, setStarting] = useState(false);
+  const pendingStart = useRef<{ key: string; id: string } | null>(null);
   const entry = nodes.find((node) => node.id === nodeId) ?? nodes[0];
-  const running = activeRunOf(workflow) !== undefined || workflow.runQueue.length > 0;
+  const activeRun = activeRunOf(workflow);
+  const running = activeRun !== undefined || workflow.runQueue.length > 0;
   const canStart = entry !== undefined && task.trim().length > 0 && !starting && !running;
 
   const start = () => {
     if (!entry || !canStart) return;
     setStarting(true);
+    const key = JSON.stringify([workflow.id, entry.id, task.trim()]);
+    const id = pendingStart.current?.key === key ? pendingStart.current.id : randomUUID();
+    pendingStart.current = { key, id };
     void runBoardMutation((client) =>
       client.startRun({
         headers: {},
         params: { workflowId: workflow.id },
-        payload: { id: randomUUID(), nodeId: entry.id, task: task.trim() },
+        payload: { id, nodeId: entry.id, task: task.trim() },
       }),
     )
       .then(() => {
+        pendingStart.current = null;
         setTask("");
         setOpen(false);
       })
@@ -101,16 +107,16 @@ export function RunControl() {
       {running ? (
         <span role="status" className="board-live-run">
           <span className="board-live-run-dot" aria-hidden="true" />
-          {stopping ? "Stopping" : "Running"}
+          {stopping || activeRun?.status === "stopping" ? "Stopping" : "Running"}
         </span>
       ) : null}
       <Button
         size="sm"
         variant="destructive-outline"
-        disabled={stopping || !activeRunOf(workflow)}
+        disabled={stopping || !activeRun}
         onClick={() => {
           setStopping(true);
-          const run = activeRunOf(workflow);
+          const run = activeRun;
           if (run)
             void runBoardMutation((client) =>
               client.stopRun({ headers: {}, params: { workflowId: workflow.id, runId: run.id } }),

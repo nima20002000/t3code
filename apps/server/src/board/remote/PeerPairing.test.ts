@@ -60,6 +60,7 @@ it.effect(
       scope = "orchestration:read orchestration:operate";
       const peer = yield* pair();
       assert.equal(peer.bearer, "test-bearer");
+      assert.isString(peer.expiresAt);
       assert.deepEqual(yield* store.get(peer.environmentId), peer);
       const tokenRequests = requests.filter((request) => request.url.endsWith("/oauth/token"));
       assert.equal(

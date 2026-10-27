@@ -29,6 +29,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type { SqlError } from "effect/sql/SqlError";
@@ -47,6 +48,8 @@ type Checkpoint =
       readonly step: number;
       readonly text: string;
       readonly corrected: boolean;
+      /** Set after an uncertain send: the peer may be running it, so Stop must interrupt. */
+      readonly attempted?: boolean;
     }
   | {
       readonly stage: "settle";
@@ -57,7 +60,7 @@ type Checkpoint =
       readonly messageId: MessageId;
     }
   | { readonly stage: "join"; readonly step: number; readonly denied: ReadonlyArray<string> }
-  | { readonly stage: "interrupt"; readonly thread: BoardDriverThread; readonly runId: RunId }
+  | { readonly stage: "interrupt"; readonly thread: BoardDriverThread; readonly runId?: RunId }
   | { readonly stage: "done"; readonly result: BoardResult };
 
 export class TaskEngine extends Context.Service<
@@ -67,12 +70,19 @@ export class TaskEngine extends Context.Service<
       workflowId: string,
       input: BoardStartRunInput,
     ) => Effect.Effect<RunRecord, EngineError>;
+    readonly startClaimed: (
+      workflowId: string,
+      input: BoardStartRunInput,
+      claim: Effect.Effect<boolean, SqlError>,
+    ) => Effect.Effect<RunRecord | undefined, EngineError>;
     readonly stop: (workflowId: string, runId: string) => Effect.Effect<RunRecord, EngineError>;
   }
 >()("t3/board/TaskEngine") {}
 
 const stableId = (taskId: string, purpose: string) =>
   `board:${createHash("sha256").update(taskId).update("\0").update(purpose).digest("hex")}`;
+const MAX_FINISHED_RUNS = 50;
+const isActive = (run: RunRecord) => run.status === "running" || run.status === "stopping";
 const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 const terminal = (status: BoardStore.TaskStatus) =>
   status === "done" || status === "failed" || status === "stopped" || status === "completing";
@@ -140,7 +150,7 @@ const make = Effect.gen(function* () {
     const driver = yield* drivers.get(checkpoint.thread.environmentId);
     yield* driver.interrupt({
       thread: checkpoint.thread,
-      runId: checkpoint.runId,
+      ...(checkpoint.runId ? { runId: checkpoint.runId } : {}),
       commandId: CommandId.make(stableId(task.id, "interrupt")),
     });
     yield* store.transaction(
@@ -150,8 +160,13 @@ const make = Effect.gen(function* () {
         yield* store.putTask({ ...current, status: "stopped" });
         const workflow = yield* store.getWorkflow(task.workflowId);
         const run = workflow?.runs.find((entry) => entry.id === task.runId);
-        if (workflow && run)
-          yield* store.appendEvent({ kind: "run.upserted", workflowId: workflow.id, run });
+        if (!workflow || !run) return;
+        const interrupting = (yield* store.listTasks(task.runId)).some(
+          (entry) => entry.status === "completing",
+        );
+        if (run.status === "stopping" && !interrupting)
+          yield* saveRun(workflow, { ...run, status: "stopped", endedAt: yield* now });
+        else yield* store.appendEvent({ kind: "run.upserted", workflowId: workflow.id, run });
       }),
     );
   });
@@ -185,10 +200,15 @@ const make = Effect.gen(function* () {
             const run = workflow?.runs.find((entry) => entry.id === runId);
             if (workflowId !== undefined && (!workflow || !run))
               return yield* new BoardNotFoundError({ message: "Run not found." });
+            let interrupting = false;
             for (const task of selected.toReversed()) {
               const checkpoint = task.checkpoint as Checkpoint;
               const node = workflow?.nodes.find((entry) => entry.id === task.nodeId);
-              if (checkpoint.stage === "settle" && node?.projectId) {
+              const live =
+                checkpoint.stage === "settle" ||
+                (checkpoint.stage === "send" && checkpoint.attempted);
+              if (live && node?.projectId) {
+                interrupting = true;
                 yield* store.putTask({
                   ...task,
                   status: "completing",
@@ -199,7 +219,7 @@ const make = Effect.gen(function* () {
                       projectId: node.projectId,
                       threadId: node.threadId,
                     },
-                    runId: checkpoint.runId,
+                    ...(checkpoint.stage === "settle" ? { runId: checkpoint.runId } : {}),
                   } satisfies Checkpoint,
                 });
               } else {
@@ -210,7 +230,11 @@ const make = Effect.gen(function* () {
             const at = yield* now;
             const updated: RunRecord = {
               ...run,
-              ...(workflowId === undefined ? {} : { status: "stopped" as const, endedAt: at }),
+              ...(workflowId === undefined
+                ? {}
+                : interrupting
+                  ? { status: "stopping" as const }
+                  : { status: "stopped" as const, endedAt: at }),
               requests: run.requests.map((entry) =>
                 entry.status === "pending" && stoppedIds.has(entry.id)
                   ? { ...entry, status: "stopped", returnedAt: at }
@@ -274,16 +298,25 @@ const make = Effect.gen(function* () {
             if (!current || terminal(current.status)) return null;
             const driver = yield* drivers.get(node.environmentId);
             const messageId = MessageId.make(stableId(task.id, `message:${checkpoint.step}`));
-            const sent = yield* driver.send({
-              thread: {
-                environmentId: node.environmentId,
-                projectId: node.projectId!,
-                threadId: node.threadId,
-              },
-              commandId: CommandId.make(stableId(task.id, `send:${checkpoint.step}`)),
-              messageId,
-              text: checkpoint.text,
-            });
+            const sent = yield* driver
+              .send({
+                thread: {
+                  environmentId: node.environmentId,
+                  projectId: node.projectId!,
+                  threadId: node.threadId,
+                },
+                commandId: CommandId.make(stableId(task.id, `send:${checkpoint.step}`)),
+                messageId,
+                text: checkpoint.text,
+              })
+              .pipe(Effect.result);
+            if (Result.isFailure(sent)) {
+              if (sent.failure.retryable && !checkpoint.attempted)
+                yield* store.transaction(
+                  store.putTask({ ...current, checkpoint: { ...checkpoint, attempted: true } }),
+                );
+              return sent.failure;
+            }
             yield* store.transaction(
               store.putTask({
                 ...current,
@@ -292,16 +325,25 @@ const make = Effect.gen(function* () {
                   stage: "settle",
                   step: checkpoint.step,
                   corrected: checkpoint.corrected,
-                  runId: sent.runId,
-                  sequence: sent.sequence,
+                  runId: sent.success.runId,
+                  sequence: sent.success.sequence,
                   messageId,
                 } satisfies Checkpoint,
               }),
             );
-            return sent;
+            return sent.success;
           }),
         );
         if (!outcome) return;
+        if ("_tag" in outcome) {
+          if (!outcome.retryable) {
+            yield* failTask(task.id, outcome.message);
+            return;
+          }
+          // The peer may have accepted the message; resending with the same ids reconciles it.
+          yield* Effect.logWarning("Board send is uncertain; retrying.", { taskId: task.id });
+          yield* Effect.sleep("15 seconds");
+        }
         continue;
       }
       if (checkpoint.stage === "settle") {
@@ -624,69 +666,90 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const startWith = Effect.fn("TaskEngine.start")(function* (
+    workflowId: string,
+    input: BoardStartRunInput,
+    claim?: Effect.Effect<boolean, SqlError>,
+  ) {
+    const result = yield* store
+      .transaction(
+        Effect.gen(function* () {
+          if (claim && !(yield* claim)) return undefined;
+          const workflow = yield* store.getWorkflow(workflowId);
+          if (!workflow) return yield* new BoardNotFoundError({ message: "Workflow not found." });
+          if (yield* store.getTask(input.id)) {
+            const existing = workflow.runs.find((entry) => entry.id === input.id);
+            if (existing?.nodeId === input.nodeId && existing.task === input.task) return existing;
+            return yield* new BoardConflictError({ message: "Run id already exists." });
+          }
+          const node = workflow.nodes.find((entry) => entry.id === input.nodeId);
+          if (!node?.projectId)
+            return yield* new BoardInvalidRequestError({
+              message: "The entry node needs a project and thread.",
+            });
+          if (validateGraph(workflow).length)
+            return yield* new BoardInvalidRequestError({
+              message: "The workflow graph is invalid.",
+            });
+          const run: RunRecord = {
+            id: input.id,
+            nodeId: node.id,
+            nodeName: node.name,
+            task: input.task,
+            status: "running",
+            startedAt: yield* now,
+            requests: [],
+          };
+          const task: BoardStore.BoardTask = {
+            id: input.id,
+            workflowId,
+            runId: input.id,
+            kind: "run",
+            owner: null,
+            nodeId: node.id,
+            status: "pending",
+            waitOn: [],
+            waitPolicy: workflow.settings.waitPolicy ?? "allSettled",
+            checkpoint: {
+              stage: "send",
+              step: 0,
+              text: buildStartMessage(input.id, input.task),
+              corrected: false,
+            } satisfies Checkpoint,
+          };
+          yield* store.putTask(task);
+          let excess = workflow.runs.filter((entry) => !isActive(entry)).length - MAX_FINISHED_RUNS;
+          const runs = [...workflow.runs, run].filter((entry) => isActive(entry) || excess-- <= 0);
+          const next = { ...workflow, runs };
+          yield* store.putWorkflow(next);
+          if (runs.length !== workflow.runs.length + 1) {
+            const kept = new Set(runs.map((entry) => entry.id));
+            yield* store.deleteRunTasks(
+              workflow.runs.filter((entry) => !kept.has(entry.id)).map((entry) => entry.id),
+            );
+            yield* store.appendEvent({ kind: "workflow.upserted", workflow: next });
+          }
+          yield* store.appendEvent({ kind: "run.upserted", workflowId, run });
+          return run;
+        }),
+      )
+      .pipe(
+        Effect.catchIf(
+          (error) => error._tag === "SqlError",
+          (cause) =>
+            Effect.logError("Could not start board run", { cause }).pipe(
+              Effect.andThen(
+                Effect.fail(new BoardInternalError({ message: "Could not start board run." })),
+              ),
+            ),
+        ),
+      );
+    if (result) yield* spawn(input.id);
+    return result;
+  });
   const start: TaskEngine["Service"]["start"] = Effect.fn("TaskEngine.start")(
     function* (workflowId, input) {
-      const result = yield* store
-        .transaction(
-          Effect.gen(function* () {
-            const workflow = yield* store.getWorkflow(workflowId);
-            if (!workflow) return yield* new BoardNotFoundError({ message: "Workflow not found." });
-            const node = workflow.nodes.find((entry) => entry.id === input.nodeId);
-            if (!node?.projectId)
-              return yield* new BoardInvalidRequestError({
-                message: "The entry node needs a project and thread.",
-              });
-            if (validateGraph(workflow).length)
-              return yield* new BoardInvalidRequestError({
-                message: "The workflow graph is invalid.",
-              });
-            if (yield* store.getTask(input.id))
-              return yield* new BoardConflictError({ message: "Run id already exists." });
-            const run: RunRecord = {
-              id: input.id,
-              nodeId: node.id,
-              nodeName: node.name,
-              task: input.task,
-              status: "running",
-              startedAt: yield* now,
-              requests: [],
-            };
-            const task: BoardStore.BoardTask = {
-              id: input.id,
-              workflowId,
-              runId: input.id,
-              kind: "run",
-              owner: null,
-              nodeId: node.id,
-              status: "pending",
-              waitOn: [],
-              waitPolicy: workflow.settings.waitPolicy ?? "allSettled",
-              checkpoint: {
-                stage: "send",
-                step: 0,
-                text: buildStartMessage(input.id, input.task),
-                corrected: false,
-              } satisfies Checkpoint,
-            };
-            yield* store.putTask(task);
-            yield* store.putWorkflow({ ...workflow, runs: [...workflow.runs, run] });
-            yield* store.appendEvent({ kind: "run.upserted", workflowId, run });
-            return run;
-          }),
-        )
-        .pipe(
-          Effect.catchIf(
-            (error) => error._tag === "SqlError",
-            (cause) =>
-              Effect.logError("Could not start board run", { cause }).pipe(
-                Effect.andThen(
-                  Effect.fail(new BoardInternalError({ message: "Could not start board run." })),
-                ),
-              ),
-          ),
-        );
-      yield* spawn(input.id);
-      return result;
+      return (yield* startWith(workflowId, input))!;
     },
   );
 
@@ -699,18 +762,37 @@ const make = Effect.gen(function* () {
         );
       const run = workflow?.runs.find((entry) => entry.id === runId);
       if (!workflow || !run) return yield* new BoardNotFoundError({ message: "Run not found." });
-      if (run.status !== "running" && run.status !== "stopped") return run;
-      const stopWork =
-        run.status === "running"
-          ? stopTasks(runId, new Set(), workflowId)
-          : lockFor(runId).withPermits(1)(
-              Effect.gen(function* () {
-                for (const task of yield* store.listTasks(runId))
-                  if (task.status === "completing") yield* interruptTask(task.id);
-                return run;
-              }),
-            );
-      const stopped = yield* stopWork.pipe(
+      if (!isActive(run) && run.status !== "stopped") return run;
+      const reload = (id: string) =>
+        store
+          .getWorkflow(workflowId)
+          .pipe(Effect.map((w) => w?.runs.find((entry) => entry.id === id)));
+      const retryInterrupts = (id: string) =>
+        lockFor(id).withPermits(1)(
+          Effect.gen(function* () {
+            for (const task of yield* store.listTasks(id))
+              if (task.status === "completing") yield* interruptTask(task.id);
+            return yield* reload(id);
+          }),
+        );
+      const targets = workflow.runs.filter((entry) => entry.id === runId || isActive(entry));
+      const own = yield* Effect.gen(function* () {
+        const results = yield* Effect.forEach(
+          targets,
+          (target) =>
+            (target.status === "running"
+              ? stopTasks(target.id, new Set(), workflowId).pipe(Effect.andThen(reload(target.id)))
+              : retryInterrupts(target.id)
+            ).pipe(Effect.result),
+          { concurrency: 1 },
+        );
+        let found: RunRecord | undefined;
+        for (const [index, result] of results.entries()) {
+          if (Result.isFailure(result)) return yield* result.failure;
+          if (targets[index]!.id === runId) found = result.success;
+        }
+        return found;
+      }).pipe(
         Effect.catchTags({
           SqlError: (cause) =>
             Effect.logError("Could not stop board run", { runId, cause }).pipe(
@@ -726,8 +808,8 @@ const make = Effect.gen(function* () {
             ),
         }),
       );
-      if (!stopped) return yield* new BoardNotFoundError({ message: "Run not found." });
-      return stopped;
+      if (!own) return yield* new BoardNotFoundError({ message: "Run not found." });
+      return own;
     },
   );
 
@@ -745,7 +827,23 @@ const make = Effect.gen(function* () {
         if (task.status === "completing" || !terminal(task.status)) yield* spawn(task.id);
     }).pipe(Effect.catch((cause) => Effect.logError("Could not recover board tasks", { cause }))),
   );
-  return TaskEngine.of({ start, stop });
+  yield* forkParked(
+    store.listTasks().pipe(
+      Effect.flatMap((tasks) =>
+        Effect.forEach(
+          tasks.filter((task) => task.status === "completing"),
+          (task) => spawn(task.id),
+          { discard: true },
+        ),
+      ),
+      Effect.catch((cause) => Effect.logError("Could not retry board stops", { cause })),
+      Effect.repeat(Schedule.spaced("30 seconds")),
+    ),
+  );
+  const startClaimed: TaskEngine["Service"]["startClaimed"] = Effect.fn("TaskEngine.startClaimed")(
+    (workflowId, input, claim) => startWith(workflowId, input, claim),
+  );
+  return TaskEngine.of({ start, startClaimed, stop });
 });
 
 export const layer = Layer.effect(TaskEngine, make);

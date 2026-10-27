@@ -95,6 +95,14 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
         VALUES ('delivery-1', 'task-1', 'key-1', 1900000000000, '{}', '{}', '[]')`;
       yield* sql`INSERT INTO auth_sessions (session_id, subject, scopes, method, issued_at, expires_at)
         VALUES ('session-1', 'user', '[]', 'pairing', '2026-08-01', '2027-08-01')`;
+      yield* sql`CREATE TABLE board_peers (id TEXT PRIMARY KEY, data TEXT NOT NULL, bearer TEXT NOT NULL)`;
+      yield* sql`CREATE TABLE board_tasks (id TEXT PRIMARY KEY)`;
+      yield* sql`CREATE TABLE board_task_events (sequence INTEGER PRIMARY KEY, data TEXT NOT NULL)`;
+      yield* sql`CREATE TABLE board_schedules (id TEXT PRIMARY KEY, data TEXT NOT NULL)`;
+      yield* sql`INSERT INTO board_peers VALUES ('peer', '{}', 'secret')`;
+      yield* sql`INSERT INTO board_tasks VALUES ('task')`;
+      yield* sql`INSERT INTO board_task_events VALUES (1, '{}')`;
+      yield* sql`INSERT INTO board_schedules VALUES ('schedule', '{}')`;
     }),
   );
   return databasePath;
@@ -130,8 +138,11 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
             tasks: number;
             webhooks: number;
             transfers: number;
+            board: number;
           }>`
             SELECT
+              (SELECT COUNT(*) FROM board_peers) + (SELECT COUNT(*) FROM board_tasks) +
+                (SELECT COUNT(*) FROM board_task_events) + (SELECT COUNT(*) FROM board_schedules) AS board,
               (SELECT COUNT(*) FROM auth_sessions) AS auth,
               (SELECT COUNT(*) FROM scheduled_tasks) AS tasks,
               (SELECT COUNT(*) FROM scheduled_task_webhook_replay_keys) +
@@ -152,7 +163,13 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         kept.sessions.map((row) => row.provider_session_id),
         ["session-shared"],
       );
-      assert.deepStrictEqual(kept.leftovers, { auth: 0, tasks: 0, webhooks: 0, transfers: 0 });
+      assert.deepStrictEqual(kept.leftovers, {
+        auth: 0,
+        tasks: 0,
+        webhooks: 0,
+        transfers: 0,
+        board: 0,
+      });
     }),
   );
 

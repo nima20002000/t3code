@@ -131,6 +131,8 @@ it("shows Board in the chat layout, hides the sidebar and mounts the node's real
   await userEvent.click(screen.getByRole("button", { name: "Remote agent settings" }));
   const remotePanel = screen.getByRole("complementary", { name: "Remote agent settings" });
   await expect
-    .element(remotePanel.getByText("Connect Remote machine in Connections to view and use this thread."))
+    .element(
+      remotePanel.getByText("Connect Remote machine in Connections to view and use this thread."),
+    )
     .toBeVisible();
 });

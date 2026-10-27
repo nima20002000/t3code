@@ -77,7 +77,7 @@ it("only marks a local import after it succeeds and skips IDs already on the hub
       },
     }),
   ).rejects.toThrow("offline");
-  expect(values.has("t3.board.imported.v2:https://hub.example")).toBe(false);
+  expect(values.has("t3.board.imported.v3:https://hub.example")).toBe(false);
   let imported: unknown;
   await importLocalWorkflows({
     ...input,
@@ -86,7 +86,7 @@ it("only marks a local import after it succeeds and skips IDs already on the hub
     },
   });
   expect(imported).toEqual([second]);
-  expect(values.get("t3.board.imported.v2:https://hub.example")).toBe("1");
+  expect(values.get("t3.board.imported.v3:https://hub.example")).toBe("1");
   expect(values.has("t3.board.v2")).toBe(true);
   await importLocalWorkflows({
     ...input,
@@ -173,7 +173,7 @@ it("resolves legacy node projects before importing and keeps unresolved workflow
   ).rejects.toThrow("Connect the machine for Scout");
   expect(imported).toEqual([]);
   expect(values.get("t3.board.v2")).toBe(raw);
-  expect(values.has("t3.board.imported.v2:https://hub.example")).toBe(false);
+  expect(values.has("t3.board.imported.v3:https://hub.example")).toBe(false);
 
   await importLocalWorkflows({
     ...input,
@@ -183,5 +183,29 @@ it("resolves legacy node projects before importing and keeps unresolved workflow
         : undefined,
   });
   expect(imported[0]?.nodes[0]?.projectId).toBe(ProjectId.make("project"));
-  expect(values.get("t3.board.imported.v2:https://hub.example")).toBe("1");
+  expect(values.get("t3.board.imported.v3:https://hub.example")).toBe("1");
+});
+
+it("imports the legacy v1 board when v2 is absent", async () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
+  } as Storage;
+  values.set("t3.board.v1", JSON.stringify({ nodes: [], edges: [], pending: [], log: [] }));
+  let imported: ReadonlyArray<Workflow> = [];
+  await importLocalWorkflows({
+    storage,
+    origin: "https://hub.example",
+    snapshot,
+    newId: () => "unused",
+    projectIdForNode: () => undefined,
+    send: async (workflows) => {
+      imported = workflows;
+    },
+  });
+  expect(imported.map((workflow) => workflow.name)).toEqual(["Workflow"]);
+  expect(values.get("t3.board.imported.v3:https://hub.example")).toBe("1");
 });

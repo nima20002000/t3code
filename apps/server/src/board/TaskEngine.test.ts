@@ -464,7 +464,9 @@ it.effect("allows a failed stop to be retried without restarting", () =>
       yield* Queue.take(harness.sends);
       yield* engine.stop("workflow", "run:stop-retry").pipe(Effect.flip);
       assert.strictEqual((yield* store.getTask("run:stop-retry"))?.status, "completing");
+      assert.strictEqual((yield* store.getWorkflow("workflow"))?.runs[0]?.status, "stopping");
       yield* engine.stop("workflow", "run:stop-retry");
+      assert.strictEqual((yield* store.getWorkflow("workflow"))?.runs[0]?.status, "stopped");
       const first = yield* Queue.take(calls);
       const second = yield* Queue.take(calls);
       assert.strictEqual(first.commandId, second.commandId);
@@ -588,6 +590,318 @@ it.effect("starts due schedules without a client and advances the persisted dead
       assert.strictEqual(event.kind, "schedule.upserted");
       if (event.kind === "schedule.upserted") assert.notStrictEqual(event.schedule.nextRunAt, null);
       yield* harness.reply(sent, finish);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("retries persisted stop intents in the background", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const firstCall = yield* Ref.make(true);
+    const driver: NodeDriver = {
+      ...harness.driver,
+      interrupt: (input) =>
+        Ref.getAndSet(firstCall, false).pipe(
+          Effect.flatMap((first) =>
+            first
+              ? Effect.fail(new NodeDriverError({ operation: "interrupt", message: "Offline" }))
+              : harness.driver.interrupt(input),
+          ),
+        ),
+    };
+    const registry = DriverRegistry.DriverRegistry.of({
+      get: () => Effect.succeed(driver),
+      register: () => Effect.void,
+      remove: () => Effect.void,
+    });
+    const layer = TaskEngine.layer.pipe(
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(store.putWorkflow(setupWorkflow()));
+      yield* engine.start("workflow", { id: "run:bg-stop", nodeId: "root", task: "Hold" });
+      yield* Queue.take(harness.sends);
+      yield* engine.stop("workflow", "run:bg-stop").pipe(Effect.flip);
+      yield* TestClock.adjust("30 seconds");
+      yield* waitForRun(store, (run) => run.status === "stopped");
+      assert.strictEqual((yield* store.getTask("run:bg-stop"))?.status, "stopped");
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("stop cancels every active run of the workflow", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const layer = TaskEngine.layer.pipe(
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(store.putWorkflow(setupWorkflow()));
+      yield* engine.start("workflow", { id: "run:a", nodeId: "root", task: "A" });
+      yield* Queue.take(harness.sends);
+      yield* engine.start("workflow", { id: "run:b", nodeId: "root", task: "B" });
+      yield* Queue.take(harness.sends);
+      yield* engine.stop("workflow", "run:a");
+      const runs = (yield* store.getWorkflow("workflow"))?.runs ?? [];
+      assert.deepStrictEqual(
+        runs.map((run) => run.status),
+        ["stopped", "stopped"],
+      );
+      yield* Queue.take(harness.interrupts);
+      yield* Queue.take(harness.interrupts);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("returns the existing run when a start is repeated with the same id", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const layer = TaskEngine.layer.pipe(
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(store.putWorkflow(setupWorkflow()));
+      const input = { id: "run:again", nodeId: "root", task: "Once" };
+      const first = yield* engine.start("workflow", input);
+      yield* Queue.take(harness.sends);
+      assert.deepStrictEqual(yield* engine.start("workflow", input), first);
+      const conflict = yield* engine
+        .start("workflow", { ...input, task: "Other" })
+        .pipe(Effect.flip);
+      assert.strictEqual(conflict._tag, "BoardConflictError");
+      assert.strictEqual((yield* store.getWorkflow("workflow"))?.runs.length, 1);
+      assert.strictEqual(yield* Queue.size(harness.sends), 0);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("keeps only the last 50 finished runs and never prunes active ones", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const layer = TaskEngine.layer.pipe(
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      const old = (index: number, status: "finished" | "running") => ({
+        id: `old:${index}`,
+        nodeId: "root",
+        nodeName: "root",
+        task: "Old",
+        status,
+        startedAt: "2020-01-01T00:00:00.000Z",
+        requests: [],
+      });
+      yield* store.transaction(
+        store.putWorkflow({
+          ...setupWorkflow(),
+          runs: [
+            old(-1, "running"),
+            ...Array.from({ length: 60 }, (_, index) => old(index, "finished")),
+          ],
+        }),
+      );
+      const oldTask = (runId: string) => ({
+        id: runId,
+        workflowId: "workflow",
+        runId,
+        kind: "run" as const,
+        owner: null,
+        nodeId: "root",
+        status: "done" as const,
+        checkpoint: {},
+        waitOn: [],
+        waitPolicy: "allSettled" as const,
+      });
+      yield* store.transaction(
+        Effect.all([store.putTask(oldTask("old:0")), store.putTask(oldTask("old:59"))]),
+      );
+      yield* engine.start("workflow", { id: "run:new", nodeId: "root", task: "New" });
+      assert.deepStrictEqual(yield* store.listTasks("old:0"), []);
+      assert.strictEqual((yield* store.listTasks("old:59")).length, 1);
+      const runs = (yield* store.getWorkflow("workflow"))?.runs ?? [];
+      assert.strictEqual(runs.filter((run) => run.status === "finished").length, 50);
+      assert.deepStrictEqual(
+        runs.filter((run) => run.status === "running").map((run) => run.id),
+        ["old:-1", "run:new"],
+      );
+      assert.isTrue(runs.some((run) => run.id === "old:59"));
+      assert.isFalse(runs.some((run) => run.id === "old:0"));
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("retries an uncertain send with the same ids instead of failing the task", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const calls = yield* Queue.unbounded<BoardDriverSend>();
+    const firstCall = yield* Ref.make(true);
+    const driver: NodeDriver = {
+      ...harness.driver,
+      send: (input) =>
+        Queue.offer(calls, input).pipe(
+          Effect.andThen(Ref.getAndSet(firstCall, false)),
+          Effect.flatMap((first) =>
+            first
+              ? Effect.fail(
+                  new NodeDriverError({ operation: "send", message: "Lost", retryable: true }),
+                )
+              : harness.driver.send(input),
+          ),
+        ),
+    };
+    const registry = DriverRegistry.DriverRegistry.of({
+      get: () => Effect.succeed(driver),
+      register: () => Effect.void,
+      remove: () => Effect.void,
+    });
+    const layer = TaskEngine.layer.pipe(
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(store.putWorkflow(setupWorkflow()));
+      yield* engine.start("workflow", { id: "run:uncertain", nodeId: "root", task: "Go" });
+      const first = yield* Queue.take(calls);
+      yield* TestClock.adjust("15 seconds");
+      const second = yield* Queue.take(calls);
+      assert.strictEqual(second.commandId, first.commandId);
+      assert.strictEqual(second.messageId, first.messageId);
+      assert.strictEqual((yield* store.getTask("run:uncertain"))?.status, "running");
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("interrupts the thread when Stop lands while an uncertain send waits to retry", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const calls = yield* Queue.unbounded<BoardDriverSend>();
+    const interrupts = yield* Queue.unbounded<Parameters<NodeDriver["interrupt"]>[0]>();
+    const driver: NodeDriver = {
+      ...harness.driver,
+      send: (input) =>
+        Queue.offer(calls, input).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new NodeDriverError({ operation: "send", message: "Lost", retryable: true }),
+            ),
+          ),
+        ),
+      interrupt: (input) => Queue.offer(interrupts, input).pipe(Effect.asVoid),
+    };
+    const registry = DriverRegistry.DriverRegistry.of({
+      get: () => Effect.succeed(driver),
+      register: () => Effect.void,
+      remove: () => Effect.void,
+    });
+    const layer = TaskEngine.layer.pipe(
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(store.putWorkflow(setupWorkflow()));
+      yield* engine.start("workflow", { id: "run:stop-uncertain", nodeId: "root", task: "Go" });
+      yield* Queue.take(calls);
+      const stopped = yield* engine.stop("workflow", "run:stop-uncertain");
+      const interrupt = yield* Queue.take(interrupts);
+      assert.strictEqual(interrupt.runId, undefined);
+      assert.strictEqual(stopped.status, "stopped");
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("fails a task with the driver's message when the send is certain to have failed", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const driver: NodeDriver = {
+      ...harness.driver,
+      send: () =>
+        Effect.fail(new NodeDriverError({ operation: "send", message: "Re-pair needed: expired" })),
+    };
+    const registry = DriverRegistry.DriverRegistry.of({
+      get: () => Effect.succeed(driver),
+      register: () => Effect.void,
+      remove: () => Effect.void,
+    });
+    const layer = TaskEngine.layer.pipe(
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(store.putWorkflow(setupWorkflow()));
+      yield* engine.start("workflow", { id: "run:expired", nodeId: "root", task: "Go" });
+      const event = yield* waitForRun(store, (run) => run.status === "failed");
+      if (event.kind === "run.upserted")
+        assert.strictEqual(event.run.summary, "Re-pair needed: expired");
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("does not start a schedule while a run is active and skips a paused schedule", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const layer = BoardScheduler.layer.pipe(
+      Layer.provideMerge(TaskEngine.layer),
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const store = yield* BoardStore.BoardStore;
+      const dueAt = DateTime.formatIso(yield* DateTime.now);
+      const schedule = {
+        workflowId: "workflow",
+        nodeId: "root",
+        task: "Scheduled task",
+        everyMs: 60_000,
+        nextRunAt: dueAt,
+      };
+      yield* store.transaction(
+        Effect.gen(function* () {
+          yield* store.putWorkflow({
+            ...setupWorkflow(),
+            runs: [
+              {
+                id: "busy",
+                nodeId: "root",
+                nodeName: "root",
+                task: "Busy",
+                status: "running",
+                startedAt: dueAt,
+                requests: [],
+              },
+            ],
+          });
+          yield* store.putSchedule({ ...schedule, id: "active", enabled: true });
+          yield* store.putSchedule({ ...schedule, id: "paused", enabled: false });
+        }),
+      );
+      yield* TestClock.adjust("5 seconds");
+      yield* store.events(0).pipe(
+        Stream.filter((entry) => entry.kind === "schedule.upserted"),
+        Stream.runHead,
+      );
+      const schedules = yield* store.listSchedules();
+      assert.notStrictEqual(schedules.find((entry) => entry.id === "active")?.nextRunAt, dueAt);
+      assert.strictEqual(schedules.find((entry) => entry.id === "paused")?.nextRunAt, dueAt);
+      assert.strictEqual((yield* store.getWorkflow("workflow"))?.runs.length, 1);
+      assert.strictEqual(yield* Queue.size(harness.sends), 0);
     }).pipe(Effect.provide(layer));
   }),
 );

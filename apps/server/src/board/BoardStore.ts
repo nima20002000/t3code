@@ -34,6 +34,12 @@ export interface BoardTask {
   readonly waitPolicy: "allSettled" | "failFast";
 }
 
+export interface PendingBriefing {
+  readonly workflowId: string;
+  readonly nodeId: string;
+  readonly sequence: number;
+}
+
 type EventInput = BoardEvent extends infer E
   ? E extends BoardEvent
     ? Omit<E, "sequence">
@@ -54,6 +60,7 @@ export class BoardStore extends Context.Service<
     readonly getTask: (id: string) => StoreEffect<BoardTask | undefined>;
     readonly listTasks: (runId?: string) => StoreEffect<ReadonlyArray<BoardTask>>;
     readonly putTask: (task: BoardTask) => StoreEffect<void>;
+    readonly deleteRunTasks: (runIds: ReadonlyArray<string>) => StoreEffect<void>;
     readonly listPeers: () => StoreEffect<ReadonlyArray<BoardPeer>>;
     readonly getPeer: (id: EnvironmentId) => StoreEffect<Peer | undefined>;
     readonly listPairedPeers: () => StoreEffect<ReadonlyArray<Peer>>;
@@ -64,6 +71,23 @@ export class BoardStore extends Context.Service<
       status: BoardPeer["status"],
       error?: string,
     ) => StoreEffect<BoardPeer | undefined>;
+    readonly getLaunchIntent: (
+      workflowId: string,
+      nodeId: string,
+    ) => StoreEffect<{ readonly threadId: string } | undefined>;
+    readonly putLaunchIntent: (
+      workflowId: string,
+      nodeId: string,
+      threadId: string,
+    ) => StoreEffect<void>;
+    readonly deleteLaunchIntent: (workflowId: string, nodeId: string) => StoreEffect<void>;
+    readonly markBriefings: (
+      workflowId: string,
+      nodeIds: ReadonlyArray<string>,
+      sequence: number,
+    ) => StoreEffect<void>;
+    readonly listBriefings: (workflowId?: string) => StoreEffect<ReadonlyArray<PendingBriefing>>;
+    readonly clearBriefing: (briefing: PendingBriefing) => StoreEffect<void>;
     readonly listSchedules: () => StoreEffect<ReadonlyArray<BoardSchedule>>;
     readonly putSchedule: (schedule: BoardSchedule) => StoreEffect<void>;
     readonly deleteSchedule: (id: string) => StoreEffect<void>;
@@ -90,9 +114,15 @@ const migration = Effect.gen(function* () {
   yield* sql`CREATE TABLE board_schedules (id TEXT PRIMARY KEY, data TEXT NOT NULL)`;
 });
 
+const intentsMigration = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`CREATE TABLE board_launch_intents (workflow_id TEXT NOT NULL, node_id TEXT NOT NULL, thread_id TEXT NOT NULL, PRIMARY KEY (workflow_id, node_id), FOREIGN KEY (workflow_id) REFERENCES board_workflows(id) ON DELETE CASCADE)`;
+  yield* sql`CREATE TABLE board_pending_briefings (workflow_id TEXT NOT NULL, node_id TEXT NOT NULL, sequence INTEGER NOT NULL, PRIMARY KEY (workflow_id, node_id), FOREIGN KEY (workflow_id) REFERENCES board_workflows(id) ON DELETE CASCADE)`;
+});
+
 export const migrate = Migrator.make({})({
   table: "board_migrations",
-  loader: Migrator.fromRecord({ "1_Board": migration }),
+  loader: Migrator.fromRecord({ "1_Board": migration, "2_BoardIntents": intentsMigration }),
 });
 
 type JsonRow = { readonly data: string };
@@ -108,6 +138,7 @@ const peerFromRow = (row: PeerRow): Peer => {
     environmentId: peer.environmentId,
     url: peer.url,
     bearer: row.bearer,
+    ...(peer.expiresAt ? { expiresAt: peer.expiresAt } : {}),
   };
 };
 type TaskRow = {
@@ -169,6 +200,11 @@ const make = Effect.gen(function* () {
     const rows = yield* sql<TaskRow>`SELECT * FROM board_tasks WHERE id = ${id}`;
     return rows[0] === undefined ? undefined : taskFromRow(rows[0]);
   });
+  const deleteRunTasks = Effect.fn("BoardStore.deleteRunTasks")(function* (
+    runIds: ReadonlyArray<string>,
+  ) {
+    if (runIds.length) yield* sql`DELETE FROM board_tasks WHERE run_id IN ${sql.in(runIds)}`;
+  });
   const listTasks = Effect.fn("BoardStore.listTasks")(function* (runId?: string) {
     const rows =
       runId === undefined
@@ -200,6 +236,7 @@ const make = Effect.gen(function* () {
       environmentId: peer.environmentId,
       url: peer.url,
       status: "connected",
+      ...(peer.expiresAt ? { expiresAt: peer.expiresAt } : {}),
     };
     yield* sql`INSERT INTO board_peers (id, data, bearer) VALUES (${peer.environmentId}, ${encodeJson(visible)}, ${peer.bearer}) ON CONFLICT(id) DO UPDATE SET data = excluded.data, bearer = excluded.bearer`;
     return visible;
@@ -212,7 +249,8 @@ const make = Effect.gen(function* () {
     status: BoardPeer["status"],
     error?: string,
   ) {
-    const rows = yield* sql<PeerRow>`SELECT data, bearer FROM board_peers WHERE id = ${peer.environmentId}`;
+    const rows =
+      yield* sql<PeerRow>`SELECT data, bearer FROM board_peers WHERE id = ${peer.environmentId}`;
     const row = rows[0];
     if (!row || row.bearer !== peer.bearer) return undefined;
     const current = decodeJson(row.data) as BoardPeer;
@@ -221,6 +259,61 @@ const make = Effect.gen(function* () {
     const updated: BoardPeer = { ...rest, status, ...(error === undefined ? {} : { error }) };
     yield* sql`UPDATE board_peers SET data = ${encodeJson(updated)} WHERE id = ${peer.environmentId}`;
     return updated;
+  });
+  const getLaunchIntent = Effect.fn("BoardStore.getLaunchIntent")(function* (
+    workflowId: string,
+    nodeId: string,
+  ) {
+    const rows = yield* sql<{
+      readonly thread_id: string;
+    }>`SELECT thread_id FROM board_launch_intents WHERE workflow_id = ${workflowId} AND node_id = ${nodeId}`;
+    return rows[0] === undefined ? undefined : { threadId: rows[0].thread_id };
+  });
+  const putLaunchIntent = Effect.fn("BoardStore.putLaunchIntent")(function* (
+    workflowId: string,
+    nodeId: string,
+    threadId: string,
+  ) {
+    yield* sql`INSERT OR REPLACE INTO board_launch_intents (workflow_id, node_id, thread_id) VALUES (${workflowId}, ${nodeId}, ${threadId})`;
+  });
+  const deleteLaunchIntent = Effect.fn("BoardStore.deleteLaunchIntent")(function* (
+    workflowId: string,
+    nodeId: string,
+  ) {
+    yield* sql`DELETE FROM board_launch_intents WHERE workflow_id = ${workflowId} AND node_id = ${nodeId}`;
+  });
+  const markBriefings = Effect.fn("BoardStore.markBriefings")(function* (
+    workflowId: string,
+    nodeIds: ReadonlyArray<string>,
+    sequence: number,
+  ) {
+    for (const nodeId of nodeIds) {
+      yield* sql`INSERT OR REPLACE INTO board_pending_briefings (workflow_id, node_id, sequence) VALUES (${workflowId}, ${nodeId}, ${sequence})`;
+    }
+  });
+  const listBriefings = Effect.fn("BoardStore.listBriefings")(function* (workflowId?: string) {
+    const rows =
+      workflowId === undefined
+        ? yield* sql<{
+            readonly workflow_id: string;
+            readonly node_id: string;
+            readonly sequence: number;
+          }>`SELECT * FROM board_pending_briefings ORDER BY rowid`
+        : yield* sql<{
+            readonly workflow_id: string;
+            readonly node_id: string;
+            readonly sequence: number;
+          }>`SELECT * FROM board_pending_briefings WHERE workflow_id = ${workflowId} ORDER BY rowid`;
+    return rows.map((row) => ({
+      workflowId: row.workflow_id,
+      nodeId: row.node_id,
+      sequence: row.sequence,
+    }));
+  });
+  const clearBriefing = Effect.fn("BoardStore.clearBriefing")(function* (
+    briefing: PendingBriefing,
+  ) {
+    yield* sql`DELETE FROM board_pending_briefings WHERE workflow_id = ${briefing.workflowId} AND node_id = ${briefing.nodeId} AND sequence = ${briefing.sequence}`;
   });
   const listSchedules = Effect.fn("BoardStore.listSchedules")(function* () {
     const rows = yield* sql<JsonRow>`SELECT data FROM board_schedules ORDER BY rowid`;
@@ -291,12 +384,19 @@ const make = Effect.gen(function* () {
     getTask,
     listTasks,
     putTask,
+    deleteRunTasks,
     listPeers,
     getPeer,
     listPairedPeers,
     putPeer,
     deletePeer,
     updatePeerStatus,
+    getLaunchIntent,
+    putLaunchIntent,
+    deleteLaunchIntent,
+    markBriefings,
+    listBriefings,
+    clearBriefing,
     listSchedules,
     putSchedule,
     deleteSchedule,

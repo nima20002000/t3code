@@ -10,6 +10,8 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
@@ -145,6 +147,9 @@ export const pair = Effect.fn("PeerPairing.pair")(function* (input: {
     environmentId: descriptor.environmentId,
     url: target.httpBaseUrl,
     bearer: token.access_token,
+    expiresAt: DateTime.formatIso(
+      DateTime.addDuration(yield* DateTime.now, Duration.seconds(token.expires_in)),
+    ),
   };
   yield* input.store
     .put(peer)

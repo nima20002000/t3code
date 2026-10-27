@@ -142,7 +142,11 @@ export function NodeSettingsPanel(props: {
       </div>
       <div className="relative isolate flex min-h-0 min-w-0 flex-1 [transform:translateZ(0)] flex-col overflow-hidden">
         {connectedIds.includes(node.environmentId) ? (
-          <ChatView environmentId={node.environmentId} threadId={node.threadId} routeKind="server" />
+          <ChatView
+            environmentId={node.environmentId}
+            threadId={node.threadId}
+            routeKind="server"
+          />
         ) : (
           <div className="grid content-start gap-3 p-4 text-sm">
             <p>Connect {machine} in Connections to view and use this thread.</p>

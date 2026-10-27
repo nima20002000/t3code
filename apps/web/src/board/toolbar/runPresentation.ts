@@ -2,6 +2,7 @@ import type { RunStatus } from "@t3tools/board-core/boardModel";
 
 export const RUN_STATUS_LABELS: Record<RunStatus, string> = {
   running: "Running",
+  stopping: "Stopping",
   finished: "Finished",
   stopped: "Stopped",
   failed: "Failed",

@@ -44,7 +44,7 @@ export interface BoardLogEntry {
   readonly text: string;
 }
 
-export type RunStatus = "running" | "finished" | "stopped" | "failed";
+export type RunStatus = "running" | "stopping" | "finished" | "stopped" | "failed";
 
 /** One work request made during a run, with its eventual return. */
 export interface RunRequestRecord {

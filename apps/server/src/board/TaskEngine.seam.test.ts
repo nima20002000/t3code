@@ -191,7 +191,9 @@ it.live("runs a board request and interrupts through the real server and orchest
         // @effect-diagnostics-next-line globalFetchInEffect:off -- Exercise pairing and HTTP against the second isolated server.
         Effect.tryPromise(() => fetch(`${remoteOrigin}${path}`, init));
       const remoteDescriptorResponse = yield* remoteRequest("/.well-known/t3/environment");
-      const remoteDescriptor = (yield* Effect.tryPromise(() => remoteDescriptorResponse.json())) as {
+      const remoteDescriptor = (yield* Effect.tryPromise(() =>
+        remoteDescriptorResponse.json(),
+      )) as {
         environmentId: string;
       };
       assert.notStrictEqual(remoteDescriptor.environmentId, descriptor.environmentId);
@@ -205,9 +207,11 @@ it.live("runs a board request and interrupts through the real server and orchest
         }),
       });
       assert.strictEqual(remoteAuth.status, 200);
-      const remoteBearer = ((yield* Effect.tryPromise(() => remoteAuth.json())) as {
-        access_token: string;
-      }).access_token;
+      const remoteBearer = (
+        (yield* Effect.tryPromise(() => remoteAuth.json())) as {
+          access_token: string;
+        }
+      ).access_token;
       const remoteAuthorization = { authorization: `Bearer ${remoteBearer}` };
       const makePairing = Effect.fn("BoardSeam.makePairing")(function* () {
         const response = yield* remoteRequest("/api/auth/pairing-token", {
@@ -263,14 +267,18 @@ it.live("runs a board request and interrupts through the real server and orchest
         method: "POST",
         headers: remoteAuthorization,
       });
-      const remoteTicket = ((yield* Effect.tryPromise(() => remoteTicketResponse.json())) as {
-        ticket: string;
-      }).ticket;
+      const remoteTicket = (
+        (yield* Effect.tryPromise(() => remoteTicketResponse.json())) as {
+          ticket: string;
+        }
+      ).ticket;
       const remoteWs = new URL("/ws", remoteOrigin);
       remoteWs.protocol = "ws:";
       remoteWs.searchParams.set("wsTicket", remoteTicket);
       remoteWs.searchParams.set("orchestrationProtocol", "2");
-      const remoteProtocol = RpcClient.layerProtocolSocket({ retryPolicy: Schedule.recurs(0) }).pipe(
+      const remoteProtocol = RpcClient.layerProtocolSocket({
+        retryPolicy: Schedule.recurs(0),
+      }).pipe(
         Layer.provide(
           Layer.mergeAll(
             Socket.layerWebSocket(remoteWs.toString()).pipe(

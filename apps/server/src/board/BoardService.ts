@@ -31,6 +31,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
+import * as Semaphore from "effect/Semaphore";
 import type { SqlError } from "effect/sql/SqlError";
 import * as BoardStore from "./BoardStore.ts";
 import * as DriverRegistry from "./DriverRegistry.ts";
@@ -93,15 +94,25 @@ const make = Effect.gen(function* () {
   const save = Effect.fn("BoardService.save")(function* (workflow: Workflow) {
     return (yield* saveWithSequence(workflow)).workflow;
   });
-  const sendUpdatedInstructions = Effect.fn("BoardService.sendUpdatedInstructions")(function* (
-    workflow: Workflow,
-    sequence: number,
-    nodeIds: ReadonlyArray<string>,
+  const neighborIds = (workflow: Workflow, nodeId: string) =>
+    workflow.edges.flatMap((edge) =>
+      edge.a === nodeId ? [edge.b] : edge.b === nodeId ? [edge.a] : [],
+    );
+  const briefingLock = yield* Semaphore.make(1);
+  const deliverBriefings = Effect.fn("BoardService.deliverBriefings")(function* (
+    workflowId?: string,
   ) {
-    for (const nodeId of nodeIds) {
-      const node = workflow.nodes.find((entry) => entry.id === nodeId);
-      if (!node) continue;
-      const key = `${encodeURIComponent(workflow.id)}:${sequence}:${encodeURIComponent(node.id)}`;
+    yield* briefingLock.withPermits(1)(deliverPending(workflowId));
+  });
+  const deliverPending = Effect.fn("BoardService.deliverPending")(function* (workflowId?: string) {
+    for (const pending of yield* store.listBriefings(workflowId)) {
+      const workflow = yield* store.getWorkflow(pending.workflowId);
+      const node = workflow?.nodes.find((entry) => entry.id === pending.nodeId);
+      if (!workflow || !node) {
+        yield* store.clearBriefing(pending);
+        continue;
+      }
+      const key = `${encodeURIComponent(workflow.id)}:${pending.sequence}:${encodeURIComponent(node.id)}`;
       const result = yield* Effect.gen(function* () {
         if (!node.projectId)
           return yield* new BoardInvalidRequestError({ message: "Node project is missing." });
@@ -121,16 +132,19 @@ const make = Effect.gen(function* () {
           ),
         });
       }).pipe(Effect.result);
-      if (Result.isSuccess(result)) continue;
+      if (Result.isSuccess(result)) {
+        yield* store.clearBriefing(pending);
+        continue;
+      }
       yield* Effect.logWarning("Could not send updated board instructions", {
         workflowId: workflow.id,
-        nodeId,
+        nodeId: node.id,
         cause: result.failure,
       });
       yield* store.transaction(
         Effect.gen(function* () {
           const current = yield* store.getWorkflow(workflow.id);
-          if (!current) return;
+          if (!current || current.log.some((entry) => entry.id === `briefing:${key}`)) return;
           yield* save({
             ...current,
             log: [
@@ -147,8 +161,9 @@ const make = Effect.gen(function* () {
       );
     }
   });
+  yield* deliverBriefings().pipe(Effect.ignore, Effect.forkScoped);
   const checkEditable = (workflow: Workflow) =>
-    workflow.runs.some((run) => run.status === "running")
+    workflow.runs.some((run) => run.status === "running" || run.status === "stopping")
       ? Effect.fail(
           new BoardConflictError({ message: "Stop the active run before changing the workflow." }),
         )
@@ -217,7 +232,9 @@ const make = Effect.gen(function* () {
             pending: [],
             runQueue: [],
             runs: workflow.runs.map((run) =>
-              run.status === "running" ? { ...run, status: "stopped" as const } : run,
+              run.status === "running" || run.status === "stopping"
+                ? { ...run, status: "stopped" as const }
+                : run,
             ),
           };
           imported.push(yield* save(safe));
@@ -240,14 +257,24 @@ const make = Effect.gen(function* () {
       )
     )
       return yield* new BoardConflictError({ message: "Node id or name already exists." });
+    let threadId = input.threadId;
     if (input.kind === "launch") {
+      const intent = yield* store.transaction(
+        Effect.gen(function* () {
+          const existing = yield* store.getLaunchIntent(id, input.id);
+          if (existing) return existing;
+          yield* store.putLaunchIntent(id, input.id, input.threadId);
+          return { threadId: input.threadId };
+        }),
+      );
+      threadId = intent.threadId as typeof input.threadId;
       const driver = yield* drivers.get(input.environmentId);
       const key = `${encodeURIComponent(id)}:${encodeURIComponent(input.id)}`;
       yield* driver.launch({
         environmentId: input.environmentId,
         launch: {
           commandId: CommandId.make(`board:launch:${key}`),
-          threadId: input.threadId,
+          threadId,
           projectId: input.projectId,
           title: input.name,
           modelSelection: input.modelSelection,
@@ -267,7 +294,7 @@ const make = Effect.gen(function* () {
       name: input.name,
       environmentId: input.environmentId,
       projectId: input.projectId,
-      threadId: input.threadId,
+      threadId,
       x: input.x,
       y: input.y,
       baselined: true,
@@ -281,6 +308,7 @@ const make = Effect.gen(function* () {
         if (current.nodes.some((entry) => entry.id === node.id))
           return yield* new BoardConflictError({ message: "Node id already exists." });
         yield* save({ ...current, nodes: [...current.nodes, node] });
+        yield* store.deleteLaunchIntent(id, node.id);
         return node;
       }),
     );
@@ -290,20 +318,28 @@ const make = Effect.gen(function* () {
     nodeId: string,
     input: BoardUpdateNodeInput,
   ) {
-    return yield* store.transaction(
+    const node = yield* store.transaction(
       Effect.gen(function* () {
         const workflow = yield* getWorkflow(id);
         yield* checkEditable(workflow);
         const current = workflow.nodes.find((node) => node.id === nodeId);
         if (!current) return yield* new BoardNotFoundError({ message: "Node not found." });
         const node = { ...current, ...input };
-        yield* save({
+        const saved = yield* saveWithSequence({
           ...workflow,
           nodes: workflow.nodes.map((entry) => (entry.id === nodeId ? node : entry)),
         });
+        if (node.name !== current.name)
+          yield* store.markBriefings(
+            id,
+            [nodeId, ...neighborIds(workflow, nodeId)],
+            saved.sequence,
+          );
         return node;
       }),
     );
+    yield* deliverBriefings(id);
+    return node;
   });
   const deleteNode = Effect.fn("BoardService.deleteNode")(function* (id: string, nodeId: string) {
     yield* store.transaction(
@@ -313,24 +349,27 @@ const make = Effect.gen(function* () {
         if (!workflow.nodes.some((node) => node.id === nodeId))
           return yield* new BoardNotFoundError({ message: "Node not found." });
         yield* deleteSchedulesFor(id, nodeId);
-        yield* save({
+        const saved = yield* saveWithSequence({
           ...workflow,
           nodes: workflow.nodes.filter((node) => node.id !== nodeId),
           edges: workflow.edges.filter((edge) => edge.a !== nodeId && edge.b !== nodeId),
           pending: workflow.pending.filter((entry) => entry.from !== nodeId && entry.to !== nodeId),
         });
+        yield* store.markBriefings(id, neighborIds(workflow, nodeId), saved.sequence);
       }),
     );
+    yield* deliverBriefings(id);
   });
   const createEdge = Effect.fn("BoardService.createEdge")(function* (id: string, edge: BoardEdge) {
-    const { workflow, sequence } = yield* store.transaction(
+    yield* store.transaction(
       Effect.gen(function* () {
         const workflow = yield* getWorkflow(id);
         yield* checkEditable(workflow);
-        return yield* saveWithSequence({ ...workflow, edges: [...workflow.edges, edge] });
+        const saved = yield* saveWithSequence({ ...workflow, edges: [...workflow.edges, edge] });
+        yield* store.markBriefings(id, [edge.a, edge.b], saved.sequence);
       }),
     );
-    yield* sendUpdatedInstructions(workflow, sequence, [edge.a, edge.b]);
+    yield* deliverBriefings(id);
     return edge;
   });
   const deleteEdge = Effect.fn("BoardService.deleteEdge")(function* (
@@ -338,19 +377,20 @@ const make = Effect.gen(function* () {
     from: string,
     to: string,
   ) {
-    const { workflow, sequence } = yield* store.transaction(
+    yield* store.transaction(
       Effect.gen(function* () {
         const workflow = yield* getWorkflow(id);
         yield* checkEditable(workflow);
         if (!workflow.edges.some((edge) => edge.a === from && edge.b === to))
           return yield* new BoardNotFoundError({ message: "Edge not found." });
-        return yield* saveWithSequence({
+        const saved = yield* saveWithSequence({
           ...workflow,
           edges: workflow.edges.filter((edge) => edge.a !== from || edge.b !== to),
         });
+        yield* store.markBriefings(id, [from, to], saved.sequence);
       }),
     );
-    yield* sendUpdatedInstructions(workflow, sequence, [from, to]);
+    yield* deliverBriefings(id);
   });
   const findSchedule = Effect.fn("BoardService.findSchedule")(function* (id: string) {
     const schedule = (yield* store.listSchedules()).find((entry) => entry.id === id);

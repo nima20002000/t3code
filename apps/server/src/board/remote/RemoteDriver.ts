@@ -15,6 +15,7 @@ import {
   NodeDriverError,
   type NodeDriver,
 } from "@t3tools/board-core/NodeDriver";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -37,8 +38,17 @@ class RemoteStateError extends Schema.TaggedError<RemoteStateError>()("RemoteSta
   reason: Schema.String,
 }) {}
 
+class PeerExpiredError extends Schema.TaggedError<PeerExpiredError>()("PeerExpiredError", {}) {}
+
 const error = (operation: NodeDriverError["operation"], cause: unknown) =>
-  new NodeDriverError({ operation, message: `Remote board ${operation} failed.`, cause });
+  new NodeDriverError({
+    operation,
+    message: hasTag(cause, "PeerExpiredError")
+      ? "Re-pair needed: access to this machine expired."
+      : `Remote board ${operation} failed.`,
+    ...(retryable(cause) ? { retryable: true } : {}),
+    cause,
+  });
 
 const reportStatus = (
   store: PeerStore,
@@ -71,6 +81,11 @@ const peerFor = Effect.fn("RemoteDriver.peerFor")(function* (
 ) {
   const peer = yield* store.get(thread.environmentId);
   if (!peer) return yield* new RemoteStateError({ reason: "Remote environment is not paired." });
+  if (
+    peer.expiresAt !== undefined &&
+    Date.parse(peer.expiresAt) <= (yield* DateTime.now).epochMilliseconds
+  )
+    return yield* new PeerExpiredError({});
   onPeer?.(peer);
   const descriptor = yield* readDescriptor(peer.url);
   if (descriptor.environmentId !== peer.environmentId) {
@@ -199,10 +214,21 @@ function retryable(cause: unknown): boolean {
   return "cause" in cause && retryable(cause.cause);
 }
 
+function hasTag(cause: unknown, tag: string): boolean {
+  if (typeof cause !== "object" || cause === null) return false;
+  if ("_tag" in cause && cause._tag === tag) return true;
+  return "cause" in cause && hasTag(cause.cause, tag);
+}
+
 function connectionFailure(cause: unknown): boolean {
   if (isPeerHttpError(cause)) return true;
   if (typeof cause !== "object" || cause === null) return false;
-  if ("_tag" in cause && (cause._tag === "RpcClientError" || cause._tag === "PeerPairingError"))
+  if (
+    "_tag" in cause &&
+    (cause._tag === "RpcClientError" ||
+      cause._tag === "PeerPairingError" ||
+      cause._tag === "PeerExpiredError")
+  )
     return true;
   return "cause" in cause && connectionFailure(cause.cause);
 }

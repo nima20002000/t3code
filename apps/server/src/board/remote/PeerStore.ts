@@ -9,6 +9,7 @@ export interface Peer {
   readonly environmentId: EnvironmentId;
   readonly url: string;
   readonly bearer: string;
+  readonly expiresAt?: string;
 }
 
 export interface PeerStore {

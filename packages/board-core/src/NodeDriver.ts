@@ -61,6 +61,8 @@ export class NodeDriverError extends Schema.TaggedError<NodeDriverError>()("Node
     "interrupt",
   ]),
   message: Schema.String,
+  /** The outcome is unknown, so repeating the call with the same ids is safe. */
+  retryable: Schema.optionalKey(Schema.Boolean),
   cause: Schema.optionalKey(Schema.Defect()),
 }) {}
 

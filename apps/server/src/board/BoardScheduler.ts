@@ -14,43 +14,43 @@ export const layer = Layer.effectDiscard(
       const currentTime = DateTime.toEpochMillis(yield* DateTime.now);
       const schedules = yield* store.listSchedules();
       for (const schedule of schedules) {
-        if (
-          !schedule.enabled ||
-          schedule.nextRunAt === null ||
-          Date.parse(schedule.nextRunAt) > currentTime
-        )
-          continue;
+        const { id } = schedule;
         const dueAt = schedule.nextRunAt;
-        const runId = `board:schedule:${encodeURIComponent(schedule.id)}:${encodeURIComponent(dueAt)}`;
-        const started = yield* engine
-          .start(schedule.workflowId, { id: runId, nodeId: schedule.nodeId, task: schedule.task })
-          .pipe(
-            Effect.as(true),
-            Effect.catchTags({ BoardConflictError: () => Effect.succeed(true) }),
-            Effect.catch((cause) =>
-              Effect.logWarning("Board schedule could not start", {
-                scheduleId: schedule.id,
-                cause,
-              }).pipe(Effect.as(false)),
+        if (!schedule.enabled || !dueAt || Date.parse(dueAt) > currentTime) continue;
+        const claim = Effect.gen(function* () {
+          const current = (yield* store.listSchedules()).find((entry) => entry.id === id);
+          if (!current?.enabled || current.nextRunAt !== dueAt || Date.parse(dueAt) > currentTime)
+            return false;
+          const nextRunAt = DateTime.formatIso(
+            DateTime.makeUnsafe(
+              Math.max(Date.parse(dueAt) + current.everyMs, currentTime + current.everyMs),
             ),
           );
-        if (!started) continue;
-        yield* store.transaction(
-          Effect.gen(function* () {
-            const current = (yield* store.listSchedules()).find(
-              (entry) => entry.id === schedule.id,
-            );
-            if (!current?.enabled || current.nextRunAt !== dueAt) return;
-            const nextRunAt = DateTime.formatIso(
-              DateTime.makeUnsafe(
-                Math.max(Date.parse(dueAt) + current.everyMs, currentTime + current.everyMs),
-              ),
-            );
-            const updated = { ...current, nextRunAt };
-            yield* store.putSchedule(updated);
-            yield* store.appendEvent({ kind: "schedule.upserted", schedule: updated });
-          }),
-        );
+          const updated = { ...current, nextRunAt };
+          yield* store.putSchedule(updated);
+          yield* store.appendEvent({ kind: "schedule.upserted", schedule: updated });
+          const workflow = yield* store.getWorkflow(current.workflowId);
+          if (workflow?.runs.some((run) => run.status === "running" || run.status === "stopping")) {
+            yield* Effect.logInfo("Board schedule skipped because a run is active", {
+              scheduleId: id,
+              dueAt,
+            });
+            return false;
+          }
+          return true;
+        });
+        const runId = `board:schedule:${encodeURIComponent(id)}:${encodeURIComponent(dueAt)}`;
+        yield* engine
+          .startClaimed(
+            schedule.workflowId,
+            { id: runId, nodeId: schedule.nodeId, task: schedule.task },
+            claim,
+          )
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Board schedule could not start", { scheduleId: id, cause }),
+            ),
+          );
       }
     });
     yield* scheduler.register("board", runDue());

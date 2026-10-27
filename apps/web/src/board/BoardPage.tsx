@@ -15,8 +15,9 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { MessageSquareIcon, SettingsIcon } from "lucide-react";
+import { ActivityIcon, MessageSquareIcon, SettingsIcon } from "lucide-react";
 import { createContext, useContext, useEffect, useState } from "react";
+import type { EdgeRunView, NodeRunView } from "@t3tools/board-core/runView";
 
 import { SidebarInset } from "../components/ui/sidebar";
 import { Button } from "../components/ui/button";
@@ -44,14 +45,21 @@ import {
   type BoardNode,
 } from "./boardStore";
 import { AgentHandles } from "./foreman/AgentHandles";
-import { AgentNodeView, type AgentNodeAction } from "./foreman/AgentNodeView";
-import { SignalEdgeShape } from "./foreman/SignalEdgeShape";
+import {
+  AgentNodeView,
+  type AgentNodeAction,
+  type AgentNodeState,
+  type AgentNodeTransition,
+} from "./foreman/AgentNodeView";
+import { SignalEdgeShape, type EdgePulse } from "./foreman/SignalEdgeShape";
 import { AGENT_NODE_SIZE, useFloatingCurve } from "./foreman/signalEdge";
 import "./foreman/foreman.css";
 import { BoardToolbar } from "./BoardToolbar";
 import { randomUUID } from "../lib/utils";
 import { useBoardMachines } from "./useBoardMachines";
 import { BoardKanban } from "./toolbar/BoardKanban";
+import { useNodeRunViews } from "./toolbar/useNodeStatuses";
+import { RunActivityCard, type ActivityTarget } from "./RunActivity";
 import { RunDetails } from "./toolbar/RunDetails";
 import { useBoardPending } from "./boardApi";
 
@@ -193,6 +201,65 @@ function AddNodeForm({ onDone }: { onDone: () => void }) {
 }
 
 const OpenSettingsContext = createContext<(nodeId: string) => void>(() => {});
+const OpenActivityContext = createContext<(nodeId: string) => void>(() => {});
+const RunViewsContext = createContext<{
+  nodes: ReadonlyMap<string, NodeRunView>;
+  edges: ReadonlyMap<string, EdgeRunView>;
+}>({ nodes: new Map(), edges: new Map() });
+
+function transitionFor(
+  before: AgentNodeState,
+  after: AgentNodeState,
+): AgentNodeTransition | undefined {
+  if (after === before) return undefined;
+  if (after === "running") return "ignite";
+  if (after === "completed") return "complete";
+  if (after === "failed") return "fail";
+  if (after === "waiting") return "wait";
+  return undefined;
+}
+
+/** Plays a cue once per state change; the first render shows the state without one. */
+function useStateCue(state: AgentNodeState) {
+  const [cue, setCue] = useState<{
+    state: AgentNodeState;
+    transition?: AgentNodeTransition;
+    key: number;
+  }>({ state, key: 0 });
+  if (cue.state !== state) {
+    const transition = transitionFor(cue.state, state);
+    setCue({ state, key: cue.key + 1, ...(transition ? { transition } : {}) });
+  }
+  return cue;
+}
+
+const TRAVEL_GAP_MS = 180;
+
+/** Crossings that appear after the edge mounted fly once; older ones are history and do not. */
+function useEdgePulses(view: EdgeRunView | undefined): EdgePulse[] {
+  const [initial] = useState(() => new Set(view?.crossings.map((crossing) => crossing.key)));
+  // Get-or-set cache of start times, so a re-render never restarts a flight.
+  const [starts] = useState(() => new Map<string, number>());
+  const now = performance.now();
+  const fresh = view?.crossings.filter((crossing) => !initial.has(crossing.key)) ?? [];
+  return fresh.flatMap((crossing, index) => {
+    let startsAt = starts.get(crossing.key);
+    if (startsAt === undefined) {
+      startsAt = now + index * TRAVEL_GAP_MS;
+      starts.set(crossing.key, startsAt);
+    }
+    return startsAt > now - 4_000
+      ? [
+          {
+            key: crossing.key,
+            signal: crossing.signal,
+            reversed: crossing.signal !== "task",
+            startsAt,
+          },
+        ]
+      : [];
+  });
+}
 
 type AgentFlowNode = Node<{ readonly node: BoardNode }, "agent">;
 
@@ -209,6 +276,8 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
   const peers = useBoardPeers();
   const threads = useThreadShells();
   const openSettings = useContext(OpenSettingsContext);
+  const openActivity = useContext(OpenActivityContext);
+  const runView = useContext(RunViewsContext).nodes.get(node.id);
 
   const shell = threads.find(
     (thread) => thread.environmentId === node.environmentId && thread.id === node.threadId,
@@ -217,11 +286,13 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
     environments.find((environment) => environment.environmentId === node.environmentId)?.label ??
     peers.find((peer) => peer.environmentId === node.environmentId)?.name ??
     "Unknown";
-  const status = !connectedIds.includes(node.environmentId)
-    ? "disconnected"
+  const fallback: NodeRunView = !connectedIds.includes(node.environmentId)
+    ? { state: "unavailable", label: "Machine offline" }
     : shell && ACTIVE_STATUSES.has(shell.source.status)
-      ? "working"
-      : "idle";
+      ? { state: "running", label: "Working" }
+      : { state: "idle", label: "Idle" };
+  const view = runView ?? fallback;
+  const cue = useStateCue(view.state);
   const instanceId = shell ? String(shell.modelSelection.instanceId) : "";
 
   const actions: AgentNodeAction[] = [
@@ -241,6 +312,12 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
       icon: <SettingsIcon size={15} />,
       onClick: () => openSettings(node.id),
     },
+    {
+      slot: "info",
+      label: `${node.name} run activity`,
+      icon: <ActivityIcon size={15} />,
+      onClick: () => openActivity(node.id),
+    },
   ];
 
   return (
@@ -250,10 +327,9 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
       harnessLabel={shell ? instanceId : "Thread not found"}
       model={shell?.modelSelection.model ?? null}
       machine={machine}
-      statusLabel={
-        status === "working" ? "Working" : status === "idle" ? "Idle" : "Chat not connected"
-      }
-      state={status === "working" ? "running" : status === "disconnected" ? "unavailable" : "idle"}
+      statusLabel={view.label}
+      state={view.state}
+      {...(cue.transition ? { transition: cue.transition, transitionKey: cue.key } : {})}
       selected={selected}
       actions={actions}
     >
@@ -264,7 +340,17 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
 
 function SignalEdge({ id, source, target }: EdgeProps) {
   const curve = useFloatingCurve(source, target);
-  return curve ? <SignalEdgeShape id={id} curve={curve} /> : null;
+  const view = useContext(RunViewsContext).edges.get(id);
+  const pulses = useEdgePulses(view);
+  return curve ? (
+    <SignalEdgeShape
+      id={id}
+      curve={curve}
+      signal={view?.signal}
+      pending={view?.pending ?? 0}
+      pulses={pulses}
+    />
+  ) : null;
 }
 
 const NODE_TYPES = { agent: AgentCard };
@@ -298,7 +384,11 @@ export function BoardPage() {
       <SidebarInset className="h-dvh">
         <div className="grid content-start gap-3 p-6">
           <p role="status">
-            {status === "offline" ? `Board unavailable: ${error}` : "Connecting to board…"}
+            {status === "offline"
+              ? `Board unavailable: ${error}`
+              : status === "connected"
+                ? "This board is empty."
+                : "Connecting to board…"}
           </p>
           <div>
             <Button size="sm" variant="outline" render={<Link to="/" />}>
@@ -316,6 +406,7 @@ function BoardCanvasPage() {
   const { importError } = useBoardState();
   const pending = useBoardPending();
   const { nodes, edges } = workflow;
+  const views = useNodeRunViews(workflow);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [kanban, setKanban] = useState(false);
   const selectedRun = workflow.runs.find((run) => run.id === selectedRunId) ?? null;
@@ -323,6 +414,17 @@ function BoardCanvasPage() {
     nodes.map((n) => toFlowNode(n)),
   );
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<ReadonlySet<string>>(new Set());
+  const [activityNodeId, setActivityNodeId] = useState<string | null>(null);
+  const selectedEdge =
+    selectedEdgeIds.size === 1
+      ? edges.find((edge) => selectedEdgeIds.has(`${edge.a}:${edge.b}`))
+      : undefined;
+  const activity: ActivityTarget | null =
+    activityNodeId && nodes.some((node) => node.id === activityNodeId)
+      ? { kind: "node", nodeId: activityNodeId }
+      : selectedEdge
+        ? { kind: "edge", from: selectedEdge.a, to: selectedEdge.b }
+        : null;
   const [addingAgent, setAddingAgent] = useState(false);
   const [addingThread, setAddingThread] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -410,27 +512,31 @@ function BoardCanvasPage() {
           <BoardKanban workflow={workflow} />
         ) : (
           <OpenSettingsContext.Provider value={setSettingsNodeId}>
-            <ReactFlow
-              className="absolute! inset-0"
-              nodes={flowNodes}
-              edges={flowEdges}
-              nodeTypes={NODE_TYPES}
-              edgeTypes={EDGE_TYPES}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
-              onNodeDragStart={() => recordHistoryStep()}
-              onConnectStart={() => setConnecting(true)}
-              onConnectEnd={() => setConnecting(false)}
-              deleteKeyCode={["Backspace", "Delete"]}
-              proOptions={{ hideAttribution: true }}
-              fitView
-              minZoom={0.2}
-              maxZoom={1.6}
-            >
-              <Background color="var(--border)" gap={24} size={1} />
-              <Controls showInteractive={false} />
-            </ReactFlow>
+            <OpenActivityContext.Provider value={setActivityNodeId}>
+              <RunViewsContext.Provider value={views}>
+                <ReactFlow
+                  className="absolute! inset-0"
+                  nodes={flowNodes}
+                  edges={flowEdges}
+                  nodeTypes={NODE_TYPES}
+                  edgeTypes={EDGE_TYPES}
+                  onNodesChange={onNodesChange}
+                  onEdgesChange={onEdgesChange}
+                  onConnect={onConnect}
+                  onNodeDragStart={() => recordHistoryStep()}
+                  onConnectStart={() => setConnecting(true)}
+                  onConnectEnd={() => setConnecting(false)}
+                  deleteKeyCode={["Backspace", "Delete"]}
+                  proOptions={{ hideAttribution: true }}
+                  fitView
+                  minZoom={0.2}
+                  maxZoom={1.6}
+                >
+                  <Background color="var(--border)" gap={24} size={1} />
+                  <Controls showInteractive={false} />
+                </ReactFlow>
+              </RunViewsContext.Provider>
+            </OpenActivityContext.Provider>
           </OpenSettingsContext.Provider>
         )}
         <BoardToolbar
@@ -461,6 +567,16 @@ function BoardCanvasPage() {
         ) : null}
         {selectedRun ? (
           <RunDetails run={selectedRun} onClose={() => setSelectedRunId(null)} />
+        ) : null}
+        {activity && !kanban ? (
+          <RunActivityCard
+            workflow={workflow}
+            target={activity}
+            onClose={() => {
+              setActivityNodeId(null);
+              setSelectedEdgeIds(new Set());
+            }}
+          />
         ) : null}
         {settingsNode ? (
           <NodeSettingsPanel
