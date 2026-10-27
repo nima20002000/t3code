@@ -147,26 +147,8 @@
     --wave: var(--danger);
   }
 
+  /* Live states are static; only one-shot cues move (t3: no continuously repainting animations). */
   @media (prefers-reduced-motion: no-preference) {
-    &[data-state="running"] .n-agent-energy::after {
-      animation: n-agent-orbit 3.2s linear infinite;
-    }
-    &[data-state="waiting"] .n-agent-energy::after {
-      animation: n-agent-orbit 7s linear infinite;
-    }
-    &[data-state="approved"] .n-agent-energy::after {
-      animation: n-agent-orbit 4.5s linear infinite;
-    }
-    &[data-state="running"] .n-agent-core {
-      animation: n-agent-breathe 2.8s ease-in-out infinite;
-    }
-    &[data-state="waiting"] .n-agent-energy::before {
-      animation: n-agent-waiting 1.8s ease-in-out infinite;
-    }
-    &[data-state="queued"] .n-agent-energy {
-      animation: n-agent-queued 1.6s ease-in-out infinite;
-    }
-
     /* Ignition: the pulse lands, a shockwave leaves the rim, the core kicks, the orbit spins up and settles. */
     &[data-transition] .n-agent-wave {
       opacity: 1;
@@ -854,11 +836,6 @@
   transform: none;
 }
 
-@keyframes n-agent-orbit {
-  to {
-    transform: rotate(1turn);
-  }
-}
 @keyframes n-agent-spark {
   0% {
     opacity: 0;
@@ -956,19 +933,6 @@
       0 0 24px color-mix(in srgb, var(--agent-hue) 14%, transparent);
   }
 }
-@keyframes n-agent-breathe {
-  0%,
-  100% {
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--agent-hue) 24%, transparent),
-      0 0 20px color-mix(in srgb, var(--agent-hue) 12%, transparent);
-  }
-  50% {
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--agent-hue) 36%, transparent),
-      0 0 34px color-mix(in srgb, var(--agent-hue) 24%, transparent);
-  }
-}
 @keyframes n-agent-settle {
   0% {
     transform: scale(1.03);
@@ -994,24 +958,6 @@
   40%,
   60% {
     transform: translateX(5px);
-  }
-}
-@keyframes n-agent-waiting {
-  0%,
-  100% {
-    opacity: 0.25;
-  }
-  50% {
-    opacity: 0.85;
-  }
-}
-@keyframes n-agent-queued {
-  0%,
-  100% {
-    opacity: 0.2;
-  }
-  50% {
-    opacity: 0.5;
   }
 }
 @keyframes n-agent-status-in {
