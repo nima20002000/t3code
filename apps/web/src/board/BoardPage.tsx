@@ -13,7 +13,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ActivityIcon, MessageSquareIcon, SettingsIcon, XIcon } from "lucide-react";
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type MouseEvent } from "react";
 import type { EdgeRunView, NodeRunView } from "@t3tools/board-core/runView";
 
 import { AgentSettingsDialog, NodeSettingsPanel } from "./NodeSettingsPanel";
@@ -487,6 +487,17 @@ function BoardCanvasPage() {
     addEdge(connection.source, connection.target);
   };
 
+  // Clicking one agent and then another connects them, first to second; a canvas click starts over.
+  const linkFrom = useRef<string | null>(null);
+  const onNodeClick = (event: MouseEvent, node: AgentFlowNode) => {
+    if (event.target instanceof Element && event.target.closest("button")) return;
+    const from = linkFrom.current;
+    if (from !== null && from !== node.id) {
+      addEdge(from, node.id);
+      linkFrom.current = null;
+    } else linkFrom.current = node.id;
+  };
+
   return (
     <SidebarInset className="h-dvh">
       <WorkspacePageHeader electron={isElectron} className="border-b border-border">
@@ -516,6 +527,10 @@ function BoardCanvasPage() {
                   onNodesChange={onNodesChange}
                   onEdgesChange={onEdgesChange}
                   onConnect={onConnect}
+                  onNodeClick={onNodeClick}
+                  onPaneClick={() => {
+                    linkFrom.current = null;
+                  }}
                   onNodeDragStart={() => recordHistoryStep()}
                   onConnectStart={() => setConnecting(true)}
                   onConnectEnd={() => setConnecting(false)}
