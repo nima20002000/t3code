@@ -57,10 +57,11 @@ export interface RunRequestRecord {
   readonly at: string;
   readonly task: string;
   readonly input?: unknown;
-  readonly status: "pending" | "returned" | "denied" | "dropped";
+  readonly status: "pending" | "returned" | "denied" | "dropped" | "failed" | "stopped";
   readonly returnedAt?: string;
   readonly returnSummary?: string;
   readonly returnData?: unknown;
+  readonly failureReason?: string;
 }
 
 export interface RunRecord {

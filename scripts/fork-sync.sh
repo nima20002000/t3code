@@ -50,7 +50,12 @@ run_board_tests() {
       apps/web/src/board/*) web+=("${file#apps/web/}") ;;
     esac
   done
-  printf 'Board tests: %s\n' "${!seen[*]:-none}"
+  if ((${#seen[@]})); then
+    printf 'Board tests:\n'
+    printf '  %s\n' "${!seen[@]}"
+  else
+    printf 'Board tests: none\n'
+  fi
   if ((${#core[@]})); then (cd packages/board-core && vp test run --config ../../vite.config.ts --dir . "${core[@]}"); fi
   if ((${#server[@]})); then (cd apps/server && vp test run "${server[@]}"); fi
   if ((${#web[@]})); then (cd apps/web && vp test run --project unit "${web[@]}"); fi

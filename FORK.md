@@ -41,6 +41,9 @@ server workspace (named `t3`); it runs only changed tests under
 board-owned seam tests named `*.seam.test.ts` or `*.seam.test.tsx` on every push.
 A manual CI run may name only board-owned test paths. Seam tests must exercise
 real upstream interfaces while replacing only the necessary external transport.
+The seams cover real orchestration services and settled replies; board migrations
+sharing the existing SQLite database; the server HTTP/auth/SSE hook; pairing and
+WS RPC against a second t3 server; and the board route, sidebar, and ChatView.
 There is no nightly upstream canary. A `*.published.seam.test.ts` version-skew
 seam runs only on sync or by explicit selection; once it exists, it should check
 the latest published stable `t3` release.

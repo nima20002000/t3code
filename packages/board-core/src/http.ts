@@ -54,10 +54,11 @@ export const BoardRunRequestRecordSchema = Schema.Struct({
   at: Schema.String,
   task: Schema.String,
   input: Schema.optionalKey(Schema.Unknown),
-  status: Schema.Literals(["pending", "returned", "denied", "dropped"]),
+  status: Schema.Literals(["pending", "returned", "denied", "dropped", "failed", "stopped"]),
   returnedAt: Schema.optionalKey(Schema.String),
   returnSummary: Schema.optionalKey(Schema.String),
   returnData: Schema.optionalKey(Schema.Unknown),
+  failureReason: Schema.optionalKey(Schema.String),
 });
 export const BoardRunSchema = Schema.Struct({
   id: Id,

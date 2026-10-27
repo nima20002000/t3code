@@ -6,6 +6,7 @@ import {
   BoardEventsQuery,
   BoardHttpApi,
   BoardPeerSchema,
+  BoardRunRequestRecordSchema,
   BoardStartRunInput,
   BoardWorkflowSettingsSchema,
 } from "./http.ts";
@@ -34,6 +35,26 @@ describe("board wire contract", () => {
         y: 0,
       }),
     ).toThrow();
+  });
+
+  it("represents failed and stopped child requests in a run", () => {
+    const request = {
+      id: "r",
+      fromId: "a",
+      toId: "b",
+      from: "A",
+      to: "B",
+      at: "now",
+      task: "work",
+      failureReason: "interrupted",
+    };
+    expect(
+      Schema.decodeSync(BoardRunRequestRecordSchema)({ ...request, status: "failed" })
+        .failureReason,
+    ).toBe("interrupted");
+    expect(
+      Schema.decodeSync(BoardRunRequestRecordSchema)({ ...request, status: "stopped" }).status,
+    ).toBe("stopped");
   });
 
   it("keeps peer credentials out of the wire type and decodes events", () => {
