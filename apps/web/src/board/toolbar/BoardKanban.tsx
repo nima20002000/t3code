@@ -28,6 +28,13 @@ export function BoardKanban(props: {
 }) {
   const allCards = useKanbanCards(props.workflow.id);
   const [showEarlier, setShowEarlier] = useState(false);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const toggle = (id: string) =>
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
   const earlier = allCards.filter((card) => card.status === "done" && card.runId !== props.runId);
   const cards = showEarlier ? allCards : allCards.filter((card) => !earlier.includes(card));
   const nameOf = (nodeId: string | undefined) =>
@@ -74,26 +81,39 @@ export function BoardKanban(props: {
               </h3>
               {column.map((card) => {
                 const assignee = nameOf(card.assigneeNodeId);
+                const open = expanded.has(card.id);
                 return (
-                  <article
-                    key={card.id}
-                    className="grid gap-1 rounded-md border bg-background px-2 py-1.5 text-xs"
-                  >
-                    <strong className="font-medium break-words">{card.title}</strong>
-                    {card.body ? (
-                      <p className="line-clamp-4 break-words whitespace-pre-wrap text-muted-foreground">
-                        {card.body}
-                      </p>
-                    ) : null}
-                    {card.reason ? (
-                      <p className="break-words text-muted-foreground italic">{card.reason}</p>
-                    ) : null}
-                    {assignee ? <small className="text-muted-foreground">{assignee}</small> : null}
-                    {card.moves && card.moves.length > 0 ? (
-                      <small className="text-2xs text-muted-foreground/80">
-                        {card.moves.map((move) => LABELS[move.status]).join(" → ")} ·{" "}
-                        {moverName(card.moves.at(-1)!.by)}
-                      </small>
+                  <article key={card.id} className="rounded-md border bg-background text-xs">
+                    <button
+                      type="button"
+                      aria-expanded={open}
+                      className="flex w-full min-w-0 items-center gap-1.5 px-2 py-1 text-left"
+                      onClick={() => toggle(card.id)}
+                    >
+                      <span className="min-w-0 flex-1 truncate font-medium">{card.title}</span>
+                      {assignee ? (
+                        <small className="shrink-0 truncate text-muted-foreground">
+                          {assignee}
+                        </small>
+                      ) : null}
+                    </button>
+                    {open ? (
+                      <div className="grid gap-1 border-t px-2 py-1.5">
+                        {card.body ? (
+                          <p className="break-words whitespace-pre-wrap text-muted-foreground">
+                            {card.body}
+                          </p>
+                        ) : null}
+                        {card.reason ? (
+                          <p className="break-words text-muted-foreground italic">{card.reason}</p>
+                        ) : null}
+                        {card.moves && card.moves.length > 0 ? (
+                          <small className="text-2xs text-muted-foreground/80">
+                            {card.moves.map((move) => LABELS[move.status]).join(" → ")} ·{" "}
+                            {moverName(card.moves.at(-1)!.by)}
+                          </small>
+                        ) : null}
+                      </div>
                     ) : null}
                   </article>
                 );
