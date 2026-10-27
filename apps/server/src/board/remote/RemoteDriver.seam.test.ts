@@ -208,21 +208,29 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
         "fake result",
       );
       const subscribed = yield* Deferred.make<WebSocket>();
+      const reconnected = yield* Deferred.make<number | undefined>();
+      const queuedCancel = yield* Deferred.make<() => void>();
       const originalWebSocket = globalThis.WebSocket;
       const resumeSequences: Array<number | undefined> = [];
       class ObservedWebSocket extends originalWebSocket {
         override send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
-          super.send(data);
           const frame =
             typeof data === "string"
               ? data
               : data instanceof Uint8Array
                 ? new TextDecoder().decode(data)
                 : "";
+          if (frame.includes("board-test-race-cancel:cancel-queued")) {
+            Deferred.doneUnsafe(queuedCancel, Effect.succeed(() => super.send(data)));
+            return;
+          }
+          super.send(data);
           if (frame.includes(ORCHESTRATION_V2_WS_METHODS.subscribeThread)) {
             const request = JSON.parse(frame) as { payload: { afterSequence?: number } };
             resumeSequences.push(request.payload.afterSequence);
             Deferred.doneUnsafe(subscribed, Effect.succeed(this));
+            if (resumeSequences.length === 2)
+              Deferred.doneUnsafe(reconnected, Effect.succeed(request.payload.afterSequence));
           }
         }
       }
@@ -272,6 +280,7 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
         Stream.take(1),
         Stream.runDrain,
       );
+      const resumedAfter = yield* Deferred.await(reconnected);
       const queued = yield* driver.send({
         thread,
         commandId: CommandId.make("board-test-queued"),
@@ -295,6 +304,20 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
           Stream.runCollect,
         );
       assert.equal(cancelled?.status, "cancelled");
+      const raced = yield* driver.send({
+        thread,
+        commandId: CommandId.make("board-test-race"),
+        messageId: MessageId.make("board-test-race-message"),
+        text: "race",
+      });
+      const cancellingRaced = yield* driver
+        .interrupt({
+          thread,
+          runId: raced.runId,
+          commandId: CommandId.make("board-test-race-cancel"),
+        })
+        .pipe(Effect.forkScoped);
+      const releaseQueuedCancel = yield* Deferred.await(queuedCancel);
       yield* driver.interrupt({
         thread,
         runId: held.runId,
@@ -302,10 +325,34 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
       });
       const [interrupted] = yield* Fiber.join(waitingForHeld);
       assert.equal(interrupted?.status, "interrupted");
+      yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
+        threadId,
+        afterSequence: raced.sequence,
+      }).pipe(
+        Stream.filter(
+          (item) =>
+            item.kind === "event" &&
+            item.event.type === "run.updated" &&
+            item.event.payload.id === raced.runId &&
+            item.event.payload.status === "running",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      yield* Effect.sync(releaseQueuedCancel);
+      yield* Fiber.join(cancellingRaced);
+      const [racedInterrupt] = yield* driver
+        .subscribeSettled({ thread, afterSequence: raced.sequence })
+        .pipe(
+          Stream.filter((event) => event.runId === raced.runId),
+          Stream.take(1),
+          Stream.runCollect,
+        );
+      assert.equal(racedInterrupt?.status, "interrupted");
       assert.isAtLeast(resumeSequences.length, 2);
       assert.equal(resumeSequences[0], sent.sequence);
       assert.isAbove(replayedSequence, sent.sequence);
-      assert.isAtLeast(resumeSequences[1] ?? 0, replayedSequence);
+      assert.isAtLeast(resumedAfter ?? 0, replayedSequence);
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer))),
   ),
 );

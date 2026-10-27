@@ -1,6 +1,7 @@
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import {
   AuthWebSocketTicketResult,
+  CommandId,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
   ORCHESTRATION_V2_WS_METHODS,
   type OrchestrationV2Run,
@@ -17,6 +18,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -314,6 +316,25 @@ export function make(store: PeerStore): NodeDriver {
             return yield* new RemoteStateError({ reason: "Remote run was not found." });
           }
           if (settled(run, input.thread, 0)) return;
+          if (run.status === "queued") {
+            // A queued cancellation and a raced active interrupt need different receipts.
+            const cancelled = yield* client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+              type: "queued-run.cancel",
+              commandId: CommandId.make(`${input.commandId}:cancel-queued`),
+              threadId: input.thread.threadId,
+              runId: run.id,
+            }).pipe(Effect.result);
+            if (Result.isSuccess(cancelled)) return;
+            const refreshed = yield* projectionFor(client, input.thread);
+            const current =
+              refreshed.runs.find((candidate) => candidate.id === run.id) ??
+              (yield* fullProjectionFor(client, input.thread)).runs.find(
+                (candidate) => candidate.id === run.id,
+              );
+            if (!current || current.status === "queued")
+              return yield* Effect.fail(cancelled.failure);
+            if (settled(current, input.thread, 0)) return;
+          }
           yield* client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
             type: "run.interrupt",
             commandId: input.commandId,
