@@ -187,7 +187,9 @@ export function useBoardHistory() {
   return {
     canUndo: history.past.length > 0,
     canRedo: history.future.length > 0,
-    dirty: !snapshotsEqual(snapshotOf(workflow), history.origin),
+    // Restore returns to the board as it was when opened; an empty board has nothing to return to.
+    restorable:
+      history.origin.nodes.length > 0 && !snapshotsEqual(snapshotOf(workflow), history.origin),
   };
 }
 
@@ -199,6 +201,8 @@ function nodeInput(node: CoreNode): BoardCreateNodeInput {
     environmentId: node.environmentId,
     modelSelection: node.modelSelection,
     ...(node.prompt === undefined ? {} : { prompt: node.prompt }),
+    ...(node.runtimeMode === undefined ? {} : { runtimeMode: node.runtimeMode }),
+    ...(node.size === undefined ? {} : { size: node.size }),
     x: node.x,
     y: node.y,
   };
@@ -439,7 +443,7 @@ function patchNode(id: string, patch: { name?: string; prompt?: string; x?: numb
     );
   edit(action);
 }
-export async function updateNode(id: string, patch: { x: number; y: number }) {
+export async function updateNode(id: string, patch: { x?: number; y?: number; size?: number }) {
   const workflow = getCurrentWorkflow();
   try {
     await runBoardMutation((client) =>

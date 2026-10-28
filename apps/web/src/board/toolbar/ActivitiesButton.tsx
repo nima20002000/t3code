@@ -1,48 +1,135 @@
-import { HistoryIcon } from "lucide-react";
+import { ArrowLeftIcon, ChevronRightIcon, HistoryIcon } from "lucide-react";
+import { useState } from "react";
 
-import type { BoardLogEntry } from "../boardStore";
+import type { BoardLogEntry, RunRecord } from "../boardStore";
 import { IconButton } from "./IconButton";
-import { formatRunTime } from "./runPresentation";
-import { Popover, PopoverPopup, PopoverTrigger } from "../upstream";
+import { formatRunTime, RUN_STATUS_DOT, RUN_STATUS_LABELS } from "./runPresentation";
+import { Button, Popover, PopoverPopup, PopoverTrigger } from "../upstream";
 
-/** Foreman-style Activities: an icon button opening a popover with the workflow log, newest first. */
-export function ActivitiesButton(props: { readonly log: ReadonlyArray<BoardLogEntry> }) {
+function LogList(props: { readonly log: ReadonlyArray<BoardLogEntry> }) {
+  if (props.log.length === 0)
+    return <p className="px-3 py-2.5 text-2xs text-muted-foreground">Nothing has happened yet.</p>;
   return (
-    <Popover>
+    <ol className="overflow-y-auto">
+      {props.log.map((entry) => (
+        <li
+          key={entry.id}
+          className="grid gap-0.5 border-b border-border/50 px-3 py-2 text-xs break-words"
+        >
+          <time dateTime={entry.at} className="text-2xs text-muted-foreground">
+            {formatRunTime(entry.at)}
+          </time>
+          <span
+            className={
+              entry.kind === "error"
+                ? "text-destructive-foreground"
+                : entry.kind === "run"
+                  ? "font-semibold"
+                  : undefined
+            }
+          >
+            {entry.text}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** A workflow has one run at a time, so a run's activity is the log between its start and end. */
+function runLog(log: ReadonlyArray<BoardLogEntry>, run: RunRecord) {
+  return log.filter(
+    (entry) => entry.at >= run.startedAt && (run.endedAt === undefined || entry.at <= run.endedAt),
+  );
+}
+
+/** Activities: the workflow's runs, newest first; picking one shows its activity, with Back. */
+export function ActivitiesButton(props: {
+  readonly log: ReadonlyArray<BoardLogEntry>;
+  readonly runs: ReadonlyArray<RunRecord>;
+  readonly onShowRun: (runId: string) => void;
+}) {
+  const [runId, setRunId] = useState<string | "all" | null>(null);
+  const run = props.runs.find((entry) => entry.id === runId);
+  const runs = props.runs.toSorted((a, b) => b.startedAt.localeCompare(a.startedAt));
+  return (
+    <Popover onOpenChange={(open) => (open ? undefined : setRunId(null))}>
       <PopoverTrigger render={<IconButton label="Activities" />}>
         <HistoryIcon />
       </PopoverTrigger>
       <PopoverPopup width="lg" align="end" padding="none">
         <div className="flex max-h-[60vh] flex-col">
-          <h2 className="border-b border-border px-3 py-2.5 text-sm font-semibold">Activities</h2>
-          {props.log.length === 0 ? (
-            <p className="px-3 py-2.5 text-2xs text-muted-foreground">Nothing has happened yet.</p>
-          ) : null}
-          <ol className="overflow-y-auto">
-            {props.log.map((entry) => (
-              <li
-                key={entry.id}
-                className="grid gap-0.5 border-b border-border/50 px-3 py-2 text-xs break-words"
-              >
-                <time dateTime={entry.at} className="text-2xs text-muted-foreground">
-                  {formatRunTime(entry.at)}
-                </time>
-                <span
-                  className={
-                    entry.kind === "error"
-                      ? "text-destructive-foreground"
-                      : entry.kind === "run"
-                        ? "font-semibold"
-                        : undefined
-                  }
-                >
-                  {entry.text}
-                </span>
-              </li>
-            ))}
-          </ol>
+          {runId === null ? (
+            <>
+              <h2 className="border-b border-border px-3 py-2.5 text-sm font-semibold">
+                Activities
+              </h2>
+              <div className="overflow-y-auto">
+                <RunRow label="All activity" onClick={() => setRunId("all")} />
+                {runs.map((entry) => (
+                  <RunRow
+                    key={entry.id}
+                    label={entry.task}
+                    run={entry}
+                    onClick={() => setRunId(entry.id)}
+                  />
+                ))}
+                {runs.length === 0 ? (
+                  <p className="px-3 py-2.5 text-2xs text-muted-foreground">No runs yet.</p>
+                ) : null}
+              </div>
+            </>
+          ) : (
+            <>
+              <header className="flex items-center gap-1 border-b border-border py-1.5 pr-2 pl-1">
+                <IconButton label="Back to runs" onClick={() => setRunId(null)}>
+                  <ArrowLeftIcon />
+                </IconButton>
+                <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">
+                  {run ? run.task : "All activity"}
+                </h2>
+                {run ? (
+                  <Button size="xs" variant="ghost" onClick={() => props.onShowRun(run.id)}>
+                    Details
+                  </Button>
+                ) : null}
+              </header>
+              <LogList log={run ? runLog(props.log, run) : props.log} />
+            </>
+          )}
         </div>
       </PopoverPopup>
     </Popover>
+  );
+}
+
+function RunRow(props: {
+  readonly label: string;
+  readonly run?: RunRecord;
+  readonly onClick: () => void;
+}) {
+  const { run } = props;
+  return (
+    <button
+      type="button"
+      className="flex w-full items-center gap-2 border-b border-border/50 px-3 py-2 text-left text-xs hover:bg-accent focus-visible:bg-accent"
+      onClick={props.onClick}
+    >
+      {run ? (
+        <span
+          className={`size-2 flex-none rounded-full ${RUN_STATUS_DOT[run.status]}`}
+          aria-label={RUN_STATUS_LABELS[run.status]}
+        />
+      ) : null}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{props.label}</span>
+        {run ? (
+          <small className="text-2xs text-muted-foreground">
+            {RUN_STATUS_LABELS[run.status]} · {formatRunTime(run.startedAt)}
+          </small>
+        ) : null}
+      </span>
+      <ChevronRightIcon className="size-3.5 flex-none text-muted-foreground" aria-hidden="true" />
+    </button>
   );
 }

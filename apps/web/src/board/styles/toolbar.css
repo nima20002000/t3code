@@ -35,23 +35,6 @@
   }
 }
 
-@utility runs-selector-row {
-  display: grid;
-  grid-template-columns: 14px 92px minmax(0, 1fr) 84px;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-  padding-inline: 12px;
-  text-align: start;
-  & > * {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-}
-
 @utility board-run-details {
   position: absolute;
   z-index: 4;

@@ -37,6 +37,7 @@ export function AgentNodeView({
   transition,
   transitionKey,
   selected,
+  size,
   chat,
   children,
 }: {
@@ -52,6 +53,8 @@ export function AgentNodeView({
   /** Changes for every new cue, so the same cue twice in a row still plays twice. */
   transitionKey?: string | number;
   selected?: boolean;
+  /** Diameter in px; the stylesheet's default when unset. */
+  size?: number;
   chat: AgentNodeChat;
   children?: ReactNode;
 }) {
@@ -59,6 +62,7 @@ export function AgentNodeView({
   return (
     <div
       className="n-agent"
+      style={size === undefined ? undefined : ({ "--agent-size": `${size}px` } as CSSProperties)}
       data-state={state}
       data-transition={transition}
       data-harness={harness}

@@ -323,7 +323,6 @@ it.live("runs a board request and interrupts through the real server and orchest
         (yield* post("/api/board/schedules", {
           id: "remote-schedule",
           workflowId: "workflow",
-          nodeId: "child",
           task: "Scheduled remote work",
           everyMs: 60_000,
           enabled: true,
@@ -388,7 +387,6 @@ it.live("runs a board request and interrupts through the real server and orchest
       assert.strictEqual(
         (yield* post("/api/board/workflows/workflow/runs", {
           id: "run",
-          nodeId: "root",
           task: "Delegate",
         })).status,
         200,
@@ -449,7 +447,6 @@ it.live("runs a board request and interrupts through the real server and orchest
       assert.strictEqual(
         (yield* post("/api/board/workflows/workflow/runs", {
           id: "held",
-          nodeId: "root",
           task: "Hold this run",
         })).status,
         200,
@@ -462,19 +459,25 @@ it.live("runs a board request and interrupts through the real server and orchest
       yield* Effect.promise(() => FakeTransport.interrupted.promise);
       yield* waitForRun("held", withStatus("stopped"));
 
+      // Runs enter at the orchestrator, so move it to the remote machine to hold a remote run.
+      assert.strictEqual(
+        (yield* post("/api/board/workflows/workflow/nodes/root", {
+          environmentId: remoteDescriptor.environmentId,
+        })).status,
+        200,
+      );
       assert.strictEqual(
         (yield* post("/api/board/workflows/workflow/runs", {
           id: "remote-held",
-          nodeId: "child",
           task: "Hold this run remotely",
         })).status,
         200,
       );
       const remoteLaunched = yield* waitForRun(
         "remote-held",
-        (run) => run.threads.child !== undefined,
+        (run) => run.threads.root !== undefined,
       );
-      const remoteThread = ThreadId.make(remoteLaunched.threads.child!.threadId);
+      const remoteThread = ThreadId.make(remoteLaunched.threads.root!.threadId);
       const remoteMessage = yield* remoteClient[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
         threadId: remoteThread,
         afterSequence: 0,

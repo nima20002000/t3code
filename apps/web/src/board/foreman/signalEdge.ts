@@ -7,6 +7,10 @@ import { useInternalNode, type InternalNode, type Node } from "@xyflow/react";
 
 /** Default worker diameter. */
 export const AGENT_NODE_SIZE = 212;
+/** The orchestrator starts half again as big as a worker. */
+export const ORCHESTRATOR_NODE_SIZE = AGENT_NODE_SIZE * 1.5;
+export const agentNodeSize = (node: { readonly profile: string; readonly size?: number }) =>
+  node.size ?? (node.profile === "orchestrator" ? ORCHESTRATOR_NODE_SIZE : AGENT_NODE_SIZE);
 const RIM_GAP = 7;
 
 interface Point {

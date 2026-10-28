@@ -19,6 +19,14 @@ export function markSettingsFromBoard() {
   settingsFromBoard = true;
 }
 
+let startupClaimed = false;
+/** The app opens on the board, once; later visits to "/" reach t3's own landing. */
+export function claimBoardStartup() {
+  const first = !startupClaimed;
+  startupClaimed = true;
+  return first;
+}
+
 export function boardHidesSidebar(pathname: string) {
   if (pathname === "/board") return true;
   if (pathname.startsWith("/settings")) return settingsFromBoard;

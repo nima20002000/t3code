@@ -1,8 +1,9 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
+import { claimBoardStartup } from "../board/BoardNavigation";
 import { isElectron } from "../env";
 import { NoProjectsHero } from "../components/NoProjectsHero";
 import { sortScopedProjectsForSidebar } from "../components/Sidebar.logic";
@@ -107,5 +108,8 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
 }
 
 export const Route = createFileRoute("/_chat/")({
+  beforeLoad: ({ preload }) => {
+    if (!preload && claimBoardStartup()) throw redirect({ to: "/board", replace: true });
+  },
   component: ChatIndexRouteView,
 });

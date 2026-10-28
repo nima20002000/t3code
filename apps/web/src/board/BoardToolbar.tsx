@@ -1,12 +1,10 @@
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
-  CheckIcon,
   ChevronsLeftIcon,
   ChevronsRightIcon,
+  ClipboardListIcon,
   CloudOffIcon,
-  KanbanIcon,
-  Loader2Icon,
   BotIcon,
   Redo2Icon,
   RotateCcwIcon,
@@ -27,15 +25,12 @@ import { useBoardPending } from "./boardApi";
 import { RunControl } from "./RunControl";
 import { ActivitiesButton } from "./toolbar/ActivitiesButton";
 import { ApprovalsButton } from "./toolbar/ApprovalsButton";
-import { BrowsersButton } from "./toolbar/BrowsersButton";
 import { FilesButton } from "./toolbar/FilesButton";
 import { IconButton } from "./toolbar/IconButton";
 import { MachinesButton } from "./toolbar/MachinesButton";
-import { RunsSelector } from "./toolbar/RunsSelector";
 import { ScheduleButton } from "./toolbar/ScheduleButton";
 import { WorkflowMenu } from "./toolbar/WorkflowMenu";
 import { WorkflowName } from "./toolbar/WorkflowName";
-import { WorkflowSettings } from "./toolbar/WorkflowSettings";
 import { Button, Tooltip, TooltipPopup, TooltipTrigger } from "./upstream";
 
 const COLLAPSED_KEY = "board:controls-collapsed";
@@ -105,7 +100,6 @@ export function BoardTitle(props: {
 /** Foreman-style clusters of board controls, floating at the board's top right. */
 export function BoardToolbar(props: {
   readonly onRename: () => void;
-  readonly selectedRunId: string | null;
   readonly onSelectRun: (runId: string | null) => void;
   readonly kanban: boolean;
   readonly onToggleKanban: () => void;
@@ -114,15 +108,8 @@ export function BoardToolbar(props: {
   const workflow = useCurrentWorkflow();
   const { status, error } = useBoardState();
   const pending = useBoardPending();
-  const { canUndo, canRedo, dirty } = useBoardHistory();
-
-  const savedLabel =
-    status !== "connected"
-      ? "Offline"
-      : pending
-        ? "Saving"
-        : "Saved: the board saves automatically";
-  const SavedIcon = status !== "connected" ? CloudOffIcon : pending ? Loader2Icon : CheckIcon;
+  const { canUndo, canRedo, restorable } = useBoardHistory();
+  const editable = !pending && status === "connected";
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const toggleCollapsed = () => {
     const next = !collapsed;
@@ -148,41 +135,35 @@ export function BoardToolbar(props: {
           role="toolbar"
           aria-label="Draft actions"
         >
-          <IconButton
-            label="Undo"
-            disabled={!canUndo || pending || status !== "connected"}
-            onClick={undo}
-          >
+          <IconButton label="Undo (Ctrl+Z)" disabled={!canUndo || !editable} onClick={undo}>
             <Undo2Icon />
           </IconButton>
-          <IconButton
-            label="Redo"
-            disabled={!canRedo || pending || status !== "connected"}
-            onClick={redo}
-          >
+          <IconButton label="Redo (Ctrl+Y)" disabled={!canRedo || !editable} onClick={redo}>
             <Redo2Icon />
           </IconButton>
           <IconButton
-            label="Discard changes"
-            disabled={!dirty || pending || status !== "connected"}
+            label="Restore the board as it was when opened"
+            disabled={!restorable || !editable}
             onClick={discardChanges}
           >
             <RotateCcwIcon />
           </IconButton>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <span
-                  className="inline-flex items-center gap-1 px-1.5 text-2xs text-muted-foreground [&>svg]:size-3"
-                  role="status"
-                  aria-label={savedLabel}
-                >
-                  <SavedIcon aria-hidden="true" />
-                </span>
-              }
-            />
-            <TooltipPopup>{error ?? savedLabel}</TooltipPopup>
-          </Tooltip>
+          {status === "connected" ? null : (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span
+                    className="inline-flex items-center gap-1 px-1.5 text-2xs text-muted-foreground [&>svg]:size-3"
+                    role="status"
+                    aria-label="Offline"
+                  >
+                    <CloudOffIcon aria-hidden="true" />
+                  </span>
+                }
+              />
+              <TooltipPopup>{error ?? "Offline"}</TooltipPopup>
+            </Tooltip>
+          )}
         </div>
       </Collapsible>
       <div
@@ -192,30 +173,27 @@ export function BoardToolbar(props: {
       >
         <Collapsible collapsed={collapsed}>
           <div className="flex items-center gap-0.5 pr-0.5">
-            <RunsSelector
-              runs={workflow.runs}
-              selectedRunId={props.selectedRunId}
-              onSelect={props.onSelectRun}
-            />
             <WorkflowMenu onRename={() => window.setTimeout(props.onRename, 150)} />
             <IconButton label="Add agent" onClick={props.onAddAgent}>
               <BotIcon />
             </IconButton>
-            <WorkflowSettings />
             <MachinesButton />
-            {/* t3-backed buttons: approvals, files, browsers, schedule */}
+            {/* t3-backed buttons: approvals, files, schedule */}
             <ApprovalsButton nodes={workflow.nodes} />
             <FilesButton nodes={workflow.nodes} />
-            <BrowsersButton nodes={workflow.nodes} />
             <ScheduleButton nodes={workflow.nodes} />
-            <ActivitiesButton log={workflow.log} />
+            <ActivitiesButton
+              log={workflow.log}
+              runs={workflow.runs}
+              onShowRun={props.onSelectRun}
+            />
             <IconButton
               label="Kanban"
               variant={props.kanban ? "secondary" : "ghost"}
               aria-pressed={props.kanban}
               onClick={props.onToggleKanban}
             >
-              <KanbanIcon />
+              <ClipboardListIcon />
             </IconButton>
           </div>
         </Collapsible>

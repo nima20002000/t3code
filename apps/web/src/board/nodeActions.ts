@@ -23,10 +23,13 @@ async function clone(nodes: ReadonlyArray<BoardNode>, offset: number) {
     await createNode(workflowId, {
       id: randomUUID(),
       name: `${node.name} copy`,
-      profile: node.profile,
+      // A workflow has one orchestrator, so its copies are workers.
+      profile: "worker",
       environmentId: node.environmentId,
       modelSelection: node.modelSelection,
       ...(node.prompt === undefined ? {} : { prompt: node.prompt }),
+      ...(node.runtimeMode === undefined ? {} : { runtimeMode: node.runtimeMode }),
+      ...(node.profile === "worker" && node.size !== undefined ? { size: node.size } : {}),
       x: node.x + offset,
       y: node.y + offset,
     });

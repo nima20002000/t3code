@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import {
   applyNodeChanges,
   Background,
+  NodeResizer,
   ReactFlow,
   type Connection,
   type Edge,
@@ -22,6 +23,8 @@ import { copyNodes, deleteNodes, duplicateNodes, hasCopiedNodes, pasteNodes } fr
 import { AgentDialog } from "./AddAgentDialog";
 import {
   addEdge,
+  redo,
+  undo,
   useBoardConnection,
   useBoardState,
   getCurrentWorkflow,
@@ -44,8 +47,9 @@ import {
   type AgentNodeTransition,
 } from "./foreman/AgentNodeView";
 import { SignalEdgeShape, type EdgePulse } from "./foreman/SignalEdgeShape";
-import { AGENT_NODE_SIZE, useFloatingCurve } from "./foreman/signalEdge";
+import { agentNodeSize, useFloatingCurve } from "./foreman/signalEdge";
 import { useHoverControls } from "./foreman/useHoverControls";
+import { claimBoardStartup } from "./BoardNavigation";
 import { BoardTitle, BoardToolbar } from "./BoardToolbar";
 import { BoardKanban } from "./toolbar/BoardKanban";
 import { useNodeRunViews } from "./toolbar/useNodeStatuses";
@@ -198,7 +202,10 @@ function harnessOf(instanceId: string): "codex" | "claude" | "neutral" {
   return id.includes("codex") ? "codex" : id.includes("claude") ? "claude" : "neutral";
 }
 
-function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
+const MIN_NODE_SIZE = 140;
+const MAX_NODE_SIZE = 520;
+
+function AgentCard({ data, selected, width }: NodeProps<AgentFlowNode>) {
   const { node } = data;
   const connectionOf = useNodeConnections();
   const environments = useEnvironmentIdentities();
@@ -249,9 +256,22 @@ function AgentCard({ data, selected }: NodeProps<AgentFlowNode>) {
       state={view.state}
       {...(cue.transition ? { transition: cue.transition, transitionKey: cue.key } : {})}
       selected={selected}
+      size={width ?? agentNodeSize(node)}
       chat={chat}
       role={node.profile === "orchestrator" ? "Orchestrator" : "Worker"}
     >
+      <NodeResizer
+        isVisible={Boolean(selected)}
+        keepAspectRatio
+        minWidth={MIN_NODE_SIZE}
+        minHeight={MIN_NODE_SIZE}
+        maxWidth={MAX_NODE_SIZE}
+        maxHeight={MAX_NODE_SIZE}
+        onResizeStart={() => recordHistoryStep()}
+        onResizeEnd={(_, params) =>
+          void updateNode(node.id, { x: params.x, y: params.y, size: Math.round(params.width) })
+        }
+      />
       <AgentHandles name={node.name} />
     </AgentNodeView>
   );
@@ -307,24 +327,28 @@ const NODE_TYPES = { agent: AgentCard };
 const EDGE_TYPES = { signal: SignalEdge };
 
 function toFlowNode(node: BoardNode, previous?: AgentFlowNode): AgentFlowNode {
+  const size = agentNodeSize(node);
   return previous
     ? {
         ...previous,
         position: previous.dragging ? previous.position : { x: node.x, y: node.y },
+        ...(previous.resizing ? {} : { width: size, height: size }),
         data: { node },
       }
     : {
         id: node.id,
         type: "agent",
         position: { x: node.x, y: node.y },
-        width: AGENT_NODE_SIZE,
-        height: AGENT_NODE_SIZE,
+        width: size,
+        height: size,
         data: { node },
       };
 }
 
 /** Keyed by workflow id so switching workflows resets the canvas, its selection and the fit. */
 export function BoardPage() {
+  // Reaching the board any way counts as the startup visit, so Back to "/" stays on t3.
+  claimBoardStartup();
   useBoardConnection();
   const { snapshot, currentId, status, error } = useBoardState();
   const workflow =
@@ -380,7 +404,8 @@ function BoardCanvasPage() {
   const flow = useRef<ReactFlowInstance<AgentFlowNode, Edge> | null>(null);
   const canvas = useRef<HTMLDivElement>(null);
   const runningId = activeRunOf(workflow)?.id ?? null;
-  const [seenRunId, setSeenRunId] = useState(runningId);
+  // Starts unseen, so opening a workflow whose run is live shows that run's kanban too.
+  const [seenRunId, setSeenRunId] = useState<string | null>(null);
   if (runningId !== seenRunId) {
     setSeenRunId(runningId);
     if (runningId) setKanban(true);
@@ -593,7 +618,13 @@ function BoardCanvasPage() {
         return;
       const mod = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
-      if (event.key === "Escape") {
+      if (mod && key === "z" && !event.shiftKey) {
+        event.preventDefault();
+        undo();
+      } else if (mod && (key === "y" || (key === "z" && event.shiftKey))) {
+        event.preventDefault();
+        redo();
+      } else if (event.key === "Escape") {
         const selected = flow.current?.getNodes().filter((n) => n.selected) ?? [];
         if (selected.length === 0) return;
         onNodesChange(
@@ -628,7 +659,6 @@ function BoardCanvasPage() {
         <div className="board-floating-controls">
           <BoardToolbar
             onRename={() => setEditingName(true)}
-            selectedRunId={selectedRun?.id ?? null}
             onSelectRun={setSelectedRunId}
             kanban={kanban}
             onToggleKanban={() => toggleKanban(!kanban)}

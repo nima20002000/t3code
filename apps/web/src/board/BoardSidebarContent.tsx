@@ -246,7 +246,19 @@ export function BoardSidebarPanel() {
                   <Row
                     key={workflow.id}
                     indent
-                    icon={<span className="size-1.5 rounded-full bg-current opacity-60" />}
+                    icon={
+                      workflow.runs.some(
+                        (run) => run.status === "running" || run.status === "stopping",
+                      ) ? (
+                        <span
+                          role="img"
+                          aria-label="Running"
+                          className="size-2 rounded-full bg-success ring-2 ring-success/25"
+                        />
+                      ) : (
+                        <span className="size-1.5 rounded-full bg-current opacity-60" />
+                      )
+                    }
                     label={workflow.name}
                     active={workflow.id === currentId}
                     onClick={() => setCurrentWorkflow(workflow.id)}

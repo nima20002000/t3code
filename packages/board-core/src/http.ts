@@ -33,6 +33,8 @@ export const BoardNodeSchema = Schema.Struct({
   chat: Schema.optionalKey(
     Schema.Struct({ environmentId: EnvironmentId, projectId: ProjectId, threadId: ThreadId }),
   ),
+  runtimeMode: Schema.optionalKey(RuntimeMode),
+  size: Schema.optionalKey(Schema.Number),
   x: Schema.Number,
   y: Schema.Number,
 });
@@ -295,6 +297,8 @@ export const BoardCreateNodeInput = Schema.Struct({
   environmentId: EnvironmentId,
   modelSelection: ModelSelection,
   prompt: Schema.optionalKey(Schema.String),
+  runtimeMode: Schema.optionalKey(RuntimeMode),
+  size: Schema.optionalKey(Schema.Number),
   x: Schema.Number,
   y: Schema.Number,
 });
@@ -304,6 +308,8 @@ export const BoardUpdateNodeInput = Schema.Struct({
   environmentId: Schema.optionalKey(EnvironmentId),
   modelSelection: Schema.optionalKey(ModelSelection),
   prompt: Schema.optionalKey(Schema.String),
+  runtimeMode: Schema.optionalKey(RuntimeMode),
+  size: Schema.optionalKey(Schema.Number),
   x: Schema.optionalKey(Schema.Number),
   y: Schema.optionalKey(Schema.Number),
 });

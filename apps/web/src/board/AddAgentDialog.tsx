@@ -1,4 +1,9 @@
-import { type EnvironmentId, type ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type ModelSelection,
+  ProviderInstanceId,
+  type RuntimeMode,
+} from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { useRef, useState } from "react";
 import * as Schema from "effect/Schema";
@@ -36,7 +41,14 @@ const isProviderInstanceId = Schema.is(ProviderInstanceId);
 
 const FIELD_CLASS = "h-8 w-full rounded-md border bg-background px-2 text-sm";
 
-/** Adds an agent, or with `node` edits one: profile, machine, model, name and role. */
+const ACCESS_MODES: ReadonlyArray<{ readonly value: RuntimeMode; readonly label: string }> = [
+  { value: "full-access", label: "Full access" },
+  { value: "auto", label: "Auto" },
+  { value: "auto-accept-edits", label: "Auto-accept edits" },
+  { value: "approval-required", label: "Approval required" },
+];
+
+/** Adds an agent, or with `node` edits one: profile, machine, model, access, name and role. */
 export function AgentDialog(props: {
   readonly node?: BoardNode;
   readonly onClose: () => void;
@@ -60,6 +72,7 @@ export function AgentDialog(props: {
   } | null>(node ? { environmentId: node.environmentId, selection: node.modelSelection } : null);
   const [name, setName] = useState(node?.name ?? "");
   const [role, setRole] = useState(node?.prompt ?? "");
+  const [access, setAccess] = useState<RuntimeMode>(node?.runtimeMode ?? "full-access");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pendingId = useRef<string | null>(null);
@@ -106,6 +119,7 @@ export function AgentDialog(props: {
           profile,
           environmentId,
           modelSelection: selection,
+          runtimeMode: access,
           prompt: role,
         });
         props.onClose();
@@ -119,6 +133,7 @@ export function AgentDialog(props: {
         profile,
         environmentId,
         modelSelection: selection,
+        runtimeMode: access,
         ...(role.trim() ? { prompt: role } : {}),
         ...nextNodePosition(workflow),
       });
@@ -147,8 +162,7 @@ export function AgentDialog(props: {
           <DialogHeader>
             <DialogTitle>{node ? `${node.name} settings` : "Add agent"}</DialogTitle>
             <DialogDescription>
-              Each run starts a fresh {settings.runtimeMode} thread for this agent in the workspace
-              folder.
+              Each run starts a fresh thread for this agent in the workspace folder.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
@@ -231,6 +245,20 @@ export function AgentDialog(props: {
                   )}
                 </div>
               </div>
+              <label className="flex flex-col gap-1">
+                Access
+                <select
+                  className={FIELD_CLASS}
+                  value={access}
+                  onChange={(event) => setAccess(event.target.value as RuntimeMode)}
+                >
+                  {ACCESS_MODES.map((mode) => (
+                    <option key={mode.value} value={mode.value}>
+                      {mode.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label className="flex flex-col gap-1">
                 Node name
                 <Input

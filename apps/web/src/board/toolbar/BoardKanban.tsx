@@ -1,5 +1,5 @@
 import { KANBAN_STATUSES, type KanbanStatus } from "@t3tools/board-core/kanban";
-import { LayoutGridIcon, XIcon } from "lucide-react";
+import { ClipboardListIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useKanbanCards, type Workflow } from "../boardStore";
@@ -48,7 +48,7 @@ export function BoardKanban(props: {
       resetKey={props.dockKey}
       header={
         <>
-          <LayoutGridIcon className="size-3.5 text-muted-foreground" />
+          <ClipboardListIcon className="size-3.5 text-muted-foreground" />
           <span className="text-sm font-medium">Kanban</span>
           <small className="text-xs text-muted-foreground">
             {props.runId ? "this run" : "all runs"}

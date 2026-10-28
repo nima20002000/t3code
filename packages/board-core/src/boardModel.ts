@@ -20,6 +20,10 @@ export interface BoardNode {
     readonly projectId: ProjectId;
     readonly threadId: ThreadId;
   };
+  /** Overrides the workflow's runtime mode for this agent's threads. */
+  readonly runtimeMode?: RuntimeMode;
+  /** Diameter on the canvas; unset means the profile's default size. */
+  readonly size?: number;
   readonly x: number;
   readonly y: number;
 }

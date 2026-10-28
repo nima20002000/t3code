@@ -14,6 +14,7 @@ a merge (the server route is reserved for the later server phase):
 - `apps/server/package.json`: the `@t3tools/board-core` workspace dependency.
 - `apps/web/package.json`: `@t3tools/board-core` and `@xyflow/react` dependencies.
 - `apps/web/src/routes/_chat.board.tsx`: the board route.
+- `apps/web/src/routes/_chat.index.tsx`: open the app on the board once at startup.
 - `apps/web/src/components/AppSidebarLayout.tsx`: call the board-owned sidebar visibility helper.
 - `apps/web/src/components/Sidebar.tsx` and `apps/web/src/components/sidebar/SidebarChrome.tsx`:
   mount board-owned navigation components.
