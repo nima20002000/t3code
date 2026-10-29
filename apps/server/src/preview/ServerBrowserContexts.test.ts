@@ -351,4 +351,26 @@ describe("ServerBrowserContexts", () => {
     expect(stop).toHaveBeenCalledTimes(1);
     await pool.close();
   });
+
+  it("keeps a persistent profile's first window until a tab opens, since headed Chrome quits without one", async () => {
+    const events = new NodeEvents.EventEmitter();
+    const blank = { close: vi.fn(async () => {}) };
+    const human = {
+      ...makeContext(),
+      on: vi.fn((event: string, listener: (...args: unknown[]) => void) =>
+        events.on(event, listener),
+      ),
+      once: vi.fn((event: string, listener: (...args: unknown[]) => void) =>
+        events.once(event, listener),
+      ),
+      pages: vi.fn(() => [blank]),
+    };
+    launches.persistent.mockResolvedValue(human as unknown as BrowserContext);
+    const pool = new ServerBrowserContexts(options());
+    await pool.contextFor("work");
+    expect(blank.close).not.toHaveBeenCalled();
+    events.emit("page", {});
+    expect(blank.close).toHaveBeenCalledTimes(1);
+    await pool.close();
+  });
 });

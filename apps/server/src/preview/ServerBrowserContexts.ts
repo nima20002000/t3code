@@ -227,7 +227,13 @@ export class ServerBrowserContexts {
           if (this.contexts.get(key) === pending) this.contexts.delete(key);
           this.options.onContextClose?.(context);
         });
-        for (const page of context.pages()) await page.close().catch(constVoid);
+        // A persistent profile opens with a window; headed Chrome quits once its last one closes.
+        const initialPages = context.pages();
+        if (initialPages.length > 0) {
+          context.once("page", () => {
+            for (const page of initialPages) void page.close().catch(constVoid);
+          });
+        }
         if (this.closing) {
           await context.close().catch(constVoid);
           throw new Error("The preview browser is closed.");
