@@ -223,7 +223,8 @@ const make = Effect.gen(function* () {
         task: { ...input, projectId: chat.projectId, threadId: chat.threadId, ...settings },
       })
       .pipe(Effect.mapError(unreachable("move the schedule to the new chat")));
-    yield* setMarker(workflowId, nodeId, { ...marker, threadId: chat.threadId });
+    const { rebind: _done, ...bound } = marker;
+    yield* setMarker(workflowId, nodeId, { ...bound, threadId: chat.threadId });
   });
 
   const save = Effect.fn("AgentSchedules.save")(function* (
@@ -337,10 +338,10 @@ const make = Effect.gen(function* () {
   const reconcile = Effect.fn("AgentSchedules.reconcile")(function* (
     workflowId: string,
     nodeId: string,
-    settings: BoardNewNodeChatInput | undefined,
   ) {
     const { node } = yield* findNode(workflowId, nodeId);
     const marker = node.schedule;
+    const settings = marker?.rebind;
     const chat = node.chat;
     if (!marker || !chat) return;
     if (marker.environmentId !== chat.environmentId) {
@@ -359,12 +360,20 @@ const make = Effect.gen(function* () {
       yield* bindToChat(workflowId, nodeId, driver, marker, task, chat, settings ?? {});
   });
 
+  // The pending rebind is kept until the machine takes it, so a later sync finishes a failed "/new".
   const retarget = (workflowId: string, nodeId: string, settings: BoardNewNodeChatInput) =>
-    lock.withPermit(reconcile(workflowId, nodeId, settings));
+    lock.withPermit(
+      patchNode(workflowId, nodeId, (current) =>
+        current.schedule
+          ? { ...current, schedule: { ...current.schedule, rebind: settings } }
+          : current,
+      ).pipe(Effect.andThen(reconcile(workflowId, nodeId))),
+    );
   const sync = (workflowId: string, nodeId: string) =>
-    lock.withPermit(reconcile(workflowId, nodeId, undefined));
+    lock.withPermit(reconcile(workflowId, nodeId));
 
   const release = Effect.fn("AgentSchedules.release")(function* (nodes: ReadonlyArray<BoardNode>) {
+    const targets: Array<{ node: BoardNode; marker: Marker; driver: NodeDriver }> = [];
     for (const node of nodes) {
       const marker = node.schedule;
       if (!marker) continue;
@@ -377,15 +386,17 @@ const make = Effect.gen(function* () {
         });
         continue;
       }
-      yield* driver.value.deleteScheduledTask(marker).pipe(
-        Effect.mapError(
-          (cause) =>
-            new BoardInternalError({
-              message: `Could not remove ${node.name}'s schedule from its machine: ${cause.message} Try again when the machine is online.`,
-            }),
-        ),
-      );
+      targets.push({ node, marker, driver: driver.value });
     }
+    const unreachableFor = (node: BoardNode) => (cause: NodeDriverError) =>
+      new BoardInternalError({
+        message: `Could not remove ${node.name}'s schedule from its machine: ${cause.message} Try again when the machine is online.`,
+      });
+    // Reach every machine first, so one that is offline does not leave the others half removed.
+    for (const { node, marker, driver } of targets)
+      yield* driver.getScheduledTask(marker).pipe(Effect.mapError(unreachableFor(node)));
+    for (const { node, marker, driver } of targets)
+      yield* driver.deleteScheduledTask(marker).pipe(Effect.mapError(unreachableFor(node)));
   });
 
   return AgentSchedules.of({

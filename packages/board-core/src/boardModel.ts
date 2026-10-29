@@ -2,6 +2,7 @@ import { ProjectId } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   ModelSelection,
+  ProviderInteractionMode,
   RuntimeMode,
   ScheduledTaskId,
   ThreadId,
@@ -37,6 +38,12 @@ export interface BoardNode {
      * Unset on early markers, which were bound to the node's chat.
      */
     readonly threadId?: ThreadId;
+    /** Set by "/new" until the machine binds the task to the new chat with these settings. */
+    readonly rebind?: {
+      readonly modelSelection?: ModelSelection;
+      readonly runtimeMode?: RuntimeMode;
+      readonly interactionMode?: ProviderInteractionMode;
+    };
   };
   /** Overrides the workflow's runtime mode for this agent's threads. */
   readonly runtimeMode?: RuntimeMode;

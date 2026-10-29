@@ -905,7 +905,8 @@ export const layer = Layer.effect(
         // A fresh thread becomes the bound one, so the next run and the thread's owner follow it.
         if (threadId !== null && active.threadId !== null && threadId !== active.threadId) {
           yield* sql`UPDATE scheduled_tasks SET thread_id = ${threadId}
-            WHERE task_id = ${active.id} AND thread_id = ${active.threadId}`.pipe(
+            WHERE task_id = ${active.id} AND thread_id = ${active.threadId}
+              AND created_at = ${active.createdAt}`.pipe(
             Effect.mapError((cause) =>
               taskError("Could not bind the schedule task's new thread.", {
                 taskId: active.id,

@@ -1,5 +1,8 @@
 import { assert, it } from "@effect/vitest";
+import { BoardTimingSchema } from "@t3tools/board-core";
 import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { maxRunsAfter, missedBoardRun, nextBoardRunAt } from "./boardTiming.ts";
 
 const at = (iso: string) => DateTime.makeZonedUnsafe(iso, { timeZone: "UTC" });
@@ -44,4 +47,10 @@ it("a one-off fires at its moment once, and a limit ends a schedule", () => {
     "2026-10-29T10:05:00.000Z",
   );
   assert.isNull(nextBoardRunAt({ ...limited, runCount: 6 }, at("2026-10-29T10:00:00.000Z")));
+});
+
+it("a one-off accepts only moments the schedule can read", () => {
+  const decode = Schema.decodeUnknownOption(BoardTimingSchema);
+  assert.isTrue(Option.isSome(decode({ type: "once", at: "2026-12-24T18:30:00.000Z" })));
+  assert.isTrue(Option.isNone(decode({ type: "once", at: "someday" })));
 });

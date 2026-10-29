@@ -37,11 +37,18 @@ export function NodeScheduleButton({ node }: { readonly node: BoardNode }) {
     : null;
   const firedThread = task?.threadId ?? null;
   const chatThread = node.chat?.threadId ?? null;
-  // oxlint-disable-next-line t3code/react-effect-budget -- A "new chat" firing moved the task on its machine; the hub's chat follows.
+  const pendingRebind = marker?.rebind !== undefined;
+  const seenAt = query.dataUpdatedAt;
+  // oxlint-disable-next-line t3code/react-effect-budget -- A "new chat" firing or a failed /new left the task and the chat apart; each task update retries.
   useEffect(() => {
-    if (firedThread !== null && chatThread !== null && firedThread !== chatThread)
+    if (
+      seenAt > 0 &&
+      chatThread !== null &&
+      firedThread !== null &&
+      (firedThread !== chatThread || pendingRebind)
+    )
       syncNodeSchedule(node.id);
-  }, [firedThread, chatThread, node.id]);
+  }, [firedThread, chatThread, pendingRebind, seenAt, node.id]);
   const connected = useNodeConnections()(marker?.environmentId ?? "") === "connected";
   // The hub reaches paired machines the browser may not be connected to; their tasks are unseen.
   const unseen = marker !== undefined && task === null && (!connected || query.data === null);
@@ -67,7 +74,11 @@ export function NodeScheduleButton({ node }: { readonly node: BoardNode }) {
           {unseen ? (
             <UnseenSchedule node={node} loading={connected} />
           ) : (
-            <ScheduleEditor key={task?.id ?? "new"} node={node} task={task} />
+            <ScheduleEditor
+              key={task ? `${task.id}:${task.runCount}` : "new"}
+              node={node}
+              task={task}
+            />
           )}
         </PopoverPopup>
       </Popover>

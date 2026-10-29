@@ -681,14 +681,42 @@ it.effect("a /new that could not reach the machine is caught up on the next sync
       yield* board.createWorkspace({ id: "ws", name: "Workspace" });
       yield* board.createWorkflow({ id: "w", name: "W", workspaceId: "ws" });
       yield* board.createNode("w", nodeInput("a"));
-      yield* board.saveNodeSchedule("w", "a", scheduleInput);
+      yield* board.saveNodeSchedule("w", "a", { ...scheduleInput, beforeRun: "new_thread" });
+      // A firing moved the task before the board noticed, then "/new" could not reach the machine.
+      yield* machines.rebind(environmentId, "fired-thread");
       yield* Ref.set(machines.offline, new Set([environmentId]));
-      yield* board.newNodeChat("w", "a", {}).pipe(Effect.flip);
+      yield* board.newNodeChat("w", "a", { interactionMode: "plan" }).pipe(Effect.flip);
       yield* Ref.set(machines.offline, new Set());
       const chat = (yield* board.getWorkflow("w")).nodes[0]?.chat;
-      assert.notStrictEqual((yield* machines.on(environmentId))[0]?.threadId, chat?.threadId);
       yield* board.syncNodeSchedule("w", "a");
-      assert.strictEqual((yield* machines.on(environmentId))[0]?.threadId, chat?.threadId);
+      assert.strictEqual((yield* board.getWorkflow("w")).nodes[0]?.chat?.threadId, chat?.threadId);
+      assert.deepInclude((yield* machines.on(environmentId))[0], {
+        threadId: chat!.threadId,
+        interactionMode: "plan",
+      });
+      assert.isUndefined((yield* board.getWorkflow("w")).nodes[0]?.schedule?.rebind);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("deleting agents on two machines removes nothing while one is offline", () =>
+  Effect.gen(function* () {
+    const { layer, machines } = yield* makeLayer;
+    yield* Effect.gen(function* () {
+      const board = yield* BoardService.BoardService;
+      yield* board.createWorkspace({ id: "ws", name: "Workspace" });
+      yield* board.createWorkflow({ id: "w", name: "W", workspaceId: "ws" });
+      yield* board.createNode("w", nodeInput("a"));
+      yield* board.createNode("w", nodeInput("b", { environmentId: otherEnvironmentId }));
+      yield* board.saveNodeSchedule("w", "a", scheduleInput);
+      yield* board.saveNodeSchedule("w", "b", scheduleInput);
+      yield* Ref.set(machines.offline, new Set([otherEnvironmentId]));
+      yield* board.deleteWorkflow("w").pipe(Effect.flip);
+      assert.lengthOf(yield* machines.on(environmentId), 1);
+      yield* Ref.set(machines.offline, new Set());
+      yield* board.deleteWorkflow("w");
+      assert.deepStrictEqual(yield* machines.on(environmentId), []);
+      assert.deepStrictEqual(yield* machines.on(otherEnvironmentId), []);
     }).pipe(Effect.provide(layer));
   }),
 );

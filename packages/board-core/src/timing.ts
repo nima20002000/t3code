@@ -4,6 +4,7 @@ import {
   type ScheduledTaskSchedule,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 /**
@@ -26,7 +27,7 @@ export const BoardTimingSchema = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("once"),
-    at: Schema.String.check(Schema.makeFilter((value) => !Number.isNaN(Date.parse(value)))),
+    at: Schema.String.check(Schema.makeFilter((value) => Option.isSome(DateTime.make(value)))),
   }),
 ]);
 export type BoardTiming = typeof BoardTimingSchema.Type;

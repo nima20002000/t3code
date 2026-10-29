@@ -46,6 +46,13 @@ export const BoardNodeSchema = Schema.Struct({
       environmentId: EnvironmentId,
       taskId: ScheduledTaskId,
       threadId: Schema.optionalKey(ThreadId),
+      rebind: Schema.optionalKey(
+        Schema.Struct({
+          modelSelection: Schema.optionalKey(ModelSelection),
+          runtimeMode: Schema.optionalKey(RuntimeMode),
+          interactionMode: Schema.optionalKey(ProviderInteractionMode),
+        }),
+      ),
     }),
   ),
   runtimeMode: Schema.optionalKey(RuntimeMode),
