@@ -24,6 +24,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
   type Ref,
+  useContext,
   useEffect,
   useEffectEvent,
   useImperativeHandle,
@@ -33,7 +34,17 @@ import {
 
 import { AgentCursorMark } from "~/components/preview/AgentBrowserCursor";
 import { CommandBlock } from "~/components/CommandBlock";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "~/components/ui/alert-dialog";
 import { Button } from "~/components/ui/button";
+import { HostSetupRunnerContext } from "./hostSetupRunner";
 import { Input } from "~/components/ui/input";
 import { toastManager } from "~/components/ui/toast";
 import { cn } from "~/lib/utils";
@@ -189,6 +200,8 @@ export function ServerBrowserSurface(props: {
   const [accessDenied, setAccessDenied] = useState(false);
   const access = usePreviewStreamAccess(environmentId, { retry: visible && !accessDenied });
   const [hostSetup, setHostSetup] = useState<PreviewStreamHostSetup | null>(null);
+  const runHostSetup = useContext(HostSetupRunnerContext);
+  const [confirmingSetup, setConfirmingSetup] = useState(false);
   const pendingMoveRef = useRef<MouseInput | null>(null);
   const pendingWheelRef = useRef<WheelInput | null>(null);
   const inputFrameRef = useRef<number | null>(null);
@@ -857,10 +870,49 @@ export function ServerBrowserSurface(props: {
           <p role="alert" className="max-w-sm text-sm text-muted-foreground">
             {previewStreamHostSetupMessage(hostSetup)}
           </p>
-          <CommandBlock command={hostSetup.command} className="w-full max-w-md text-left" />
-          <Button variant="outline" size="sm" onClick={() => setHostSetup(null)}>
-            Try again
-          </Button>
+          {runHostSetup ? (
+            <div className="flex gap-2">
+              <Button size="sm" onClick={() => setConfirmingSetup(true)}>
+                Set up
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setHostSetup(null)}>
+                Try again
+              </Button>
+            </div>
+          ) : (
+            <>
+              <CommandBlock command={hostSetup.command} className="w-full max-w-md text-left" />
+              <Button variant="outline" size="sm" onClick={() => setHostSetup(null)}>
+                Try again
+              </Button>
+            </>
+          )}
+          {runHostSetup ? (
+            <AlertDialog open={confirmingSetup} onOpenChange={setConfirmingSetup}>
+              <AlertDialogPopup>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Run browser setup on this machine?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This runs the command below in a terminal on the machine this browser runs on.
+                    It needs administrator rights, so the terminal may ask for your password. Once
+                    it finishes, try the browser again.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <CommandBlock command={hostSetup.command} className="mx-6 text-left" />
+                <AlertDialogFooter>
+                  <AlertDialogClose render={<Button variant="outline" />}>Decline</AlertDialogClose>
+                  <Button
+                    onClick={() => {
+                      setConfirmingSetup(false);
+                      runHostSetup(hostSetup.command);
+                    }}
+                  >
+                    Run setup
+                  </Button>
+                </AlertDialogFooter>
+              </AlertDialogPopup>
+            </AlertDialog>
+          ) : null}
         </div>
       ) : null}
       {visible && accessDenied ? (

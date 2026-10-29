@@ -1,5 +1,5 @@
 import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
-import { useState } from "react";
+import { useContext, useState } from "react";
 import type {
   EnvironmentId,
   ProjectId,
@@ -35,6 +35,7 @@ import {
   rankPullRequestMatches,
 } from "../pullRequest/pullRequestList.logic";
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
+import { ComposerNewThreadContext } from "./composerNewThread";
 import {
   searchSlashCommandItems,
   slashCommandItemsForPromptPosition,
@@ -158,6 +159,8 @@ export function useComposerMenuItems({
       ? []
       : composerPullRequestsFromLinks(threadPullRequests ?? [], pullRequestProjectId);
 
+  const startNewThread = useContext(ComposerNewThreadContext);
+
   const items = ((): ComposerCommandItem[] => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
@@ -189,6 +192,17 @@ export function useComposerMenuItems({
           label: "/model",
           description: "Switch response model for this thread",
         },
+        ...(startNewThread
+          ? ([
+              {
+                id: "slash:new",
+                type: "slash-command",
+                command: "new",
+                label: "/new",
+                description: "Continue in a new thread with the same settings",
+              },
+            ] as const)
+          : []),
         ...(planModeUiEnabled
           ? ([
               {

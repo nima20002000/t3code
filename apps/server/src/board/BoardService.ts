@@ -17,6 +17,7 @@ import {
   type BoardNode,
   type BoardPeer,
   type BoardSchedule,
+  type BoardNewNodeChatInput,
   type BoardStartRunInput,
   type BoardUpdateNodeInput,
   type BoardUpdateScheduleInput,
@@ -81,6 +82,12 @@ export class BoardService extends Context.Service<
     ) => Effect.Effect<RunRecord, EngineError>;
     readonly stopRun: (id: string, runId: string) => Effect.Effect<RunRecord, EngineError>;
     readonly openNodeChat: (id: string, nodeId: string) => Effect.Effect<BoardNode, EngineError>;
+    /** Moves the node to a fresh chat thread with its settings; the old thread stays in t3. */
+    readonly newNodeChat: (
+      id: string,
+      nodeId: string,
+      settings: BoardNewNodeChatInput,
+    ) => Effect.Effect<BoardNode, EngineError>;
   }
 >()("t3/board/BoardService") {}
 
@@ -517,7 +524,16 @@ const make = Effect.gen(function* () {
     deleteSchedule,
     startRun: engine.start,
     stopRun: engine.stop,
-    openNodeChat: engine.openNodeChat,
+    openNodeChat: Effect.fn("BoardService.openNodeChat")(function* (id: string, nodeId: string) {
+      return yield* engine.openNodeChat(id, nodeId);
+    }),
+    newNodeChat: Effect.fn("BoardService.newNodeChat")(function* (
+      id: string,
+      nodeId: string,
+      settings: BoardNewNodeChatInput,
+    ) {
+      return yield* engine.openNodeChat(id, nodeId, settings);
+    }),
   });
 });
 

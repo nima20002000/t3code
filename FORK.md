@@ -22,6 +22,15 @@ a merge (the server route is reserved for the later server phase):
 - `apps/web/src/routeTree.gen.ts`: generated board route registration.
 - `apps/server/scripts/migrate-dev-db.ts` and `apps/server/scripts/migrate-dev-db.test.ts`: dev seeding
   also clears the board execution and peer tables.
+- `apps/web/src/components/chat/composerNewThread.ts`, `apps/web/src/components/chat/useComposerMenuItems.ts`,
+  `apps/web/src/components/chat/useComposerSend.ts`, `apps/web/src/components/chat/ChatComposer.tsx` and
+  `apps/web/src/composer-logic.ts`: the composer's `/new` command, offered where a `ComposerNewThreadContext`
+  handler is provided (the board's chat windows).
+- `apps/web/src/browser/hostSetupRunner.ts` and `apps/web/src/browser/ServerBrowserSurface.tsx`: a browser whose
+  host needs setup offers to run it, after confirming, where a `HostSetupRunnerContext` runner is provided
+  (the board's browser windows run it in the agent's terminal).
+- `apps/server/src/cli/browser.ts`, `apps/server/src/preview/PreviewBrowserHost.ts` and `apps/server/src/preview/PreviewBrowserHost.test.ts`: `t3 browser setup` finds
+  sbin tools under `sudo env "PATH=$PATH"` and treats a written but unloaded AppArmor profile as not set up.
 - `apps/web/src/index.css`: one `@import` of `board/styles/board.css`, so Tailwind and the lint rules know the board's classes.
 - `AGENTS.md`: one paragraph pointing agents at this file and the board folders.
 - `pnpm-lock.yaml`: workspace and board dependency lock entries.
@@ -43,6 +52,10 @@ selects and merges the highest stable `vX.Y.Z` upstream tag, reports conflicted
 files for comparison with the touch points above, and runs all board-owned tests.
 After resolving a conflicted merge, commit it and run `scripts/fork-sync.sh --tests`.
 It never merges `main`, preview tags, or nightly tags.
+
+When a board fix corrects genuinely wrong behavior (a feature that stopped working, an overlap,
+lost state), write the board test that fails on it first, then fix it, so the test suite catches it
+coming back. Small visual tweaks (spacing, cursors, sizes) need no test.
 
 Run board tests locally with `node scripts/board-test.mjs`. It keeps a pass per test file in
 `~/.cache/t3-board-tests`, keyed by the file, everything it imports, setup files, configs and the

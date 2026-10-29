@@ -23,7 +23,11 @@ export function workflowView(workflow: CoreWorkflow): Workflow {
     nodes: workflow.nodes.map((node) => ({
       ...node,
       threadId:
-        newestFirst.find((run) => run.threads[node.id] !== undefined)?.threads[node.id]?.threadId ??
+        newestFirst.find(
+          (run) =>
+            run.threads[node.id] !== undefined &&
+            (node.chat?.startedAt === undefined || run.startedAt >= node.chat.startedAt),
+        )?.threads[node.id]?.threadId ??
         node.chat?.threadId ??
         NO_THREAD,
     })),

@@ -26,6 +26,7 @@ import {
   withFolder,
   type BoardNode,
   type BoardResult,
+  type BoardNewNodeChatInput,
   type BoardStartRunInput,
   type BoardDriverThread,
   type KanbanCard,
@@ -96,6 +97,7 @@ export class TaskEngine extends Context.Service<
     readonly openNodeChat: (
       workflowId: string,
       nodeId: string,
+      fresh?: BoardNewNodeChatInput,
     ) => Effect.Effect<BoardNode, EngineError>;
   }
 >()("t3/board/TaskEngine") {}
@@ -458,15 +460,18 @@ const make = Effect.gen(function* () {
     return { folder, driver };
   });
 
-  /** The node's own chat outside runs: one thread per node and machine, launched on first open. */
+  /**
+   * The node's own chat outside runs: one thread per node and machine, launched on first open.
+   * A fresh one ("/new") replaces it with a new thread, launched with the settings it brings.
+   */
   const openNodeChat = Effect.fn("TaskEngine.openNodeChat")(
-    function* (workflowId: string, nodeId: string) {
+    function* (workflowId: string, nodeId: string, fresh?: BoardNewNodeChatInput) {
       const workflow = yield* store.getWorkflow(workflowId);
       const node = workflow?.nodes.find((entry) => entry.id === nodeId);
       if (!workflow || !node) return yield* new BoardNotFoundError({ message: "Node not found." });
-      if (node.chat?.environmentId === node.environmentId) return node;
+      if (!fresh && node.chat?.environmentId === node.environmentId) return node;
       const { folder, driver } = yield* workspaceFolder(workflow.workspaceId, node.environmentId);
-      const key = `chat\0${workflowId}\0${node.id}\0${node.environmentId}`;
+      const key = `chat\0${workflowId}\0${node.id}\0${node.environmentId}${fresh ? `\0${NodeCrypto.randomUUID()}` : ""}`;
       const threadId = ThreadId.make(stableId(key, "thread"));
       yield* driver.launch({
         environmentId: node.environmentId,
@@ -475,19 +480,31 @@ const make = Effect.gen(function* () {
           threadId,
           projectId: folder.projectId,
           title: `${node.name} · ${workflow.name}`,
-          modelSelection: node.modelSelection,
-          runtimeMode: node.runtimeMode ?? workflow.settings.runtimeMode,
-          interactionMode: "default",
+          modelSelection: fresh?.modelSelection ?? node.modelSelection,
+          runtimeMode: fresh?.runtimeMode ?? node.runtimeMode ?? workflow.settings.runtimeMode,
+          interactionMode: fresh?.interactionMode ?? "default",
           workspaceStrategy: { type: "root" },
         },
       });
-      const chat = { environmentId: node.environmentId, projectId: folder.projectId, threadId };
+      const chat = {
+        environmentId: node.environmentId,
+        projectId: folder.projectId,
+        threadId,
+        ...(fresh ? { startedAt: yield* now } : {}),
+      };
       return yield* store.transaction(
         Effect.gen(function* () {
           const current = yield* store.getWorkflow(workflowId);
           const currentNode = current?.nodes.find((entry) => entry.id === nodeId);
           if (!current || !currentNode)
             return yield* new BoardNotFoundError({ message: "Node not found." });
+          // A first open that finishes after another viewer's open or "/new" keeps their chat.
+          if (!fresh && currentNode.chat?.environmentId === currentNode.environmentId)
+            return currentNode;
+          if (currentNode.environmentId !== node.environmentId)
+            return yield* new BoardInvalidRequestError({
+              message: "The agent moved to another machine while its chat started. Try again.",
+            });
           const next = { ...currentNode, chat };
           const saved = {
             ...current,

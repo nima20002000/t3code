@@ -6,6 +6,7 @@ import {
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
   TrimmedNonEmptyString,
@@ -31,7 +32,12 @@ export const BoardNodeSchema = Schema.Struct({
   modelSelection: ModelSelection,
   prompt: Schema.optionalKey(Schema.String),
   chat: Schema.optionalKey(
-    Schema.Struct({ environmentId: EnvironmentId, projectId: ProjectId, threadId: ThreadId }),
+    Schema.Struct({
+      environmentId: EnvironmentId,
+      projectId: ProjectId,
+      threadId: ThreadId,
+      startedAt: Schema.optionalKey(Schema.String),
+    }),
   ),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   size: Schema.optionalKey(Schema.Number),
@@ -302,6 +308,13 @@ export const BoardCreateNodeInput = Schema.Struct({
   x: Schema.Number,
   y: Schema.Number,
 });
+/** The settings the chat had when "/new" moved it to a fresh thread; unset ones come from the node. */
+export const BoardNewNodeChatInput = Schema.Struct({
+  modelSelection: Schema.optionalKey(ModelSelection),
+  runtimeMode: Schema.optionalKey(RuntimeMode),
+  interactionMode: Schema.optionalKey(ProviderInteractionMode),
+});
+export type BoardNewNodeChatInput = typeof BoardNewNodeChatInput.Type;
 export const BoardUpdateNodeInput = Schema.Struct({
   name: Schema.optionalKey(TrimmedNonEmptyString),
   profile: Schema.optionalKey(BoardAgentProfileSchema),
@@ -474,6 +487,15 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
     HttpApiEndpoint.post("openNodeChat", "/workflows/:workflowId/nodes/:nodeId/chat", {
       headers: OptionalAuthHeaders,
       params: NodeParams,
+      success: BoardNodeSchema,
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("newNodeChat", "/workflows/:workflowId/nodes/:nodeId/chat/new", {
+      headers: OptionalAuthHeaders,
+      params: NodeParams,
+      payload: BoardNewNodeChatInput,
       success: BoardNodeSchema,
       error: Errors,
     }),

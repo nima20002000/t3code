@@ -15,6 +15,8 @@ export const sandboxDisabled = (env: Readonly<Record<string, string | undefined>
 /** Set on Ubuntu 23.10+: unprivileged user namespaces need an AppArmor profile. */
 const USERNS_RESTRICTION = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
 export const APPARMOR_PROFILE_PATH = "/etc/apparmor.d/t3-chrome-headless-shell";
+const APPARMOR_PROFILE_NAME = "t3-chrome-headless-shell";
+const LOADED_PROFILES = "/sys/kernel/security/apparmor/profiles";
 
 /** Match Ubuntu's Chrome profile; unconfined adds nothing beyond userns. */
 export const APPARMOR_PROFILE = `# Written by \`t3 browser setup\`: lets T3 Code's headless browser use Chrome's sandbox.
@@ -134,5 +136,13 @@ export const sandboxBlocked = Effect.gen(function* () {
     Effect.orElseSucceed(() => false),
   );
   if (!restricted) return false;
+  // A profile written but never loaded (its load failed) still blocks; root can see what is loaded.
+  const loaded = yield* fs.readFileString(LOADED_PROFILES).pipe(
+    Effect.map((profiles) =>
+      profiles.split("\n").some((line) => line.startsWith(`${APPARMOR_PROFILE_NAME} `)),
+    ),
+    Effect.option,
+  );
+  if (loaded._tag === "Some") return !loaded.value;
   return !(yield* fs.exists(APPARMOR_PROFILE_PATH).pipe(Effect.orElseSucceed(() => false)));
 }).pipe(Effect.withSpan("PreviewBrowserHost.sandboxBlocked"));

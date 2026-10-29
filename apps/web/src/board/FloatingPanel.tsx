@@ -21,83 +21,6 @@ function savePanelPosition(key: string, position: PanelPosition) {
   }
 }
 
-let morphing = false;
-const BLUR_MS = 280;
-const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
-const fade = (element: Element, to: number, duration: number) =>
-  element.animate([{ opacity: Number(getComputedStyle(element).opacity) }, { opacity: to }], {
-    duration,
-    easing: "ease-out",
-    fill: "forwards",
-  }).finished;
-
-/**
- * Toggles full screen through a blur of the board, with the new panel crossfading in sync with the
- * blur. Resizing re-lays out the whole chat and blocks the main thread, so it happens first, while
- * a still copy of the old panel stands in.
- */
-export async function morphPanel(panel: HTMLElement | null, maximize: boolean, update: () => void) {
-  if (morphing) return;
-  if (!panel || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    update();
-    return;
-  }
-  morphing = true;
-  const backdrop = document.createElement("div");
-  backdrop.className = "board-panel-backdrop";
-  backdrop.style.opacity = maximize ? "0" : "1";
-  document.body.append(backdrop);
-  // A still copy of the old panel covers the swap: opening leaves the small one under the blur, so
-  // it blurs with the board while the full panel fades in; closing fades the full one out over the
-  // small one as the blur clears.
-  const still = snapshot(panel, maximize ? "14" : "60");
-  try {
-    panel.style.opacity = "0";
-    flushSync(update);
-    // The chat re-renders once more when it observes its new size; let that pass before fading in.
-    await nextFrame();
-    await nextFrame();
-    if (maximize) await Promise.all([fade(panel, 1, BLUR_MS), fade(backdrop, 1, BLUR_MS)]);
-    else {
-      panel.style.opacity = "";
-      await Promise.all([fade(still, 0, BLUR_MS), fade(backdrop, 0, BLUR_MS)]);
-    }
-  } finally {
-    for (const animation of panel.getAnimations()) animation.cancel();
-    panel.style.opacity = "";
-    still.remove();
-    backdrop.remove();
-    morphing = false;
-  }
-}
-
-function snapshot(panel: HTMLElement, zIndex: string) {
-  const copy = panel.cloneNode(true) as HTMLElement;
-  const rect = panel.getBoundingClientRect();
-  Object.assign(copy.style, {
-    position: "fixed",
-    inset: "auto",
-    left: `${rect.x}px`,
-    top: `${rect.y}px`,
-    width: `${rect.width}px`,
-    height: `${rect.height}px`,
-    margin: "0",
-    zIndex,
-    pointerEvents: "none",
-  });
-  copy.inert = true;
-  document.body.append(copy);
-  // A clone starts scrolled to the top; match the chat's scroll positions.
-  const from = panel.querySelectorAll("*");
-  const to = copy.querySelectorAll("*");
-  from.forEach((element, index) => {
-    if (element.scrollTop || element.scrollLeft) {
-      to[index]?.scrollTo(element.scrollLeft, element.scrollTop);
-    }
-  });
-  return copy;
-}
-
 /** t3's in-app browser places its native view on window scroll; a moved panel must say so too. */
 const followMove = (panel: HTMLElement) => panel.dispatchEvent(new Event("scroll"));
 
@@ -153,7 +76,7 @@ export function FloatingPanel(props: {
   readonly children: ReactNode;
   /** When this changes to a non-null value, the panel returns to its default place and size. */
   readonly resetKey?: string | null;
-  /** Fills the whole window; toggle it through `morphPanel` to animate the change. */
+  /** Fills the whole window. */
   readonly maximized?: boolean;
   readonly ref?: Ref<HTMLElement>;
   /** Where it opens, over any spot kept from an earlier move. */

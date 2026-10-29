@@ -2,7 +2,9 @@ import { createWorkflow } from "@t3tools/board-core/boardModel";
 import type { BoardSnapshot } from "@t3tools/board-core/http";
 import { expect, it } from "vite-plus/test";
 
-import { applyBoardEvent } from "./boardState";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+
+import { applyBoardEvent, workflowView } from "./boardState";
 
 const snapshot: BoardSnapshot = {
   sequence: 4,
@@ -94,4 +96,51 @@ it("keeps workspaces and a workflow's kanban in step with their events", () => {
     applyBoardEvent(current, { kind: "workspace.deleted", sequence: 9, workspaceId: "ws" })
       .workspaces,
   ).toEqual([]);
+});
+
+it("shows a node's /new chat over the threads of runs started before it, but not after", () => {
+  const environmentId = EnvironmentId.make("environment");
+  const projectId = ProjectId.make("project");
+  const thread = (id: string) => ({
+    environmentId,
+    projectId,
+    threadId: ThreadId.make(id),
+    seeded: true,
+  });
+  const base = createWorkflow("workflow", "Workflow", "workspace");
+  const node = {
+    id: "agent",
+    name: "Agent",
+    profile: "worker" as const,
+    environmentId,
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "model" },
+    x: 0,
+    y: 0,
+  };
+  const run = (id: string, startedAt: string) => ({
+    id,
+    nodeId: "agent",
+    nodeName: "Agent",
+    task: "task",
+    status: "finished" as const,
+    startedAt,
+    requests: [],
+    threads: { agent: thread(`${id}-thread`) },
+    definition: { nodes: [node], edges: [], settings: base.settings },
+  });
+  const withChat = (chat: Partial<{ startedAt: string }>, runs: ReturnType<typeof run>[]) =>
+    workflowView({
+      ...base,
+      nodes: [
+        { ...node, chat: { environmentId, projectId, threadId: ThreadId.make("chat"), ...chat } },
+      ],
+      runs,
+    }).nodes[0]?.threadId;
+
+  const before = run("before", "2026-01-01T00:00:00.000Z");
+  const after = run("after", "2026-01-03T00:00:00.000Z");
+  // A chat opened the first time stays behind any run's thread.
+  expect(withChat({}, [before])).toBe("before-thread");
+  expect(withChat({ startedAt: "2026-01-02T00:00:00.000Z" }, [before])).toBe("chat");
+  expect(withChat({ startedAt: "2026-01-02T00:00:00.000Z" }, [before, after])).toBe("after-thread");
 });

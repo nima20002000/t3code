@@ -19,6 +19,8 @@ export interface BoardNode {
     readonly environmentId: EnvironmentId;
     readonly projectId: ProjectId;
     readonly threadId: ThreadId;
+    /** Set on a chat started anew; it then outranks the threads of runs started before it. */
+    readonly startedAt?: string;
   };
   /** Overrides the workflow's runtime mode for this agent's threads. */
   readonly runtimeMode?: RuntimeMode;

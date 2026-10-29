@@ -8,42 +8,42 @@
   pointer-events: none;
 }
 
-/* The small chat panel drops the chat's breadcrumb header; its header carries the toggles. */
-.board-chat-panel:not([data-full]) [data-chat-header] {
+/* The small chat window drops the chat's breadcrumb header; its own header carries the toggles. */
+.board-window:not([data-full-screen]) [data-chat-header] {
   display: none;
 }
 
-/* In the small chat the composer spans the panel's bottom, a small even gap from its border. */
-.board-chat-panel:not([data-full]) .chat-composer-lane {
+/* In the small chat the composer spans the window's bottom, a small even gap from its border. */
+.board-window:not([data-full-screen]) .chat-composer-lane {
   padding-inline: 0.375rem;
 }
 
-.board-chat-panel:not([data-full]) [data-chat-composer-stack] {
+.board-window:not([data-full-screen]) [data-chat-composer-stack] {
   max-width: none;
 }
 
-.board-chat-panel:not([data-full]) [data-chat-composer-stack] [class*="safe-area-inset-bottom"] {
+.board-window:not([data-full-screen]) [data-chat-composer-stack] [class*="safe-area-inset-bottom"] {
   height: 0.375rem;
 }
 
-/* The column overflows by a few pixels in the small panel; its stray scrollbar narrowed the chat. */
-.board-chat-panel:not([data-full]) [data-chat-column] {
+/* The column overflows by a few pixels in the small window; its stray scrollbar narrowed the chat. */
+.board-window:not([data-full-screen]) [data-chat-column] {
   overflow-y: hidden;
 }
 
 /* The timeline scrolls under the composer; its scrollbar stops above it instead of running beside. */
-.board-chat-panel:not([data-full]) .messages-timeline-scroll::-webkit-scrollbar-track {
+.board-window:not([data-full-screen]) .messages-timeline-scroll::-webkit-scrollbar-track {
   margin-bottom: 8rem;
 }
 
 /* A board agent waits for work; t3's default composer prompt reads as an invitation to chat. */
-.board-chat-panel
+.board-window
   div:has(> [data-composer-rich-text][aria-placeholder^="Ask anything"])
   + .text-placeholder {
   visibility: hidden;
 }
 
-.board-chat-panel
+.board-window
   div:has(> [data-composer-rich-text][aria-placeholder^="Ask anything"])
   + .text-placeholder::after {
   content: "Waiting for your prompt";
@@ -54,9 +54,11 @@
 
 /* The small chat's composer is plain gray throughout: t3 swaps its glass between layers while the
    settings strip slides in, which shows here as a dark, blurred flash. */
-.board-chat-panel:not([data-full]) [data-slot="composer-shell"]::before,
-.board-chat-panel:not([data-full]) [data-model-strip-transition] [data-chat-composer-main-surface],
-.board-chat-panel:not([data-full])
+.board-window:not([data-full-screen]) [data-slot="composer-shell"]::before,
+.board-window:not([data-full-screen])
+  [data-model-strip-transition]
+  [data-chat-composer-main-surface],
+.board-window:not([data-full-screen])
   [data-model-strip-transition]
   [data-composer-model-strip]::before {
   background-color: var(--chat-composer-glass-surface);
@@ -64,8 +66,15 @@
 }
 
 /* t3 fades the strip's own layer out at the bottom, since the shell normally paints under it. */
-.board-chat-panel:not([data-full])
+.board-window:not([data-full-screen])
   [data-model-strip-transition]
   [data-composer-model-strip]::before {
   mask: none;
+}
+
+/* The terminal window keeps one terminal; its frame's close button ends it. */
+.board-window:is([data-window-id^="terminal:"], [data-window-id^="setup:"])
+  [data-thread-terminal-drawer]
+  > .pointer-events-none.absolute {
+  display: none;
 }

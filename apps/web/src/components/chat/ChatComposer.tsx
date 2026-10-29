@@ -1912,6 +1912,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     if (item.type === "slash-command") {
+      if (item.command === "new") {
+        // Sent like a typed "/new", so a pending answer or queued edit is never mistaken for it.
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "/new", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          const standalone =
+            promptRef.current.trim() === "/new" &&
+            composerImages.length === 0 &&
+            composerFiles.length === 0;
+          if (standalone && !activePendingProgress) composerFormRef.current?.requestSubmit();
+        }
+        return;
+      }
       if (item.command === "model") {
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),

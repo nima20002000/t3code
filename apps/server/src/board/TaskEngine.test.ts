@@ -5,6 +5,7 @@ import {
   type BoardDriverSend,
   type BoardDriverSettled,
   type BoardNode,
+  type BoardNewNodeChatInput,
   type NodeDriver,
 } from "@t3tools/board-core";
 import {
@@ -16,11 +17,13 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -210,6 +213,135 @@ it.effect("opens a node's own chat once, without a run, in the workspace folder"
       assert.deepStrictEqual(workflow?.runs, []);
     }).pipe(Effect.provide(layer));
   }),
+);
+
+it.effect(
+  "/new moves a node's chat to a fresh thread with the same settings, which later opens keep",
+  () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      const layer = TaskEngine.layer.pipe(
+        Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
+        Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+      );
+      yield* Effect.gen(function* () {
+        const engine = yield* TaskEngine.TaskEngine;
+        const store = yield* BoardStore.BoardStore;
+        yield* store.transaction(seed(store, setupWorkflow()));
+        const opened = yield* engine.openNodeChat("workflow", "one");
+        // The chat was switched to another model and to plan mode before "/new".
+        const current: BoardNewNodeChatInput = {
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("claude"),
+            model: "claude-opus-5-5",
+          },
+          runtimeMode: "approval-required",
+          interactionMode: "plan",
+        };
+        const fresh = yield* engine.openNodeChat("workflow", "one", current);
+        const again = yield* engine.openNodeChat("workflow", "one");
+        const [first, second, ...rest] = yield* Queue.takeAll(harness.launches);
+        assert.deepStrictEqual(rest, []);
+        assert.notStrictEqual(fresh.chat?.threadId, opened.chat?.threadId);
+        assert.strictEqual(second!.launch.threadId, fresh.chat?.threadId);
+        assert.strictEqual(second!.launch.projectId, first!.launch.projectId);
+        assert.deepStrictEqual(
+          {
+            modelSelection: second!.launch.modelSelection,
+            runtimeMode: second!.launch.runtimeMode,
+            interactionMode: second!.launch.interactionMode,
+          },
+          current,
+        );
+        assert.deepStrictEqual(again.chat, fresh.chat);
+        const workflow = yield* store.getWorkflow("workflow");
+        assert.deepStrictEqual(
+          workflow?.nodes.find((entry) => entry.id === "one")?.chat,
+          fresh.chat,
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+/** An engine whose first chat launch waits until released, so a test can act in between. */
+const withHeldLaunch = <A, E>(
+  body: (held: {
+    readonly entered: Deferred.Deferred<void>;
+    readonly release: Deferred.Deferred<void>;
+  }) => Effect.Effect<A, E, TaskEngine.TaskEngine | BoardStore.BoardStore | Scope.Scope>,
+) =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    let held = false;
+    const driver: NodeDriver = {
+      ...harness.driver,
+      launch: (input) => {
+        if (held) return harness.driver.launch(input);
+        held = true;
+        return Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.andThen(harness.driver.launch(input)),
+        );
+      },
+    };
+    const registry = DriverRegistry.DriverRegistry.of({
+      get: () => Effect.succeed(driver),
+      register: () => Effect.void,
+      remove: () => Effect.void,
+    });
+    const layer = TaskEngine.layer.pipe(
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    return yield* Effect.scoped(body({ entered, release }).pipe(Effect.provide(layer)));
+  });
+
+it.effect("a first open that finishes after /new does not bring the old chat back", () =>
+  withHeldLaunch(({ entered, release }) =>
+    Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(seed(store, setupWorkflow()));
+      const slow = yield* Effect.forkScoped(engine.openNodeChat("workflow", "one"));
+      yield* Deferred.await(entered);
+      const fresh = yield* engine.openNodeChat("workflow", "one", {});
+      yield* Deferred.succeed(release, undefined);
+      assert.deepStrictEqual((yield* Fiber.join(slow)).chat, fresh.chat);
+      const workflow = yield* store.getWorkflow("workflow");
+      assert.deepStrictEqual(workflow?.nodes.find((entry) => entry.id === "one")?.chat, fresh.chat);
+    }),
+  ),
+);
+
+it.effect("/new does not give a node a chat on the machine it left while the chat started", () =>
+  withHeldLaunch(({ entered, release }) =>
+    Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      const workflow = setupWorkflow();
+      yield* store.transaction(seed(store, workflow));
+      const starting = yield* Effect.forkScoped(engine.openNodeChat("workflow", "one", {}));
+      yield* Deferred.await(entered);
+      const elsewhere = EnvironmentId.make("other-machine");
+      yield* store.transaction(
+        store.putWorkflow({
+          ...workflow,
+          nodes: workflow.nodes.map((entry) =>
+            entry.id === "one" ? { ...entry, environmentId: elsewhere } : entry,
+          ),
+        }),
+      );
+      yield* Deferred.succeed(release, undefined);
+      const result = yield* Effect.exit(Fiber.join(starting));
+      assert.isTrue(result._tag === "Failure");
+      const saved = yield* store.getWorkflow("workflow");
+      const node = saved?.nodes.find((entry) => entry.id === "one");
+      assert.strictEqual(node?.environmentId, elsewhere);
+      assert.strictEqual(node?.chat, undefined);
+    }),
+  ),
 );
 
 it.effect("joins all child returns before sending one combined message", () =>

@@ -53,6 +53,55 @@
   user-select: none;
 }
 
+@utility nowheel {
+  user-select: auto;
+}
+@utility nokey {
+  user-select: auto;
+}
+
+/* An agent's chat, browser, terminal or settings, as a window on the canvas. */
+@utility board-window {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--background);
+  box-shadow: var(--shadow-popover);
+  /* Only the header moves the window, so only it shows the hand. */
+  cursor: auto;
+  &[data-selected] {
+    border-color: var(--border-strong);
+  }
+}
+/* Holds a full-screen window over the whole app, under native browser views (z-index 30) so a
+   full-screen browser shows its page; the canvas's own views are clipped away meanwhile. */
+@utility board-full-screen {
+  position: fixed;
+  z-index: 25;
+  inset: 0;
+  pointer-events: none;
+  & > * {
+    pointer-events: auto;
+  }
+  & .board-window {
+    border-radius: 0;
+  }
+}
+@utility board-window-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 6px 6px 6px 10px;
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+  &:active {
+    cursor: grabbing;
+  }
+}
 @utility n-agent {
   --agent-size: 212px;
   --agent-hue: var(--harness-neutral);
@@ -301,11 +350,15 @@
 }
 
 /* The chat button sits inside the circle, quiet until the node is hovered. */
+@utility n-agent-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 10px;
+}
 @utility n-agent-chat {
   display: grid;
   width: 30px;
   height: 30px;
-  margin-top: 10px;
   place-items: center;
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--agent-hue) 30%, var(--border));
@@ -327,6 +380,36 @@
   }
   @media (prefers-reduced-motion: reduce) {
     transition: none;
+  }
+}
+
+/* Resize grip: a band on the rim, under the connection port. */
+@utility n-agent-resize {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  & circle {
+    fill: none;
+    vector-effect: non-scaling-stroke;
+  }
+  & .n-agent-resize-hit {
+    stroke: transparent;
+    stroke-width: 12px;
+    pointer-events: stroke;
+  }
+  & .n-agent-resize-line {
+    stroke: var(--agent-hue);
+    stroke-width: 2px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 140ms ease;
+  }
+  &:hover .n-agent-resize-line {
+    opacity: 1;
   }
 }
 
@@ -928,4 +1011,33 @@
   to {
     opacity: 0;
   }
+}
+
+/* Window resize grips: invisible bands along the edges and wider squares at the corners. */
+.board-canvas .react-flow__node-window .react-flow__resize-control.line {
+  border-color: transparent;
+}
+.board-canvas .react-flow__node-window .react-flow__resize-control.line.left,
+.board-canvas .react-flow__node-window .react-flow__resize-control.line.right {
+  width: 12px;
+}
+.board-canvas .react-flow__node-window .react-flow__resize-control.line.top,
+.board-canvas .react-flow__node-window .react-flow__resize-control.line.bottom {
+  height: 12px;
+}
+.board-canvas .react-flow__node-window .react-flow__resize-control.handle {
+  z-index: 1;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  background: transparent;
+}
+
+.board-canvas:has(.board-full-screen > *) .board-floating-controls {
+  display: none;
+}
+
+/* Canvas pages stay below floating board panels; full-screen pages keep the upstream layer. */
+[data-electron-browser-host] > [data-board-native-view="canvas"] {
+  z-index: 19 !important;
 }

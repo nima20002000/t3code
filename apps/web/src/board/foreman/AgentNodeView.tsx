@@ -14,7 +14,7 @@ export type AgentNodeState =
   | "unavailable";
 /** A one-shot cue played when the state changes. */
 export type AgentNodeTransition = "ignite" | "complete" | "fail" | "wait";
-export interface AgentNodeChat {
+export interface AgentNodeAction {
   readonly label: string;
   readonly icon: ReactNode;
   readonly onClick: (event: MouseEvent<HTMLButtonElement>) => void;
@@ -23,7 +23,7 @@ export interface AgentNodeChat {
 /**
  * Adapted from Foreman Code's AgentNodeView (shared/ui/nocturne/Canvas.tsx): a circle with harness
  * rim, status word and one-shot transition cues. It shows only the status, name, role and machine,
- * with the chat button inside the circle; harness and model are in the name's tooltip.
+ * with its action buttons inside the circle; harness and model are in the name's tooltip.
  */
 export function AgentNodeView({
   name,
@@ -38,7 +38,7 @@ export function AgentNodeView({
   transitionKey,
   selected,
   size,
-  chat,
+  actions,
   children,
 }: {
   name: string;
@@ -55,7 +55,7 @@ export function AgentNodeView({
   selected?: boolean;
   /** Diameter in px; the stylesheet's default when unset. */
   size?: number;
-  chat: AgentNodeChat;
+  actions: ReadonlyArray<AgentNodeAction>;
   children?: ReactNode;
 }) {
   const hover = useHoverControls();
@@ -100,17 +100,22 @@ export function AgentNodeView({
         <span className="n-agent-role">
           {role} · {machine}
         </span>
-        <button
-          type="button"
-          className="n-agent-chat nodrag nopan"
-          aria-label={chat.label}
-          onClick={(event) => {
-            event.stopPropagation();
-            chat.onClick(event);
-          }}
-        >
-          {chat.icon}
-        </button>
+        <span className="n-agent-actions">
+          {actions.map((action) => (
+            <button
+              key={action.label}
+              type="button"
+              className="n-agent-chat nodrag nopan"
+              aria-label={action.label}
+              onClick={(event) => {
+                event.stopPropagation();
+                action.onClick(event);
+              }}
+            >
+              {action.icon}
+            </button>
+          ))}
+        </span>
       </div>
       {children}
     </div>

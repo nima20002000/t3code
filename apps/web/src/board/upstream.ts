@@ -57,6 +57,12 @@ export {
   sortProviderInstanceEntries,
 } from "../providerInstances";
 export { useRightPanelStore } from "../rightPanelStore";
+export { ComposerHandleContext, type ComposerHandleRef } from "../composerHandleContext";
+export { HostSetupRunnerContext } from "../browser/hostSetupRunner";
+export {
+  ComposerNewThreadContext,
+  type ComposerNewThreadSettings,
+} from "../components/chat/composerNewThread";
 export { appAtomRegistry } from "../rpc/atomRegistry";
 export { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
 export {
@@ -86,7 +92,14 @@ export { PersistentThreadTerminalPanel } from "../components/PersistentThreadTer
 export { useThreadTerminalActions } from "../components/terminal/useThreadTerminalActions";
 export { PreviewPanel } from "../components/preview/PreviewPanel";
 export { openPreviewSession } from "../components/preview/openPreviewSession";
+export { closePreviewSession } from "../components/preview/closePreviewSession";
 export { previewEnvironment } from "../state/preview";
+export { usePreviewMiniPlayerStore } from "../previewMiniPlayerStore";
+export { useThreadPreviewState } from "../previewStateStore";
+export { rendersServerTabNatively } from "../browser/previewRuntime";
+export { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
+export { withDesktopTab } from "../browser/desktopTabLifetime";
 export { useAtomCommand } from "../state/use-atom-command";
 export { primaryServerKeybindingsAtom } from "../state/server";
 export { readLocalApi } from "../localApi";
+export { useStableCallback } from "../hooks/useStableCallback";

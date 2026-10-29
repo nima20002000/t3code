@@ -23,15 +23,25 @@ export class BrowserSetupStepError extends Schema.TaggedError<BrowserSetupStepEr
   }
 }
 
+const SYSTEM_TOOL_DIRECTORIES = ["/usr/local/sbin", "/usr/sbin", "/sbin"];
+
 const runStep = Effect.fn("browserSetup.runStep")(function* (
   step: string,
   command: string,
   args: ReadonlyArray<string>,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const { PATH } = yield* HostProcess.Environment;
   const exitCode = yield* spawner
     .exitCode(
-      ChildProcess.make(command, args, { stdin: "inherit", stdout: "inherit", stderr: "inherit" }),
+      ChildProcess.make(command, args, {
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+        // `sudo env "PATH=$PATH"` keeps a user's PATH, which often lacks the sbin tools run here.
+        env: { PATH: [PATH, ...SYSTEM_TOOL_DIRECTORIES].filter(Boolean).join(":") },
+        extendEnv: true,
+      }),
     )
     .pipe(Effect.mapError((cause) => new BrowserSetupStepError({ step, detail: String(cause) })));
   if (exitCode !== 0) {

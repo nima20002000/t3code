@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   type BoardCreateNodeInput,
+  type BoardNewNodeChatInput,
   type BoardUpdateNodeInput,
   type BoardPeer,
   type BoardSchedule,
@@ -468,6 +469,23 @@ export async function openNodeChat(id: string) {
     );
   } catch (error) {
     reportError("Could not open the chat", error);
+  }
+}
+/** Gives the node a fresh chat thread, with the chat's current settings, in place of the one it shows. */
+export async function newNodeChat(id: string, settings: BoardNewNodeChatInput) {
+  const workflow = getCurrentWorkflow();
+  try {
+    await runBoardMutation((client) =>
+      client.newNodeChat({
+        headers: {},
+        params: { workflowId: workflow.id, nodeId: id },
+        payload: settings,
+      }),
+    );
+    return true;
+  } catch (error) {
+    reportError("Could not start a new chat", error);
+    return false;
   }
 }
 export function renameNode(id: string, name: string) {

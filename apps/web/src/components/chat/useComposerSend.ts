@@ -42,7 +42,8 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { createModelSelection } from "@t3tools/shared/model";
-import { type SetStateAction, useLayoutEffect, useRef } from "react";
+import { type SetStateAction, useContext, useLayoutEffect, useRef } from "react";
+import { ComposerNewThreadContext } from "./composerNewThread";
 import { flushSync } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -253,6 +254,9 @@ interface ComposerSendInput {
  * when it fails.
  */
 export function useComposerSend(input: ComposerSendInput) {
+  const startNewThread = useContext(ComposerNewThreadContext);
+  // The thread a "/new" is moving away from: nothing more is sent to it meanwhile.
+  const leavingThreadId = useRef<string | null>(null);
   const {
     environmentId,
     routeThreadKey,
@@ -469,6 +473,7 @@ export function useComposerSend(input: ComposerSendInput) {
       });
       return;
     }
+    if (activeThread && leavingThreadId.current === activeThread.id) return;
     const sendCtx = composerRef.current?.getSendContext();
     if (activePendingProgress && sendCtx?.answeringPendingUserInput !== false) {
       if (directAnnotation) {
@@ -476,6 +481,30 @@ export function useComposerSend(input: ComposerSendInput) {
         return;
       }
       onAdvanceActivePendingUserInput();
+      return;
+    }
+    if (
+      startNewThread &&
+      activeThread &&
+      sendCtx &&
+      sendCtx.multipleModelSelections === null &&
+      !queuedRunEdit.isEditing &&
+      !directAnnotation &&
+      !draftHasNonPromptContent(composerDraftTarget) &&
+      /^\/new$/i.test(promptRef.current.trim())
+    ) {
+      const leaving = activeThread.id;
+      leavingThreadId.current = leaving;
+      promptRef.current = "";
+      setComposerDraftPrompt(composerDraftTarget, "");
+      composerRef.current?.resetCursorState();
+      void startNewThread({
+        modelSelection: sendCtx.selectedModelSelection,
+        runtimeMode,
+        interactionMode: sendCtx.interactionMode,
+      }).then((started) => {
+        if (!started && leavingThreadId.current === leaving) leavingThreadId.current = null;
+      });
       return;
     }
     if (!sendCtx?.providerAvailable) {

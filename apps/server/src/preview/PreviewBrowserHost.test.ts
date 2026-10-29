@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
@@ -97,6 +99,59 @@ describe("diagnoseLaunchFailure", () => {
         version: "Google Chrome for Testing 154.0.8037.92\n",
       });
       expect(error).toBeUndefined();
+    }),
+  );
+});
+
+describe("sandboxBlocked", () => {
+  /** A Linux host restricting user namespaces, with the given files; others are unreadable. */
+  const host = (files: Readonly<Record<string, string>>) =>
+    PreviewBrowserHost.sandboxBlocked.pipe(
+      Effect.provide(
+        FileSystem.layerNoop({
+          readFileString: (path) =>
+            path in files
+              ? Effect.succeed(files[path]!)
+              : Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "readFileString",
+                    pathOrDescriptor: path,
+                  }),
+                ),
+          exists: (path) => Effect.succeed(path in files),
+        }),
+      ),
+      Effect.provideService(HostProcess.Platform, "linux"),
+    );
+  const restricted = { "/proc/sys/kernel/apparmor_restrict_unprivileged_userns": "1\n" };
+  const profile = {
+    [PreviewBrowserHost.APPARMOR_PROFILE_PATH]: PreviewBrowserHost.APPARMOR_PROFILE,
+  };
+  const loaded = (names: ReadonlyArray<string>) => ({
+    "/sys/kernel/security/apparmor/profiles": names
+      .map((name) => `${name} (unconfined)\n`)
+      .join(""),
+  });
+
+  it.effect("still blocks when setup wrote the profile but could not load it", () =>
+    Effect.gen(function* () {
+      expect(yield* host({ ...restricted, ...profile, ...loaded(["firefox"]) })).toBe(true);
+      expect(
+        yield* host({
+          ...restricted,
+          ...profile,
+          ...loaded(["firefox", "t3-chrome-headless-shell"]),
+        }),
+      ).toBe(false);
+    }),
+  );
+
+  it.effect("goes by the profile file where the loaded profiles cannot be read", () =>
+    Effect.gen(function* () {
+      expect(yield* host(restricted)).toBe(true);
+      expect(yield* host({ ...restricted, ...profile })).toBe(false);
     }),
   );
 });
