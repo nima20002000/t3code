@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
+import { CONTINUE_TEXT, continuationIds, latestContinuation } from "./restartContinuation.ts";
 import { ProjectService, ThreadLaunch, ThreadManagement } from "./upstream.ts";
 
 export class LocalDriver extends Context.Service<LocalDriver, NodeDriver>()(
@@ -69,6 +70,33 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(error("send")));
     return { runId: result.run.id, sequence: result.dispatch.sequence };
   });
+  const resume: NodeDriver["resume"] = Effect.fn("LocalDriver.resume")(
+    function* (input) {
+      const source = (yield* threads.getProjectThreadRecords(input.thread, ["runs"])).runs.find(
+        (candidate) => candidate.id === input.runId,
+      );
+      if (!source || source.status !== "cancelled" || source.startedAt === null) return null;
+      const { commandId, messageId } = continuationIds(source.id);
+      const dispatched = yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId,
+        threadId: input.thread.threadId,
+        messageId,
+        text: CONTINUE_TEXT,
+        attachments: [],
+        modelSelection: source.modelSelection,
+        createdBy: "system",
+        creationSource: "server",
+        dispatchMode: { type: "queue_after_active" },
+        restartContinuationOfRunId: source.id,
+      });
+      const run = (yield* threads.getProjectThreadRecords(input.thread, ["runs"])).runs.find(
+        (candidate) => candidate.userMessageId === messageId,
+      );
+      return run ? { runId: run.id, sequence: dispatched.sequence, messageId } : null;
+    },
+    Effect.mapError(error("resume")),
+  );
   const subscribeSettled: NodeDriver["subscribeSettled"] = (input) =>
     threads
       .streamStoredEventsFrom({
@@ -137,25 +165,40 @@ const make = Effect.gen(function* () {
     return message === undefined ? null : { id: message.id, text: message.text };
   });
   const interrupt: NodeDriver["interrupt"] = Effect.fn("LocalDriver.interrupt")(function* (input) {
+    let runId = input.runId;
     if (input.runId !== undefined) {
       const records = yield* threads
         .getProjectThreadRecords(input.thread, ["runs"])
         .pipe(Effect.mapError(error("interrupt")));
-      const run = records.runs.find((candidate) => candidate.id === input.runId);
+      const found = records.runs.find((candidate) => candidate.id === input.runId);
+      // A restart may have cut the run and continued it; Stop reaches the continuation.
+      const run = found && latestContinuation(records.runs, found);
+      runId = run?.id ?? runId;
+      if (run?.status === "cancelled" && run.startedAt !== null) {
+        // Its continuation may still be pending; a thread Stop declines it.
+        yield* threads
+          .dispatch({
+            type: "thread.stop",
+            commandId: input.commandId,
+            threadId: input.thread.threadId,
+          })
+          .pipe(Effect.mapError(error("interrupt")));
+        return;
+      }
       if (run?.status === "queued") {
         const cancelled = yield* threads
           .dispatch({
             type: "queued-run.cancel",
             commandId: CommandId.make(`${input.commandId}:cancel-queued`),
             threadId: input.thread.threadId,
-            runId: input.runId,
+            runId: run.id,
           })
           .pipe(Effect.result);
         if (Result.isSuccess(cancelled)) return;
         const refreshed = yield* threads
           .getProjectThreadRecords(input.thread, ["runs"])
           .pipe(Effect.mapError(error("interrupt")));
-        if (refreshed.runs.find((candidate) => candidate.id === input.runId)?.status === "queued")
+        if (refreshed.runs.find((candidate) => candidate.id === run.id)?.status === "queued")
           return yield* error("interrupt")(cancelled.failure);
       }
     }
@@ -164,7 +207,7 @@ const make = Effect.gen(function* () {
         projectId: input.thread.projectId,
         threadId: input.thread.threadId,
         commandId: input.commandId,
-        ...(input.runId === undefined ? {} : { runId: input.runId }),
+        ...(runId === undefined ? {} : { runId }),
       })
       .pipe(Effect.mapError(error("interrupt")));
   });
@@ -210,6 +253,7 @@ const make = Effect.gen(function* () {
   return LocalDriver.of({
     launch,
     send,
+    resume,
     subscribeSettled,
     readLatestAssistant,
     interrupt,

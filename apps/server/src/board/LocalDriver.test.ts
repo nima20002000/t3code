@@ -208,3 +208,51 @@ it.effect("adopts a folder that already exists so the board never deletes it", (
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect("Stop reaches the continuation of a cut run, or declines a pending one", () =>
+  Effect.gen(function* () {
+    const calls = yield* Ref.make<ReadonlyArray<unknown>>([]);
+    const runs = yield* Ref.make<ReadonlyArray<unknown>>([]);
+    const record = (call: unknown) => Ref.update(calls, (all) => [...all, call]);
+    const threads = ThreadManagement.ThreadManagementService.of({
+      getProjectThreadRecords: () => Ref.get(runs).pipe(Effect.map((all) => ({ runs: all }))),
+      interruptThread: (input: { readonly runId?: RunId }) =>
+        record({ interrupt: input.runId }).pipe(Effect.as({ type: "no_active_run" })),
+      dispatch: (command: { readonly type: string }) =>
+        record({ dispatch: command.type }).pipe(Effect.as({ sequence: 1 })),
+    } as never);
+    const layer = LocalDriver.layer.pipe(
+      Layer.provide(NodeServices.layer),
+      Layer.provide(Layer.succeed(ThreadManagement.ThreadManagementService, threads)),
+      Layer.provide(
+        Layer.succeed(
+          ThreadLaunch.ThreadLaunchService,
+          ThreadLaunch.ThreadLaunchService.of({} as never),
+        ),
+      ),
+      Layer.provide(
+        Layer.succeed(ProjectService.ProjectService, ProjectService.ProjectService.of({} as never)),
+      ),
+    );
+    const cut = { ...run("run-1", "board-message", "cancelled"), startedAt: "started" };
+    yield* Effect.gen(function* () {
+      const driver = yield* LocalDriver.LocalDriver;
+      const stop = driver.interrupt({
+        thread,
+        runId: RunId.make("run-1"),
+        commandId: "stop" as never,
+      });
+      yield* Ref.set(runs, [
+        cut,
+        { ...run("run-2", "continue", "running"), restartContinuationOfRunId: "run-1" },
+      ]);
+      yield* stop;
+      yield* Ref.set(runs, [cut]);
+      yield* stop;
+    }).pipe(Effect.provide(layer));
+    assert.deepStrictEqual(yield* Ref.get(calls), [
+      { interrupt: RunId.make("run-2") },
+      { dispatch: "thread.stop" },
+    ]);
+  }),
+);

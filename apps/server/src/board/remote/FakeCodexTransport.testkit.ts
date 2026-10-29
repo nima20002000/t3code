@@ -57,7 +57,11 @@ export function layer(tag: typeof CodexAdapter.CodexAppServerClientFactory) {
             for (const line of lines) {
               const message = yield* decodeFrame(line).pipe(Effect.orDie);
               if (message.method === "initialized") continue;
-              if (message.method === "initialize" || message.method === "thread/start") {
+              if (
+                message.method === "initialize" ||
+                message.method === "thread/start" ||
+                message.method === "thread/resume"
+              ) {
                 const response = recorded(message.method);
                 yield* emit({ ...response, id: message.id });
                 continue;

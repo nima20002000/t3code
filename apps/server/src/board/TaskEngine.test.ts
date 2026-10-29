@@ -61,6 +61,7 @@ const returned = (summary: string) =>
 const makeHarness = Effect.gen(function* () {
   const sends = yield* Queue.unbounded<BoardDriverSend>();
   const interrupts = yield* Queue.unbounded<ThreadId>();
+  const resumes = yield* Queue.unbounded<Parameters<NodeDriver["resume"]>[0]>();
   const launches = yield* Queue.unbounded<Parameters<NodeDriver["launch"]>[0]>();
   const projects = yield* Queue.unbounded<Parameters<NodeDriver["ensureProject"]>[0]>();
   const replies = new Map<ThreadId, Queue.Queue<BoardDriverSettled>>();
@@ -86,6 +87,14 @@ const makeHarness = Effect.gen(function* () {
       Queue.offer(sends, input).pipe(
         Effect.as({ runId: RunId.make(input.messageId), sequence: 0 }),
       ),
+    resume: (input) =>
+      Queue.offer(resumes, input).pipe(
+        Effect.as({
+          runId: RunId.make(`continue:${input.runId}`),
+          messageId: MessageId.make(`continue:${input.runId}`),
+          sequence: 0,
+        }),
+      ),
     subscribeSettled: ({ thread: target }) => Stream.fromQueue(queueFor(target.threadId)),
     readLatestAssistant: ({ runId }) =>
       Ref.get(messages).pipe(
@@ -102,7 +111,7 @@ const makeHarness = Effect.gen(function* () {
     remove: () => Effect.void,
   });
   const reply = (
-    sent: BoardDriverSend,
+    sent: Pick<BoardDriverSend, "thread" | "messageId">,
     text: string,
     status: BoardDriverSettled["status"] = "completed",
   ) =>
@@ -117,7 +126,22 @@ const makeHarness = Effect.gen(function* () {
         status,
       });
     });
-  return { sends, interrupts, launches, projects, reply, registry, driver };
+  /** The continuation the fake driver starts for a cut run, as a send the test can reply to. */
+  const continuation = (sent: Pick<BoardDriverSend, "thread" | "messageId">) => ({
+    thread: sent.thread,
+    messageId: MessageId.make(`continue:${sent.messageId}`),
+  });
+  return {
+    sends,
+    interrupts,
+    resumes,
+    launches,
+    projects,
+    reply,
+    continuation,
+    registry,
+    driver,
+  };
 });
 
 const setupWorkflow = (
@@ -1130,5 +1154,196 @@ it.effect("a worker's return completes the card chosen for its own request", () 
       assert.deepStrictEqual(yield* status(), ["card-a:doing", "card-b:done"]);
       assert.isDefined(forA);
     }).pipe(Effect.provide(layer));
+  }),
+);
+
+const engineWith = (driver: NodeDriver) =>
+  TaskEngine.layer.pipe(
+    Layer.provide(
+      Layer.succeed(
+        DriverRegistry.DriverRegistry,
+        DriverRegistry.DriverRegistry.of({
+          get: () => Effect.succeed(driver),
+          register: () => Effect.void,
+          remove: () => Effect.void,
+        }),
+      ),
+    ),
+    Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+  );
+
+it.effect("continues a turn each restart cut off, once per cut, and the run finishes", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(seed(store, setupWorkflow()));
+      yield* engine.start("workflow", { id: "run:cut", task: "Go" });
+      const root = yield* Queue.take(harness.sends);
+      yield* harness.reply(root, "", "cancelled");
+      const first = yield* Queue.take(harness.resumes);
+      assert.strictEqual(first.runId, RunId.make(root.messageId));
+      assert.strictEqual(first.thread.threadId, root.thread.threadId);
+      const continued = harness.continuation(root);
+      yield* harness.reply(continued, "", "cancelled");
+      const second = yield* Queue.take(harness.resumes);
+      assert.strictEqual(second.runId, RunId.make(continued.messageId));
+      yield* harness.reply(harness.continuation(continued), finish);
+      const event = yield* waitForRun(store, (run) => run.status !== "running");
+      if (event.kind === "run.upserted") {
+        assert.strictEqual(event.run.status, "finished");
+        assert.strictEqual(event.run.data, 42);
+      }
+      assert.strictEqual(yield* Queue.size(harness.sends), 0);
+      assert.strictEqual(yield* Queue.size(harness.resumes), 0);
+    }).pipe(Effect.provide(engineWith(harness.driver)));
+  }),
+);
+
+it.effect("keeps waiting on a continued turn across a hub restart without continuing again", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const subscribed = yield* Queue.unbounded<ThreadId>();
+    const driver: NodeDriver = {
+      ...harness.driver,
+      subscribeSettled: (input) =>
+        Stream.unwrap(
+          Queue.offer(subscribed, input.thread.threadId).pipe(
+            Effect.as(harness.driver.subscribeSettled(input)),
+          ),
+        ),
+    };
+    const store = yield* BoardStore.BoardStore;
+    yield* store.transaction(seed(store, setupWorkflow()));
+    const engineLayer = TaskEngine.layer.pipe(
+      Layer.provide(Layer.succeed(BoardStore.BoardStore, store)),
+      Layer.provide(
+        Layer.succeed(
+          DriverRegistry.DriverRegistry,
+          DriverRegistry.DriverRegistry.of({
+            get: () => Effect.succeed(driver),
+            register: () => Effect.void,
+            remove: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+    const root = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const engine = yield* TaskEngine.TaskEngine;
+        yield* engine.start("workflow", { id: "run:hub-restart", task: "Go" });
+        const root = yield* Queue.take(harness.sends);
+        yield* Queue.take(subscribed);
+        yield* harness.reply(root, "", "cancelled");
+        yield* Queue.take(harness.resumes);
+        // The engine waits on the continuation once it has recorded it.
+        yield* Queue.take(subscribed);
+        return root;
+      }).pipe(Effect.provide(engineLayer)),
+    );
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* TaskEngine.TaskEngine;
+        yield* harness.reply(harness.continuation(root), finish);
+        yield* waitForRun(store, (run) => run.status === "finished");
+        assert.strictEqual(yield* Queue.size(harness.resumes), 0);
+        assert.strictEqual(yield* Queue.size(harness.sends), 0);
+      }).pipe(Effect.provide(engineLayer)),
+    );
+  }).pipe(Effect.provide(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)))),
+);
+
+it.effect("picks up a continuation that finished while the board was away, sending nothing", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    // The machine continued the cut turn itself and finished it before the board came back.
+    const driver: NodeDriver = {
+      ...harness.driver,
+      resume: (input) =>
+        harness.driver
+          .resume(input)
+          .pipe(
+            Effect.tap((resumed) =>
+              resumed
+                ? harness.reply({ thread: input.thread, messageId: resumed.messageId }, finish)
+                : Effect.void,
+            ),
+          ),
+    };
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(seed(store, setupWorkflow()));
+      yield* engine.start("workflow", { id: "run:away", task: "Go" });
+      yield* harness.reply(yield* Queue.take(harness.sends), "", "cancelled");
+      const event = yield* waitForRun(store, (run) => run.status !== "running");
+      if (event.kind === "run.upserted") assert.strictEqual(event.run.status, "finished");
+      assert.strictEqual(yield* Queue.size(harness.sends), 0);
+      assert.strictEqual(yield* Queue.size(harness.resumes), 1);
+    }).pipe(Effect.provide(engineWith(driver)));
+  }),
+);
+
+it.effect("Stop still stops a run whose cut turn waits for its machine to come back", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const calls = yield* Queue.unbounded<Parameters<NodeDriver["resume"]>[0]>();
+    const interrupts = yield* Queue.unbounded<Parameters<NodeDriver["interrupt"]>[0]>();
+    const driver: NodeDriver = {
+      ...harness.driver,
+      resume: (input) =>
+        Queue.offer(calls, input).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new NodeDriverError({ operation: "resume", message: "Away", retryable: true }),
+            ),
+          ),
+        ),
+      interrupt: (input) => Queue.offer(interrupts, input).pipe(Effect.asVoid),
+    };
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(seed(store, setupWorkflow()));
+      yield* engine.start("workflow", { id: "run:stop-away", task: "Go" });
+      const root = yield* Queue.take(harness.sends);
+      yield* harness.reply(root, "", "cancelled");
+      yield* Queue.take(calls);
+      const stopped = yield* engine.stop("workflow", "run:stop-away");
+      assert.strictEqual(stopped.status, "stopped");
+      const interrupt = yield* Queue.take(interrupts);
+      assert.strictEqual(interrupt.thread.threadId, root.thread.threadId);
+      assert.strictEqual(interrupt.runId, RunId.make(root.messageId));
+      yield* TestClock.adjust("1 minute");
+      assert.strictEqual(yield* Queue.size(calls), 0);
+      assert.strictEqual((yield* store.getTask("run:stop-away"))?.status, "stopped");
+    }).pipe(Effect.provide(engineWith(driver)));
+  }),
+);
+
+it.effect("fails a turn that failed, was interrupted, or was cut but not continued", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const driver: NodeDriver = {
+      ...harness.driver,
+      resume: (input) => harness.driver.resume(input).pipe(Effect.as(null)),
+    };
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(seed(store, setupWorkflow()));
+      for (const status of ["failed", "interrupted", "cancelled"] as const) {
+        const id = `run:${status}`;
+        yield* engine.start("workflow", { id, task: "Go" });
+        yield* harness.reply(yield* Queue.take(harness.sends), "", status);
+        const event = yield* waitForRun(store, (run) => run.id === id && run.status !== "running");
+        if (event.kind === "run.upserted") {
+          assert.strictEqual(event.run.status, "failed");
+          assert.strictEqual(event.run.summary, `The thread ${status}.`);
+        }
+      }
+      assert.strictEqual(yield* Queue.size(harness.resumes), 1);
+    }).pipe(Effect.provide(engineWith(driver)));
   }),
 );

@@ -54,6 +54,7 @@ const makeLayer = Effect.gen(function* () {
         threadId: input.launch.threadId,
       }),
     send: (input) => Effect.succeed({ runId: RunId.make(input.messageId), sequence: 0 }),
+    resume: () => Effect.succeed(null),
     subscribeSettled: () => Stream.empty,
     readLatestAssistant: () => Effect.succeed(null),
     interrupt: () => Effect.void,

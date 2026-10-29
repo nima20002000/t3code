@@ -76,6 +76,8 @@ type Checkpoint =
       readonly runId: RunId;
       readonly sequence: number;
       readonly messageId: MessageId;
+      /** Continuations of this step's turn after restarts cut it off. */
+      readonly resumes?: number;
     }
   | { readonly stage: "join"; readonly step: number; readonly denied: ReadonlyArray<string> }
   | { readonly stage: "interrupt"; readonly thread: BoardDriverThread; readonly runId?: RunId }
@@ -105,6 +107,8 @@ export class TaskEngine extends Context.Service<
 const stableId = (taskId: string, purpose: string) =>
   `board:${NodeCrypto.createHash("sha256").update(taskId).update("\0").update(purpose).digest("hex")}`;
 const MAX_FINISHED_RUNS = 50;
+/** A turn that keeps getting cut (say it crashes its server) is not continued forever. */
+const MAX_RESUMES = 3;
 /** The workflow as the run saw it when it started: routing and prompts never follow later edits. */
 const runWorkflow = (workflow: Workflow, run: RunRecord): Workflow => ({
   ...workflow,
@@ -727,6 +731,48 @@ const make = Effect.gen(function* () {
           if (latest && !terminal(latest.status))
             yield* failTask(task.id, "The thread's settlement stream ended unexpectedly.");
           return;
+        }
+        const resumes = checkpoint.resumes ?? 0;
+        if (settled.value.status === "cancelled" && resumes < MAX_RESUMES) {
+          // A restart of the agent's machine cut the turn off; continue it in the same thread.
+          const cut = settled.value;
+          const outcome = yield* lockFor(task.runId).withPermits(1)(
+            Effect.gen(function* () {
+              const current = yield* store.getTask(task.id);
+              if (!current || terminal(current.status)) return "stopped" as const;
+              const resumed = yield* driver
+                .resume({ thread, runId: cut.runId })
+                .pipe(Effect.result);
+              if (Result.isFailure(resumed)) return resumed.failure;
+              if (!resumed.success) return null;
+              yield* store.transaction(
+                store.putTask({
+                  ...current,
+                  checkpoint: {
+                    ...checkpoint,
+                    runId: resumed.success.runId,
+                    sequence: resumed.success.sequence,
+                    messageId: resumed.success.messageId,
+                    resumes: resumes + 1,
+                  } satisfies Checkpoint,
+                }),
+              );
+              return "resumed" as const;
+            }),
+          );
+          if (outcome === "stopped") return;
+          if (outcome === "resumed") continue;
+          if (outcome !== null) {
+            if (!outcome.retryable) {
+              yield* failTask(task.id, outcome.message);
+              return;
+            }
+            yield* Effect.logWarning("Waiting for the agent's machine to continue its turn.", {
+              taskId: task.id,
+            });
+            yield* Effect.sleep("15 seconds");
+            continue;
+          }
         }
         if (settled.value.status !== "completed") {
           yield* failTask(task.id, `The thread ${settled.value.status}.`);

@@ -39,6 +39,10 @@ export interface BoardDriverSendResult {
   readonly sequence: number;
 }
 
+export interface BoardDriverResumed extends BoardDriverSendResult {
+  readonly messageId: MessageId;
+}
+
 export interface BoardDriverSettled {
   readonly thread: BoardDriverThread;
   readonly runId: RunId;
@@ -56,6 +60,7 @@ export class NodeDriverError extends Schema.TaggedError<NodeDriverError>()("Node
   operation: Schema.Literals([
     "launch",
     "send",
+    "resume",
     "subscribeSettled",
     "readLatestAssistant",
     "interrupt",
@@ -90,6 +95,15 @@ export interface NodeDriver {
   ) => Effect.Effect<void, NodeDriverError>;
   readonly launch: (input: BoardDriverLaunch) => Effect.Effect<BoardDriverThread, NodeDriverError>;
   readonly send: (input: BoardDriverSend) => Effect.Effect<BoardDriverSendResult, NodeDriverError>;
+  /**
+   * Continues a run that a server restart cut off ("cancelled"), in the same thread, as t3's own restart
+   * continuation with the same ids, so neither side sends it twice. Null when t3 declines: the run was
+   * stopped or never started.
+   */
+  readonly resume: (input: {
+    readonly thread: BoardDriverThread;
+    readonly runId: RunId;
+  }) => Effect.Effect<BoardDriverResumed | null, NodeDriverError>;
   readonly subscribeSettled: (input: {
     readonly thread: BoardDriverThread;
     readonly afterSequence?: number;
