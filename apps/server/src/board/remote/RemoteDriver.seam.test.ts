@@ -477,31 +477,30 @@ it.live("continues a turn the machine's restart cut off, once, in the same threa
       yield* Effect.addFinalizer(() => Scope.close(secondScope, Exit.void));
       const restarted = yield* start(secondScope);
       yield* store.put({ ...peer, url: restarted });
-      const [cut] = yield* driver.subscribeSettled({ thread, afterSequence: held.sequence }).pipe(
-        Stream.filter((event) => event.runId === held.runId),
-        Stream.take(1),
-        Stream.runCollect,
-      );
-      assert.equal(cut?.status, "cancelled");
-      const resumed = yield* driver.resume({ thread, runId: held.runId });
-      const again = yield* driver.resume({ thread, runId: held.runId });
-      assert.isNotNull(resumed);
-      assert.equal(again?.runId, resumed?.runId);
+      // The board only follows: t3 on the restarted machine continues the cut turn itself.
       const [continued] = yield* driver
-        .subscribeSettled({ thread, afterSequence: resumed!.sequence })
+        .subscribeSettled({ thread, afterSequence: held.sequence })
         .pipe(
-          Stream.filter((event) => event.runId === resumed!.runId),
+          Stream.filter(
+            (event) => event.messageId === MessageId.make("board-restart-hold-message"),
+          ),
           Stream.take(1),
           Stream.runCollect,
         );
       assert.equal(continued?.status, "completed");
-      assert.equal(continued?.messageId, resumed?.messageId);
+      assert.notEqual(continued?.runId, held.runId);
+      assert.equal(
+        (yield* driver.readLatestAssistant({ thread, runId: continued!.runId }))?.text,
+        "fake result",
+      );
       const projection = yield* (yield* testClient({ ...peer, url: restarted }))[
         ORCHESTRATION_V2_WS_METHODS.getThreadProjection
       ]({ threadId });
-      assert.lengthOf(
-        projection.runs.filter((run) => run.restartContinuationOfRunId === held.runId),
-        1,
+      assert.deepEqual(
+        projection.runs
+          .filter((run) => run.restartContinuationOfRunId === held.runId)
+          .map((run) => run.id),
+        [continued!.runId],
       );
       assert.lengthOf(projection.runs, 3);
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer))),

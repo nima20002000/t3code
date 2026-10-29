@@ -16,6 +16,7 @@ import {
   NodeDriverError,
   type NodeDriver,
 } from "@t3tools/board-core/NodeDriver";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -27,8 +28,9 @@ import * as Stream from "effect/Stream";
 import * as Socket from "effect/socket/Socket";
 import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
-import { CONTINUE_TEXT, continuationIds, latestContinuation } from "../restartContinuation.ts";
+import { latestContinuation } from "../restartContinuation.ts";
 import { PeerHttpError, readDescriptor, request } from "./PeerPairing.ts";
+import { makeRestartChain } from "./restartChain.ts";
 import type { Peer, PeerStore } from "./PeerStore.ts";
 
 const makeClient = RpcClient.make(WsRpcGroup);
@@ -305,52 +307,16 @@ export function make(store: PeerStore): NodeDriver {
         }),
       ).pipe(Effect.mapError((cause) => error("send", cause)));
     }),
-    resume: Effect.fn("RemoteDriver.resume")(function* (input) {
-      return yield* useClient(store, input.thread, (client) =>
-        Effect.gen(function* () {
-          const source =
-            (yield* projectionFor(client, input.thread)).runs.find(
-              (candidate) => candidate.id === input.runId,
-            ) ??
-            (yield* fullProjectionFor(client, input.thread)).runs.find(
-              (candidate) => candidate.id === input.runId,
-            );
-          if (!source) return yield* new RemoteStateError({ reason: "Remote run was not found." });
-          if (source.status !== "cancelled" || source.startedAt === null) return null;
-          const { commandId, messageId } = continuationIds(source.id);
-          const dispatched = yield* client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
-            type: "message.dispatch",
-            commandId,
-            threadId: input.thread.threadId,
-            messageId,
-            text: CONTINUE_TEXT,
-            attachments: [],
-            modelSelection: source.modelSelection,
-            createdBy: "system",
-            creationSource: "server",
-            dispatchMode: { type: "queue_after_active" },
-            restartContinuationOfRunId: source.id,
-          });
-          const run =
-            (yield* projectionFor(client, input.thread)).runs.find(
-              (candidate) => candidate.userMessageId === messageId,
-            ) ??
-            (yield* fullProjectionFor(client, input.thread)).runs.find(
-              (candidate) => candidate.userMessageId === messageId,
-            );
-          return run ? { runId: run.id, sequence: dispatched.sequence, messageId } : null;
-        }),
-      ).pipe(Effect.mapError((cause) => error("resume", cause)));
-    }),
     subscribeSettled: (input) =>
       Stream.suspend(() => {
         let afterSequence = input.afterSequence;
         let warned = false;
         let statusReported = false;
         let attemptPeer: Peer | undefined;
-        const delivered = new Map<string, BoardDriverSettled["status"]>();
+        const chain = makeRestartChain(input.thread);
         const convert = (
           item: OrchestrationV2ThreadStreamItem,
+          now: number,
         ): ReadonlyArray<BoardDriverSettled> => {
           let runs: ReadonlyArray<OrchestrationV2Run> = [];
           let sequence: number;
@@ -369,12 +335,7 @@ export function make(store: PeerStore): NodeDriver {
           } else return [];
           afterSequence = Math.max(afterSequence ?? 0, sequence);
           warned = false;
-          return runs.flatMap((run) => {
-            const result = settled(run, input.thread, sequence);
-            if (!result || delivered.get(run.id) === result.status) return [];
-            delivered.set(run.id, result.status);
-            return [result];
-          });
+          return runs.flatMap((run) => chain.observe(run, sequence, now));
         };
         const source = Stream.unwrap(
           Effect.gen(function* () {
@@ -383,6 +344,7 @@ export function make(store: PeerStore): NodeDriver {
             });
             const client = yield* connect(peer);
             yield* projectionFor(client, input.thread);
+            chain.connected(yield* Clock.currentTimeMillis);
             return client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
               threadId: input.thread.threadId,
               ...(afterSequence === undefined ? {} : { afterSequence }),
@@ -391,8 +353,9 @@ export function make(store: PeerStore): NodeDriver {
         ).pipe(
           Stream.mapEffect((item) =>
             Effect.gen(function* () {
+              const now = yield* Clock.currentTimeMillis;
               const result = yield* Effect.try({
-                try: () => convert(item),
+                try: () => convert(item, now),
                 catch: () => new RemoteStateError({ reason: "Invalid remote thread." }),
               });
               if (!statusReported) {
@@ -401,6 +364,12 @@ export function make(store: PeerStore): NodeDriver {
               }
               return result;
             }),
+          ),
+          Stream.merge(
+            Stream.tick("5 seconds").pipe(
+              Stream.mapEffect(() => Clock.currentTimeMillis.pipe(Effect.map(chain.expire))),
+            ),
+            { haltStrategy: "left" },
           ),
           Stream.flatMap((items) => Stream.fromIterable(items)),
           Stream.concat(Stream.fail(new PeerHttpError({}))),
@@ -474,7 +443,10 @@ export function make(store: PeerStore): NodeDriver {
           }
           // A restart may have cut the run and continued it; Stop reaches the continuation.
           const run = latestContinuation(runs, found);
-          if (run.status === "cancelled" && run.startedAt !== null) {
+          if (
+            run.status === "cancelled" &&
+            (run.startedAt !== null || run.restartContinuationOfRunId !== undefined)
+          ) {
             // Its continuation may still be pending on the machine; a thread Stop declines it.
             yield* client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
               type: "thread.stop",

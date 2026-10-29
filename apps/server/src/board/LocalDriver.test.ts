@@ -209,18 +209,34 @@ it.effect("adopts a folder that already exists so the board never deletes it", (
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("Stop reaches the continuation of a cut run, or declines a pending one", () =>
+it.effect("Stop leaves nothing running after a restart cut the run, continued or not", () =>
   Effect.gen(function* () {
-    const calls = yield* Ref.make<ReadonlyArray<unknown>>([]);
-    const runs = yield* Ref.make<ReadonlyArray<unknown>>([]);
-    const record = (call: unknown) => Ref.update(calls, (all) => [...all, call]);
+    // A minimal t3 thread: run.interrupt stops a live run, thread.stop also declines a pending
+    // restart continuation, and a continuation t3 starts later runs unless Stop reached the thread.
+    const runs = yield* Ref.make<ReadonlyArray<ReturnType<typeof run> & object>>([]);
+    const stopped = yield* Ref.make(false);
     const threads = ThreadManagement.ThreadManagementService.of({
       getProjectThreadRecords: () => Ref.get(runs).pipe(Effect.map((all) => ({ runs: all }))),
       interruptThread: (input: { readonly runId?: RunId }) =>
-        record({ interrupt: input.runId }).pipe(Effect.as({ type: "no_active_run" })),
+        Ref.update(runs, (all) =>
+          all.map((entry) =>
+            entry.id === input.runId && entry.status === "running"
+              ? { ...entry, status: "interrupted" }
+              : entry,
+          ),
+        ).pipe(Effect.as({ type: "interrupt_requested" })),
       dispatch: (command: { readonly type: string }) =>
-        record({ dispatch: command.type }).pipe(Effect.as({ sequence: 1 })),
+        (command.type === "thread.stop" ? Ref.set(stopped, true) : Effect.void).pipe(
+          Effect.as({ sequence: 1 }),
+        ),
     } as never);
+    const continuePending = Effect.gen(function* () {
+      if (yield* Ref.get(stopped)) return;
+      yield* Ref.update(runs, (all) => [
+        ...all,
+        { ...run("run-2", "continue", "running"), restartContinuationOfRunId: "run-1" },
+      ]);
+    });
     const layer = LocalDriver.layer.pipe(
       Layer.provide(NodeServices.layer),
       Layer.provide(Layer.succeed(ThreadManagement.ThreadManagementService, threads)),
@@ -235,6 +251,9 @@ it.effect("Stop reaches the continuation of a cut run, or declines a pending one
       ),
     );
     const cut = { ...run("run-1", "board-message", "cancelled"), startedAt: "started" };
+    const running = Ref.get(runs).pipe(
+      Effect.map((all) => all.filter((entry) => entry.status === "running").map((e) => e.id)),
+    );
     yield* Effect.gen(function* () {
       const driver = yield* LocalDriver.LocalDriver;
       const stop = driver.interrupt({
@@ -242,17 +261,16 @@ it.effect("Stop reaches the continuation of a cut run, or declines a pending one
         runId: RunId.make("run-1"),
         commandId: "stop" as never,
       });
-      yield* Ref.set(runs, [
-        cut,
-        { ...run("run-2", "continue", "running"), restartContinuationOfRunId: "run-1" },
-      ]);
+      // t3 already continued the cut run.
+      yield* Ref.set(runs, [cut]);
+      yield* continuePending;
       yield* stop;
+      assert.deepStrictEqual(yield* running, []);
+      // t3 has not continued it yet when Stop lands.
       yield* Ref.set(runs, [cut]);
       yield* stop;
+      yield* continuePending;
+      assert.deepStrictEqual(yield* running, []);
     }).pipe(Effect.provide(layer));
-    assert.deepStrictEqual(yield* Ref.get(calls), [
-      { interrupt: RunId.make("run-2") },
-      { dispatch: "thread.stop" },
-    ]);
   }),
 );

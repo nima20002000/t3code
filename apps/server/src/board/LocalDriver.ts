@@ -9,7 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
-import { CONTINUE_TEXT, continuationIds, latestContinuation } from "./restartContinuation.ts";
+import { latestContinuation } from "./restartContinuation.ts";
 import { ProjectService, ThreadLaunch, ThreadManagement } from "./upstream.ts";
 
 export class LocalDriver extends Context.Service<LocalDriver, NodeDriver>()(
@@ -70,33 +70,6 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(error("send")));
     return { runId: result.run.id, sequence: result.dispatch.sequence };
   });
-  const resume: NodeDriver["resume"] = Effect.fn("LocalDriver.resume")(
-    function* (input) {
-      const source = (yield* threads.getProjectThreadRecords(input.thread, ["runs"])).runs.find(
-        (candidate) => candidate.id === input.runId,
-      );
-      if (!source || source.status !== "cancelled" || source.startedAt === null) return null;
-      const { commandId, messageId } = continuationIds(source.id);
-      const dispatched = yield* threads.dispatch({
-        type: "message.dispatch",
-        commandId,
-        threadId: input.thread.threadId,
-        messageId,
-        text: CONTINUE_TEXT,
-        attachments: [],
-        modelSelection: source.modelSelection,
-        createdBy: "system",
-        creationSource: "server",
-        dispatchMode: { type: "queue_after_active" },
-        restartContinuationOfRunId: source.id,
-      });
-      const run = (yield* threads.getProjectThreadRecords(input.thread, ["runs"])).runs.find(
-        (candidate) => candidate.userMessageId === messageId,
-      );
-      return run ? { runId: run.id, sequence: dispatched.sequence, messageId } : null;
-    },
-    Effect.mapError(error("resume")),
-  );
   const subscribeSettled: NodeDriver["subscribeSettled"] = (input) =>
     threads
       .streamStoredEventsFrom({
@@ -174,7 +147,10 @@ const make = Effect.gen(function* () {
       // A restart may have cut the run and continued it; Stop reaches the continuation.
       const run = found && latestContinuation(records.runs, found);
       runId = run?.id ?? runId;
-      if (run?.status === "cancelled" && run.startedAt !== null) {
+      if (
+        run?.status === "cancelled" &&
+        (run.startedAt !== null || run.restartContinuationOfRunId !== undefined)
+      ) {
         // Its continuation may still be pending; a thread Stop declines it.
         yield* threads
           .dispatch({
@@ -253,7 +229,6 @@ const make = Effect.gen(function* () {
   return LocalDriver.of({
     launch,
     send,
-    resume,
     subscribeSettled,
     readLatestAssistant,
     interrupt,
