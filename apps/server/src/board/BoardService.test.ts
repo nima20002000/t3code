@@ -16,7 +16,9 @@ import {
   ThreadId,
   type ScheduledTask,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -617,11 +619,20 @@ it.effect(
         yield* board.createWorkflow({ id: "w", name: "W", workspaceId: "ws" });
         for (const id of ["a", "b", "c"]) yield* board.createNode("w", nodeInput(id));
 
-        // A delete that lands while the task is being written must not leave the task behind.
-        yield* Ref.set(machines.beforeUpsert, board.deleteNode("w", "a"));
-        const gone = yield* board.saveNodeSchedule("w", "a", scheduleInput).pipe(Effect.flip);
-        assert.strictEqual(gone._tag, "BoardNotFoundError");
+        // A delete asked for while the task is being written waits for it, then removes it.
+        const deleting = yield* Deferred.make<Fiber.Fiber<void>>();
+        yield* Ref.set(
+          machines.beforeUpsert,
+          board.deleteNode("w", "a").pipe(
+            Effect.orDie,
+            Effect.forkDetach,
+            Effect.flatMap((fiber) => Deferred.succeed(deleting, fiber)),
+          ),
+        );
+        yield* board.saveNodeSchedule("w", "a", scheduleInput);
+        yield* Fiber.join(yield* Deferred.await(deleting));
         assert.deepStrictEqual(yield* machines.on(environmentId), []);
+        assert.isFalse((yield* board.getWorkflow("w")).nodes.some((node) => node.id === "a"));
 
         // A firing between the read and the write does not eat into the granted runs.
         yield* board.saveNodeSchedule("w", "b", scheduleInput);
@@ -678,6 +689,27 @@ it.effect("a /new that could not reach the machine is caught up on the next sync
       assert.notStrictEqual((yield* machines.on(environmentId))[0]?.threadId, chat?.threadId);
       yield* board.syncNodeSchedule("w", "a");
       assert.strictEqual((yield* machines.on(environmentId))[0]?.threadId, chat?.threadId);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("/new binds the schedule to the new chat even after a firing moved it", () =>
+  Effect.gen(function* () {
+    const { layer, machines } = yield* makeLayer;
+    yield* Effect.gen(function* () {
+      const board = yield* BoardService.BoardService;
+      yield* board.createWorkspace({ id: "ws", name: "Workspace" });
+      yield* board.createWorkflow({ id: "w", name: "W", workspaceId: "ws" });
+      yield* board.createNode("w", nodeInput("a"));
+      yield* board.saveNodeSchedule("w", "a", { ...scheduleInput, beforeRun: "new_thread" });
+      yield* machines.rebind(environmentId, "fired-thread");
+      const fresh = yield* board.newNodeChat("w", "a", { interactionMode: "plan" });
+      const node = (yield* board.getWorkflow("w")).nodes[0];
+      assert.strictEqual(node?.chat?.threadId, fresh.chat?.threadId);
+      assert.deepInclude((yield* machines.on(environmentId))[0], {
+        threadId: fresh.chat!.threadId,
+        interactionMode: "plan",
+      });
     }).pipe(Effect.provide(layer));
   }),
 );

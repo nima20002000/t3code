@@ -170,9 +170,14 @@ const scheduleTimingMigration = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const upgrade = (data: string) => {
     const { everyMs, ...rest } = decodeJson(data) as { readonly everyMs?: number };
+    // Schedules now share t3's one-minute floor, which the old editor already kept.
     return everyMs === undefined
       ? data
-      : encodeJson({ ...rest, timing: { type: "interval", everyMs }, runCount: 0 });
+      : encodeJson({
+          ...rest,
+          timing: { type: "interval", everyMs: Math.max(everyMs, 60_000) },
+          runCount: 0,
+        });
   };
   const rows = yield* sql<JsonRow & { readonly id: string }>`SELECT id, data FROM board_schedules`;
   for (const row of rows)

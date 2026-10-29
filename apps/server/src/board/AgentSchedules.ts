@@ -21,6 +21,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Semaphore from "effect/Semaphore";
 import type { SqlError } from "effect/sql/SqlError";
 import * as BoardStore from "./BoardStore.ts";
 import * as DriverRegistry from "./DriverRegistry.ts";
@@ -65,7 +66,12 @@ export class AgentSchedules extends Context.Service<
      * to the node's chat when an earlier move did not reach the machine.
      */
     readonly sync: (workflowId: string, nodeId: string) => Effect.Effect<void, ScheduleError>;
-    /** Deletes the nodes' tasks before the nodes go; fails while a paired machine is unreachable. */
+    /** Runs a node delete or move, with its `release`, between schedule writes. */
+    readonly exclusive: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+    /**
+     * Deletes the nodes' tasks before the nodes go; fails while a paired machine is unreachable.
+     * Call it inside `exclusive`, with the delete that follows.
+     */
     readonly release: (nodes: ReadonlyArray<BoardNode>) => Effect.Effect<void, BoardInternalError>;
   }
 >()("t3/board/AgentSchedules") {}
@@ -107,6 +113,8 @@ const make = Effect.gen(function* () {
   const store = yield* BoardStore.BoardStore;
   const drivers = yield* DriverRegistry.DriverRegistry;
   const engine = yield* TaskEngine.TaskEngine;
+  // Schedule writes and the deletes that release them take turns, so neither undoes the other.
+  const lock = yield* Semaphore.make(1);
 
   const findNode = Effect.fn("AgentSchedules.findNode")(function* (
     workflowId: string,
@@ -162,7 +170,9 @@ const make = Effect.gen(function* () {
     task: ScheduledTask,
   ) {
     const threadId = task.threadId;
-    if (threadId === null || threadId === marker.threadId) return undefined;
+    const current = yield* findNode(workflowId, nodeId);
+    if (threadId === null || threadId === (marker.threadId ?? current.node.chat?.threadId))
+      return undefined;
     const startedAt = DateTime.formatIso(yield* DateTime.now);
     const node = yield* patchNode(workflowId, nodeId, (current) =>
       current.schedule?.taskId !== marker.taskId ||
@@ -301,7 +311,7 @@ const make = Effect.gen(function* () {
       return yield* new BoardNotFoundError({ message: "The agent was removed while scheduling." });
     }
     return now;
-  });
+  }, lock.withPermit);
 
   const setEnabled = Effect.fn("AgentSchedules.setEnabled")(function* (
     workflowId: string,
@@ -318,13 +328,16 @@ const make = Effect.gen(function* () {
   const remove = Effect.fn("AgentSchedules.remove")(function* (workflowId: string, nodeId: string) {
     yield* deleteTask(yield* scheduled(workflowId, nodeId));
     yield* setMarker(workflowId, nodeId, undefined);
-  });
+  }, lock.withPermit);
 
-  /** Brings the node's chat and its task back in step, whichever side moved last. */
+  /**
+   * Brings the node's chat and its task back in step. A sync follows whichever side moved last;
+   * a retarget ("/new") always binds the task to the chat the user just started.
+   */
   const reconcile = Effect.fn("AgentSchedules.reconcile")(function* (
     workflowId: string,
     nodeId: string,
-    settings: BoardNewNodeChatInput,
+    settings: BoardNewNodeChatInput | undefined,
   ) {
     const { node } = yield* findNode(workflowId, nodeId);
     const marker = node.schedule;
@@ -338,17 +351,18 @@ const make = Effect.gen(function* () {
     const driver = yield* driverFor(marker.environmentId, "read the schedule");
     const task = yield* readTask(driver, marker, "read the schedule");
     if (task === null) return;
-    if (task.threadId !== marker.threadId) {
+    if (settings === undefined && task.threadId !== (marker.threadId ?? chat.threadId)) {
       yield* adopt(workflowId, nodeId, marker, task);
       return;
     }
-    if (task.threadId !== chat.threadId)
-      yield* bindToChat(workflowId, nodeId, driver, marker, task, chat, settings);
+    if (task.threadId !== chat.threadId || settings !== undefined)
+      yield* bindToChat(workflowId, nodeId, driver, marker, task, chat, settings ?? {});
   });
 
   const retarget = (workflowId: string, nodeId: string, settings: BoardNewNodeChatInput) =>
-    reconcile(workflowId, nodeId, settings);
-  const sync = (workflowId: string, nodeId: string) => reconcile(workflowId, nodeId, {});
+    lock.withPermit(reconcile(workflowId, nodeId, settings));
+  const sync = (workflowId: string, nodeId: string) =>
+    lock.withPermit(reconcile(workflowId, nodeId, undefined));
 
   const release = Effect.fn("AgentSchedules.release")(function* (nodes: ReadonlyArray<BoardNode>) {
     for (const node of nodes) {
@@ -374,7 +388,15 @@ const make = Effect.gen(function* () {
     }
   });
 
-  return AgentSchedules.of({ save, setEnabled, remove, retarget, sync, release });
+  return AgentSchedules.of({
+    save,
+    setEnabled,
+    remove,
+    retarget,
+    sync,
+    release,
+    exclusive: lock.withPermit,
+  });
 });
 
 export const layer = Layer.effect(AgentSchedules, make);

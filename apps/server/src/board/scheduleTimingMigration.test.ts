@@ -29,6 +29,7 @@ it.effect("an every-N-minutes workflow schedule keeps its interval and due run",
       nextRunAt: "2026-01-01T00:05:00.000Z",
     };
     yield* sql`INSERT INTO board_schedules (id, data) VALUES ('s', ${JSON.stringify(old)})`;
+    yield* sql`INSERT INTO board_schedules (id, data) VALUES ('fast', ${JSON.stringify({ ...old, id: "fast", everyMs: 30_000 })})`;
     yield* sql`INSERT INTO board_task_events (data) VALUES (${JSON.stringify({ kind: "schedule.upserted", schedule: old })})`;
     yield* BoardStore.migrate;
     const expected = {
@@ -42,7 +43,10 @@ it.effect("an every-N-minutes workflow schedule keeps its interval and due run",
     };
     yield* Effect.gen(function* () {
       const store = yield* BoardStore.BoardStore;
-      assert.deepStrictEqual(yield* store.listSchedules(), [expected]);
+      assert.deepStrictEqual(yield* store.listSchedules(), [
+        expected,
+        { ...expected, id: "fast", timing: { type: "interval", everyMs: 60_000 } },
+      ]);
       const [event] = yield* store.events(0).pipe(Stream.take(1), Stream.runCollect);
       assert.deepStrictEqual(event, { kind: "schedule.upserted", sequence: 1, schedule: expected });
     }).pipe(Effect.provide(BoardStore.layer));

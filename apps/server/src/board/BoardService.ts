@@ -304,7 +304,7 @@ const make = Effect.gen(function* () {
       }),
     );
     yield* removeProjects(workspace);
-  });
+  }, schedules.exclusive);
 
   const create = Effect.fn("BoardService.createWorkflow")(function* (
     input: BoardCreateWorkflowInput,
@@ -347,7 +347,7 @@ const make = Effect.gen(function* () {
         yield* store.appendEvent({ kind: "workflow.deleted", workflowId: id });
       }),
     );
-  });
+  }, schedules.exclusive);
   const ensureFolder = Effect.fn("BoardService.ensureFolder")(function* (
     workspaceId: string,
     environmentId: EnvironmentId,
@@ -424,7 +424,7 @@ const make = Effect.gen(function* () {
         return node;
       }),
     );
-  });
+  }, schedules.exclusive);
   const deleteNode = Effect.fn("BoardService.deleteNode")(function* (id: string, nodeId: string) {
     const workflow = yield* getWorkflow(id);
     yield* checkEditable(workflow);
@@ -449,7 +449,7 @@ const make = Effect.gen(function* () {
         });
       }),
     );
-  });
+  }, schedules.exclusive);
   const createEdge = Effect.fn("BoardService.createEdge")(function* (id: string, edge: BoardEdge) {
     yield* store.transaction(
       Effect.gen(function* () {

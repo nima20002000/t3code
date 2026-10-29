@@ -42,7 +42,11 @@ export const BoardNodeSchema = Schema.Struct({
     }),
   ),
   schedule: Schema.optionalKey(
-    Schema.Struct({ environmentId: EnvironmentId, taskId: ScheduledTaskId, threadId: ThreadId }),
+    Schema.Struct({
+      environmentId: EnvironmentId,
+      taskId: ScheduledTaskId,
+      threadId: Schema.optionalKey(ThreadId),
+    }),
   ),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   size: Schema.optionalKey(Schema.Number),
