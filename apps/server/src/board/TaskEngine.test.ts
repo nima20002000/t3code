@@ -27,6 +27,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as AgentSchedules from "./AgentSchedules.ts";
 import * as BoardStore from "./BoardStore.ts";
 import * as DriverRegistry from "./DriverRegistry.ts";
 import * as TaskEngine from "./TaskEngine.ts";
@@ -95,6 +96,10 @@ const makeHarness = Effect.gen(function* () {
         }),
       ),
     interrupt: ({ thread: target }) => Queue.offer(interrupts, target.threadId).pipe(Effect.asVoid),
+    getScheduledTask: () => Effect.succeed(null),
+    upsertScheduledTask: () => Effect.die("no schedules here"),
+    setScheduledTaskEnabled: () => Effect.void,
+    deleteScheduledTask: () => Effect.void,
   };
   const registry = DriverRegistry.DriverRegistry.of({
     get: () => Effect.succeed(driver),
@@ -151,6 +156,7 @@ it.effect("schedules outlive a deleted node and go with their workflow", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness;
     const layer = BoardService.layer.pipe(
+      Layer.provide(AgentSchedules.layer),
       Layer.provideMerge(TaskEngine.layer),
       Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
       Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),

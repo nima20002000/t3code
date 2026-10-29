@@ -16,6 +16,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 
 it.effect("keeps core and board migration histories and board data across reopening", () =>
   Effect.scoped(
@@ -90,6 +91,7 @@ it.effect("keeps core and board migration histories and board data across reopen
             Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
             Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
             Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+            Layer.provide(Layer.mock(ScheduledTasks.ScheduledTaskService)({})),
           );
           yield* Effect.gen(function* () {
             const drivers = yield* DriverRegistry.DriverRegistry;

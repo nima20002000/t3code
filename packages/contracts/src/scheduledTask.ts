@@ -194,6 +194,16 @@ export const ScheduledTaskWebhookEndpoint = Schema.Struct({
 });
 export type ScheduledTaskWebhookEndpoint = typeof ScheduledTaskWebhookEndpoint.Type;
 
+const ScheduledTaskMaxRuns = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).annotate({
+  description: "Scheduled runs stop, and the task pauses, once runCount reaches this.",
+});
+
+export const ScheduledTaskBeforeRun = Schema.Literals(["compact", "new_thread"]).annotate({
+  description:
+    "For a bound thread: 'compact' sends /compact before the prompt; 'new_thread' launches a fresh thread with the task's settings and binds the task to it.",
+});
+export type ScheduledTaskBeforeRun = typeof ScheduledTaskBeforeRun.Type;
+
 export const ScheduledTask = Schema.Struct({
   id: ScheduledTaskId,
   title: TrimmedNonEmptyString,
@@ -215,6 +225,8 @@ export const ScheduledTask = Schema.Struct({
   lastRunStatus: ScheduledTaskRunStatus,
   lastRunError: Schema.NullOr(Schema.String),
   runCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  maxRuns: Schema.optional(ScheduledTaskMaxRuns),
+  beforeRun: Schema.optional(ScheduledTaskBeforeRun),
   webhook: Schema.optional(ScheduledTaskWebhookEndpoint),
 });
 export type ScheduledTask = typeof ScheduledTask.Type;
@@ -239,6 +251,12 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   schedule: ScheduledTaskUpsertSchedule,
   projectId: ProjectId,
   threadId: Schema.optional(Schema.NullOr(ThreadId)),
+  maxRuns: Schema.optional(Schema.NullOr(ScheduledTaskMaxRuns)).annotate({
+    description: "Omitted: keep stored. null: no limit.",
+  }),
+  beforeRun: Schema.optional(Schema.NullOr(ScheduledTaskBeforeRun)).annotate({
+    description: "Omitted: keep stored. null: none.",
+  }),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,

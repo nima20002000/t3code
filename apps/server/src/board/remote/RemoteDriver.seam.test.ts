@@ -14,6 +14,7 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
   ProviderInstanceId,
+  ScheduledTaskId,
   ThreadId,
   WS_METHODS,
   WsRpcGroup,
@@ -356,6 +357,39 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
       assert.equal(resumeSequences[0], sent.sequence);
       assert.isAbove(replayedSequence, sent.sequence);
       assert.isAtLeast(resumedAfter ?? 0, replayedSequence);
+
+      // The agent's schedule lives on that machine, which stops it after its runs.
+      const scheduleTarget = {
+        environmentId: peer.environmentId,
+        taskId: ScheduledTaskId.make("board-remote-schedule"),
+      };
+      const scheduledTask = yield* driver.upsertScheduledTask({
+        environmentId: peer.environmentId,
+        task: {
+          id: scheduleTarget.taskId,
+          title: "Board node schedule",
+          prompt: "scheduled",
+          enabled: true,
+          schedule: { type: "interval", everyMs: 3_600_000 },
+          maxRuns: 1,
+          projectId,
+          threadId,
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-luna" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        },
+      });
+      assert.deepInclude(scheduledTask, { maxRuns: 1, threadId, enabled: true });
+      const fired = yield* client[WS_METHODS.scheduledTasksRunNow]({ id: scheduleTarget.taskId });
+      assert.deepInclude(fired.task, { runCount: 1, enabled: false, nextRunAt: null });
+      assert.deepInclude(yield* driver.getScheduledTask(scheduleTarget), {
+        runCount: 1,
+        enabled: false,
+      });
+      yield* driver.deleteScheduledTask(scheduleTarget);
+      yield* driver.deleteScheduledTask(scheduleTarget);
+      assert.isNull(yield* driver.getScheduledTask(scheduleTarget));
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer))),
   ),
 );

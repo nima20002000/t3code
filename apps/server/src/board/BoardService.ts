@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import {
   BoardConflictError,
+  type BoardInternalError,
   BoardInvalidRequestError,
   BoardNotFoundError,
   createWorkflow,
@@ -16,6 +17,7 @@ import {
   type BoardEdge,
   type BoardNode,
   type BoardPeer,
+  type BoardSaveNodeScheduleInput,
   type BoardSchedule,
   type BoardNewNodeChatInput,
   type BoardStartRunInput,
@@ -37,6 +39,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { SqlError } from "effect/sql/SqlError";
+import * as AgentSchedules from "./AgentSchedules.ts";
 import * as BoardStore from "./BoardStore.ts";
 import * as DriverRegistry from "./DriverRegistry.ts";
 import * as TaskEngine from "./TaskEngine.ts";
@@ -46,9 +49,10 @@ type BoardError =
   | NodeDriverError
   | BoardNotFoundError
   | BoardInvalidRequestError
-  | BoardConflictError;
+  | BoardConflictError
+  | BoardInternalError;
 type Op<A> = Effect.Effect<A, BoardError>;
-type EngineError = BoardError | import("@t3tools/board-core").BoardInternalError;
+type EngineError = BoardError;
 
 export class BoardService extends Context.Service<
   BoardService,
@@ -88,6 +92,18 @@ export class BoardService extends Context.Service<
       nodeId: string,
       settings: BoardNewNodeChatInput,
     ) => Effect.Effect<BoardNode, EngineError>;
+    readonly saveNodeSchedule: (
+      id: string,
+      nodeId: string,
+      input: BoardSaveNodeScheduleInput,
+    ) => Effect.Effect<BoardNode, EngineError>;
+    readonly setNodeScheduleEnabled: (
+      id: string,
+      nodeId: string,
+      enabled: boolean,
+    ) => Effect.Effect<void, EngineError>;
+    readonly deleteNodeSchedule: (id: string, nodeId: string) => Effect.Effect<void, EngineError>;
+    readonly syncNodeSchedule: (id: string, nodeId: string) => Effect.Effect<void, EngineError>;
   }
 >()("t3/board/BoardService") {}
 
@@ -106,6 +122,7 @@ const make = Effect.gen(function* () {
   const store = yield* BoardStore.BoardStore;
   const drivers = yield* DriverRegistry.DriverRegistry;
   const engine = yield* TaskEngine.TaskEngine;
+  const schedules = yield* AgentSchedules.AgentSchedules;
   const getWorkflow = Effect.fn("BoardService.getWorkflow")(function* (id: string) {
     const workflow = yield* store.getWorkflow(id);
     if (!workflow) return yield* new BoardNotFoundError({ message: "Workflow not found." });
@@ -264,6 +281,11 @@ const make = Effect.gen(function* () {
   });
   const deleteWorkspace = Effect.fn("BoardService.deleteWorkspace")(function* (id: string) {
     const workspace = yield* getWorkspace(id);
+    const workflows = (yield* store.listWorkflows()).filter(
+      (workflow) => workflow.workspaceId === id,
+    );
+    for (const workflow of workflows) yield* checkEditable(workflow);
+    yield* schedules.release(workflows.flatMap((workflow) => workflow.nodes));
     // Rows go first, in one transaction with the editable check, so no run can start while the
     // slow machine cleanup below runs.
     yield* store.transaction(
@@ -312,6 +334,9 @@ const make = Effect.gen(function* () {
     );
   });
   const remove = Effect.fn("BoardService.deleteWorkflow")(function* (id: string) {
+    const workflow = yield* getWorkflow(id);
+    yield* checkEditable(workflow);
+    yield* schedules.release(workflow.nodes);
     yield* store.transaction(
       Effect.gen(function* () {
         const workflow = yield* getWorkflow(id);
@@ -361,13 +386,19 @@ const make = Effect.gen(function* () {
     input: BoardUpdateNodeInput,
   ) {
     if (input.environmentId !== undefined) yield* checkMachine(input.environmentId);
+    const before = (yield* getWorkflow(id)).nodes.find((node) => node.id === nodeId);
+    const moves = (node: BoardNode) =>
+      input.environmentId !== undefined && input.environmentId !== node.environmentId;
+    // The schedule fires into the chat on the old machine, so it goes with the move.
+    if (before && moves(before)) yield* schedules.release([before]);
     return yield* store.transaction(
       Effect.gen(function* () {
         const workflow = yield* getWorkflow(id);
         yield* checkEditable(workflow);
         const current = workflow.nodes.find((node) => node.id === nodeId);
         if (!current) return yield* new BoardNotFoundError({ message: "Node not found." });
-        const node: BoardNode = { ...current, ...input };
+        const { schedule: _released, ...unscheduled } = current;
+        const node: BoardNode = { ...(moves(current) ? unscheduled : current), ...input };
         if (
           node.name !== current.name &&
           workflow.nodes.some(
@@ -387,6 +418,9 @@ const make = Effect.gen(function* () {
     );
   });
   const deleteNode = Effect.fn("BoardService.deleteNode")(function* (id: string, nodeId: string) {
+    const workflow = yield* getWorkflow(id);
+    yield* checkEditable(workflow);
+    yield* schedules.release(workflow.nodes.filter((node) => node.id === nodeId));
     yield* store.transaction(
       Effect.gen(function* () {
         const workflow = yield* getWorkflow(id);
@@ -532,8 +566,14 @@ const make = Effect.gen(function* () {
       nodeId: string,
       settings: BoardNewNodeChatInput,
     ) {
-      return yield* engine.openNodeChat(id, nodeId, settings);
+      const node = yield* engine.openNodeChat(id, nodeId, settings);
+      yield* schedules.retarget(id, nodeId, settings);
+      return node;
     }),
+    saveNodeSchedule: schedules.save,
+    setNodeScheduleEnabled: schedules.setEnabled,
+    deleteNodeSchedule: schedules.remove,
+    syncNodeSchedule: schedules.sync,
   });
 });
 

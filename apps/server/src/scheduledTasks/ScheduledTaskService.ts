@@ -1,6 +1,7 @@
 import {
   CommandId,
   MessageId,
+  IDLE_COMPACTION_TEXT,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ScheduledTask,
   ScheduledTaskError,
@@ -165,6 +166,23 @@ const webhookFilters = (filters: ReadonlyArray<ScheduledTaskWebhookFilter> | und
 
 const decodeTask = Schema.decodeUnknownEffect(ScheduledTask);
 const decodeTaskId = Schema.decodeUnknownOption(ScheduledTaskId);
+// maxRuns and beforeRun ride in schedule_json so they need no core migration.
+const decodeScheduleExtrasJson = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      maxRuns: ScheduledTask.fields.maxRuns,
+      beforeRun: ScheduledTask.fields.beforeRun,
+    }),
+  ),
+);
+const scheduleJson = (task: ScheduledTask) =>
+  JSON.stringify({
+    ...task.schedule,
+    ...(task.maxRuns === undefined ? {} : { maxRuns: task.maxRuns }),
+    ...(task.beforeRun === undefined ? {} : { beforeRun: task.beforeRun }),
+  });
+const runsExhausted = (task: Pick<ScheduledTask, "runCount" | "maxRuns">) =>
+  task.maxRuns !== undefined && task.runCount >= task.maxRuns;
 const decodeScheduleJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.schedule),
 );
@@ -278,10 +296,10 @@ function iso(value: DateTime.DateTime): string {
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
 
 function nextRunAt(
-  task: Pick<ScheduledTask, "enabled" | "schedule">,
+  task: Pick<ScheduledTask, "enabled" | "schedule" | "runCount" | "maxRuns">,
   from: DateTime.DateTime,
 ): string | null {
-  if (!task.enabled) return null;
+  if (!task.enabled || runsExhausted(task)) return null;
   // Decoded intervals can overflow DateTime; unrepresentable occurrences have no next run.
   try {
     const next = nextScheduledRunAt(task.schedule, from);
@@ -319,6 +337,7 @@ const decodeRow = Effect.fnUntraced(
   function* (row: ScheduledTaskRow, origin: WebhookOrigin | null = null) {
     const schedule = yield* decodeScheduleJson(row.schedule_json);
     const webhook = schedule.type === "webhook" ? webhookEndpoint(row, origin) : undefined;
+    const extras = Option.getOrUndefined(decodeScheduleExtrasJson(row.schedule_json));
     const workspaceStrategy = yield* decodeWorkspaceStrategyJson(row.workspace_strategy_json);
     const modelSelection = yield* decodeModelSelectionJson(row.model_selection_json);
     return yield* decodeTask({
@@ -342,6 +361,8 @@ const decodeRow = Effect.fnUntraced(
       lastRunStatus: row.last_run_status,
       lastRunError: row.last_run_error,
       runCount: row.run_count,
+      ...(extras?.maxRuns === undefined ? {} : { maxRuns: extras.maxRuns }),
+      ...(extras?.beforeRun === undefined ? {} : { beforeRun: extras.beforeRun }),
       ...(webhook === undefined ? {} : { webhook }),
     });
   },
@@ -372,6 +393,7 @@ export const listDueTasks = Effect.fn("ScheduledTaskService.listDueTasks")(funct
     const decoded = yield* Effect.result(decodeRow(row));
     if (Result.isSuccess(decoded)) {
       const task = decoded.success;
+      if (runsExhausted(task)) continue;
       // next_run_at is freeform; skip unparseable values before they defect the poll.
       if (task.nextRunAt === null || Option.isSome(DateTime.make(task.nextRunAt))) {
         tasks.push(task);
@@ -565,7 +587,7 @@ export const layer = Layer.effect(
           ${task.title},
           ${task.prompt},
           ${task.enabled ? 1 : 0},
-          ${JSON.stringify(task.schedule)},
+          ${scheduleJson(task)},
           ${task.projectId},
           ${task.threadId},
           ${JSON.stringify(task.workspaceStrategy)},
@@ -661,11 +683,13 @@ export const layer = Layer.effect(
       readonly status: "succeeded" | "failed";
       readonly error: string | null;
       readonly startedAtIso: string;
+      readonly exhausted: boolean;
     }) =>
       sql`
         UPDATE scheduled_tasks
         SET updated_at = ${input.completedAtIso},
             next_run_at = ${input.nextRunAtIso},
+            enabled = CASE WHEN ${input.exhausted ? 1 : 0} = 1 THEN 0 ELSE enabled END,
             last_run_status = ${input.status},
             last_run_error = ${input.error},
             run_count = run_count + 1
@@ -810,7 +834,7 @@ export const layer = Layer.effect(
 
         // Capture defects and interrupts too so dispatch failures still reach markCompleted.
         const result =
-          active.threadId === null
+          active.threadId === null || active.beforeRun === "new_thread"
             ? yield* Effect.exit(
                 threadLaunch
                   .launch({
@@ -835,20 +859,36 @@ export const layer = Layer.effect(
             : yield* Effect.exit(
                 // The stored selection only seeds fresh threads. A bound run
                 // follows the thread's current provider, so it passes none.
-                threadManagement
-                  .sendToThread({
-                    projectId: active.projectId,
-                    commandId,
-                    threadId: ThreadId.make(active.threadId),
-                    messageId,
-                    scheduledTaskId: active.id,
-                    text: prompt,
-                    attachments: [],
-                    mode: "queue",
-                    createdBy: active.createdBy,
-                    creationSource: active.creationSource,
-                  })
-                  .pipe(Effect.as(ThreadId.make(active.threadId))),
+                (active.beforeRun === "compact"
+                  ? threadManagement.sendToThread({
+                      projectId: active.projectId,
+                      commandId: CommandId.make(`${commandId}:compact`),
+                      threadId: ThreadId.make(active.threadId),
+                      messageId: MessageId.make(`${messageId}:compact`),
+                      text: IDLE_COMPACTION_TEXT,
+                      attachments: [],
+                      mode: "queue",
+                      createdBy: active.createdBy,
+                      creationSource: active.creationSource,
+                    })
+                  : Effect.void
+                ).pipe(
+                  Effect.andThen(
+                    threadManagement.sendToThread({
+                      projectId: active.projectId,
+                      commandId,
+                      threadId: ThreadId.make(active.threadId),
+                      messageId,
+                      scheduledTaskId: active.id,
+                      text: prompt,
+                      attachments: [],
+                      mode: "queue",
+                      createdBy: active.createdBy,
+                      creationSource: active.creationSource,
+                    }),
+                  ),
+                  Effect.as(ThreadId.make(active.threadId)),
+                ),
               );
 
         const runSucceeded = result._tag === "Success";
@@ -857,16 +897,30 @@ export const layer = Layer.effect(
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
         const lastRunError = runSucceeded ? null : errorMessage(result.cause);
         const threadId = runSucceeded ? result.value : null;
+        // A fresh thread becomes the bound one, so the next run and the thread's owner follow it.
+        if (threadId !== null && active.threadId !== null && threadId !== active.threadId) {
+          yield* sql`UPDATE scheduled_tasks SET thread_id = ${threadId}
+            WHERE task_id = ${active.id} AND thread_id = ${active.threadId}`.pipe(
+            Effect.mapError((cause) =>
+              taskError("Could not bind the schedule task's new thread.", {
+                taskId: active.id,
+                cause,
+              }),
+            ),
+          );
+        }
         const current = yield* findTask(task.id);
         const scheduleSource = current ?? task;
+        const counted = { ...scheduleSource, runCount: scheduleSource.runCount + 1 };
+        const exhausted = runsExhausted(counted);
         const completed: ScheduledTask = {
-          ...scheduleSource,
+          ...counted,
+          enabled: counted.enabled && !exhausted,
           updatedAt: iso(completedAt),
           lastRunAt: startedAtIso,
-          nextRunAt: nextRunAt(scheduleSource, completedAt),
+          nextRunAt: nextRunAt(counted, completedAt),
           lastRunStatus,
           lastRunError,
-          runCount: scheduleSource.runCount + 1,
         };
         if (current !== null) {
           // startedAtIso in the guard ensures this writes only to the row this
@@ -879,6 +933,7 @@ export const layer = Layer.effect(
             status: lastRunStatus,
             error: lastRunError,
             startedAtIso,
+            exhausted,
           });
           if (webhook === undefined) yield* completion;
           else
@@ -1132,10 +1187,17 @@ export const layer = Layer.effect(
         (yield* managedFolders.isScratchProject(input.projectId))
           ? { type: "root" }
           : input.workspaceStrategy;
+      const maxRuns =
+        input.maxRuns === undefined ? existingTask?.maxRuns : (input.maxRuns ?? undefined);
+      const beforeRun =
+        input.beforeRun === undefined ? existingTask?.beforeRun : (input.beforeRun ?? undefined);
+      const runCount = existingTask?.runCount ?? 0;
+      // A task that ran out of runs has no next run; raising its limit must schedule one.
       const scheduleUnchanged =
         existingTask !== null &&
         existingTask.enabled === input.enabled &&
-        isSameSchedule(existingTask.schedule, schedule);
+        isSameSchedule(existingTask.schedule, schedule) &&
+        !(existingTask.nextRunAt === null && runsExhausted(existingTask));
       const task: ScheduledTask = {
         id,
         title: input.title,
@@ -1154,11 +1216,13 @@ export const layer = Layer.effect(
         updatedAt: iso(now),
         nextRunAt: scheduleUnchanged
           ? existingTask.nextRunAt
-          : nextRunAt({ enabled: input.enabled, schedule }, now),
+          : nextRunAt({ enabled: input.enabled, schedule, runCount, maxRuns }, now),
         lastRunAt: existingTask?.lastRunAt ?? null,
         lastRunStatus: existingTask?.lastRunStatus ?? "never",
         lastRunError: existingTask?.lastRunError ?? null,
-        runCount: existingTask?.runCount ?? 0,
+        runCount,
+        ...(maxRuns === undefined ? {} : { maxRuns }),
+        ...(beforeRun === undefined ? {} : { beforeRun }),
       };
       yield* saveTask(task, input.requireExisting === true, webhook);
       yield* notifyChanged;
@@ -1171,7 +1235,7 @@ export const layer = Layer.effect(
       const existing = yield* loadTask(input.id);
       if (existing.enabled === input.enabled) return { task: existing };
       const now = yield* localNow;
-      const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
+      const next = nextRunAt({ ...existing, enabled: input.enabled }, now);
       // RETURNING so a task deleted between the load and this UPDATE is a
       // visible not-found error, not a false success.
       const updated = yield* sql<{ task_id: string }>`

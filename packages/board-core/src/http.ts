@@ -2,12 +2,14 @@ import {
   EnvironmentAuthenticatedAuth,
   EnvironmentId,
   EnvironmentScopeRequiredError,
+  MIN_SCHEDULED_TASK_INTERVAL_MS,
   ModelSelection,
   NonNegativeInt,
   PositiveInt,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
+  ScheduledTaskId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
@@ -38,6 +40,9 @@ export const BoardNodeSchema = Schema.Struct({
       threadId: ThreadId,
       startedAt: Schema.optionalKey(Schema.String),
     }),
+  ),
+  schedule: Schema.optionalKey(
+    Schema.Struct({ environmentId: EnvironmentId, taskId: ScheduledTaskId }),
   ),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   size: Schema.optionalKey(Schema.Number),
@@ -326,6 +331,34 @@ export const BoardUpdateNodeInput = Schema.Struct({
   x: Schema.optionalKey(Schema.Number),
   y: Schema.optionalKey(Schema.Number),
 });
+/** When an agent's schedule fires: every `everyMs`, or at a time of day on the machine's clock. */
+export const BoardNodeScheduleTiming = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("interval"),
+    everyMs: Schema.Int.check(Schema.isGreaterThanOrEqualTo(MIN_SCHEDULED_TASK_INTERVAL_MS)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("fixed_time"),
+    timeOfDay: Schema.String.check(Schema.isPattern(/^([01]?\d|2[0-3]):([0-5]\d)$/)),
+    /** 0 is Sunday; unset means every day. */
+    weekdays: Schema.optionalKey(
+      Schema.Array(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 6 }))),
+    ),
+  }),
+]);
+export type BoardNodeScheduleTiming = typeof BoardNodeScheduleTiming.Type;
+/** What happens to the agent's chat before each firing sends the prompt into it. */
+export const BoardNodeScheduleBeforeRun = Schema.Literals(["compact", "new_thread", "none"]);
+export type BoardNodeScheduleBeforeRun = typeof BoardNodeScheduleBeforeRun.Type;
+/** `runs` more firings from now; each sends `prompt` into the agent's chat. */
+export const BoardSaveNodeScheduleInput = Schema.Struct({
+  prompt: TrimmedNonEmptyString,
+  timing: BoardNodeScheduleTiming,
+  runs: PositiveInt,
+  beforeRun: BoardNodeScheduleBeforeRun,
+});
+export type BoardSaveNodeScheduleInput = typeof BoardSaveNodeScheduleInput.Type;
+export const BoardSetNodeScheduleEnabledInput = Schema.Struct({ enabled: Schema.Boolean });
 export const BoardPairPeerInput = Schema.Struct({
   name: TrimmedNonEmptyString,
   pairingUrlOrCode: TrimmedNonEmptyString,
@@ -499,6 +532,48 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
       success: BoardNodeSchema,
       error: Errors,
     }),
+  )
+  .add(
+    HttpApiEndpoint.post("saveNodeSchedule", "/workflows/:workflowId/nodes/:nodeId/schedule", {
+      headers: OptionalAuthHeaders,
+      params: NodeParams,
+      payload: BoardSaveNodeScheduleInput,
+      success: BoardNodeSchema,
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post(
+      "setNodeScheduleEnabled",
+      "/workflows/:workflowId/nodes/:nodeId/schedule/enabled",
+      {
+        headers: OptionalAuthHeaders,
+        params: NodeParams,
+        payload: BoardSetNodeScheduleEnabledInput,
+        success: HttpApiSchema.NoContent,
+        error: Errors,
+      },
+    ),
+  )
+  .add(
+    HttpApiEndpoint.post("syncNodeSchedule", "/workflows/:workflowId/nodes/:nodeId/schedule/sync", {
+      headers: OptionalAuthHeaders,
+      params: NodeParams,
+      success: HttpApiSchema.NoContent,
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post(
+      "deleteNodeSchedule",
+      "/workflows/:workflowId/nodes/:nodeId/schedule/delete",
+      {
+        headers: OptionalAuthHeaders,
+        params: NodeParams,
+        success: HttpApiSchema.NoContent,
+        error: Errors,
+      },
+    ),
   )
   .add(
     HttpApiEndpoint.post("deleteNode", "/workflows/:workflowId/nodes/:nodeId/delete", {

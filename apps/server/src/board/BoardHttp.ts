@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import type { SqlError } from "effect/sql/SqlError";
+import * as AgentSchedules from "./AgentSchedules.ts";
 import * as BoardScheduler from "./BoardScheduler.ts";
 import * as BoardPeers from "./BoardPeers.ts";
 import * as BoardService from "./BoardService.ts";
@@ -83,6 +84,18 @@ const handlers = HttpApiBuilder.group(
       .handle("newNodeChat", ({ params, payload }) =>
         operate(board.newNodeChat(params.workflowId, params.nodeId, payload)),
       )
+      .handle("saveNodeSchedule", ({ params, payload }) =>
+        operate(board.saveNodeSchedule(params.workflowId, params.nodeId, payload)),
+      )
+      .handle("setNodeScheduleEnabled", ({ params, payload }) =>
+        operate(board.setNodeScheduleEnabled(params.workflowId, params.nodeId, payload.enabled)),
+      )
+      .handle("syncNodeSchedule", ({ params }) =>
+        operate(board.syncNodeSchedule(params.workflowId, params.nodeId)),
+      )
+      .handle("deleteNodeSchedule", ({ params }) =>
+        operate(board.deleteNodeSchedule(params.workflowId, params.nodeId)),
+      )
       .handle("deleteNode", ({ params }) =>
         operate(board.deleteNode(params.workflowId, params.nodeId)),
       )
@@ -137,7 +150,11 @@ const handlers = HttpApiBuilder.group(
   }),
 );
 
-const services = Layer.mergeAll(BoardService.layer, BoardScheduler.layer, BoardPeers.layer).pipe(
+const services = Layer.mergeAll(
+  BoardService.layer.pipe(Layer.provide(AgentSchedules.layer)),
+  BoardScheduler.layer,
+  BoardPeers.layer,
+).pipe(
   Layer.provideMerge(TaskEngine.layer),
   Layer.provideMerge(DriverRegistry.layer),
   Layer.provideMerge(BoardStore.layer),

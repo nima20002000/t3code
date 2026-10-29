@@ -412,6 +412,32 @@ export function make(store: PeerStore): NodeDriver {
         }),
       ).pipe(Effect.mapError((cause) => error("readLatestAssistant", cause)));
     }),
+    getScheduledTask: Effect.fn("RemoteDriver.getScheduledTask")(function* (input) {
+      const { tasks } = yield* useClient(store, input, (client) =>
+        client[WS_METHODS.scheduledTasksList]({}),
+      ).pipe(Effect.mapError((cause) => error("schedule", cause)));
+      return tasks.find((task) => task.id === input.taskId) ?? null;
+    }),
+    upsertScheduledTask: Effect.fn("RemoteDriver.upsertScheduledTask")(function* (input) {
+      const { task } = yield* useClient(store, input, (client) =>
+        client[WS_METHODS.scheduledTasksUpsert]({
+          ...input.task,
+          createdBy: "system",
+          creationSource: "server",
+        }),
+      ).pipe(Effect.mapError((cause) => error("schedule", cause)));
+      return task;
+    }),
+    setScheduledTaskEnabled: Effect.fn("RemoteDriver.setScheduledTaskEnabled")(function* (input) {
+      yield* useClient(store, input, (client) =>
+        client[WS_METHODS.scheduledTasksSetEnabled]({ id: input.taskId, enabled: input.enabled }),
+      ).pipe(Effect.mapError((cause) => error("schedule", cause)));
+    }),
+    deleteScheduledTask: Effect.fn("RemoteDriver.deleteScheduledTask")(function* (input) {
+      yield* useClient(store, input, (client) =>
+        client[WS_METHODS.scheduledTasksDelete]({ id: input.taskId }),
+      ).pipe(Effect.mapError((cause) => error("schedule", cause)));
+    }),
     interrupt: Effect.fn("RemoteDriver.interrupt")(function* (input) {
       yield* useClient(store, input.thread, (client) =>
         Effect.gen(function* () {

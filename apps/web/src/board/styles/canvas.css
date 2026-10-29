@@ -383,6 +383,33 @@
   }
 }
 
+/* The schedule clock widens into a pill with runs left once the agent has a schedule. */
+@utility n-agent-schedule {
+  display: inline-flex;
+  height: 30px;
+  max-width: 160px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--agent-hue) 45%, var(--border));
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--agent-hue) 8%, transparent);
+  color: var(--agent-hue);
+  font: var(--type-caption);
+  white-space: nowrap;
+  cursor: pointer;
+  & span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  &[data-state="paused"],
+  &[data-state="done"] {
+    border-color: var(--border);
+    background: transparent;
+    color: var(--text-muted);
+  }
+}
+
 /* Resize grip: a band on the rim, under the connection port. */
 @utility n-agent-resize {
   position: absolute;
