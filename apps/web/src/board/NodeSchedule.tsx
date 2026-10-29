@@ -9,6 +9,7 @@ import {
   syncNodeSchedule,
   type BoardNode,
 } from "./boardStore";
+import { useNodeConnections } from "./useNodeConnection";
 import {
   formOf,
   scheduleInput,
@@ -46,8 +47,11 @@ export function NodeScheduleButton({ node }: { readonly node: BoardNode }) {
     if (firedThread !== null && chatThread !== null && firedThread !== chatThread)
       syncNodeSchedule(node.id);
   }, [firedThread, chatThread, node.id]);
+  const connected = useNodeConnections()(marker?.environmentId ?? "") === "connected";
+  // The hub reaches paired machines the browser may not be connected to; their tasks are unseen.
+  const unseen = marker !== undefined && task === null && (!connected || query.data === null);
   const summary = task ? scheduleSummary(task) : null;
-  const label = summary ? scheduleLabel(summary) : null;
+  const label = summary ? scheduleLabel(summary) : unseen ? "Scheduled" : null;
   return (
     <span className="contents" onClick={(event) => event.stopPropagation()}>
       <Popover>
@@ -65,10 +69,47 @@ export function NodeScheduleButton({ node }: { readonly node: BoardNode }) {
           {label ? <span>{label}</span> : null}
         </PopoverTrigger>
         <PopoverPopup width="lg" align="center">
-          <ScheduleEditor node={node} task={task} />
+          {unseen ? (
+            <UnseenSchedule node={node} loading={connected} />
+          ) : (
+            <ScheduleEditor key={task?.id ?? "new"} node={node} task={task} />
+          )}
         </PopoverPopup>
       </Popover>
     </span>
+  );
+}
+
+function UnseenSchedule(props: { readonly node: BoardNode; readonly loading: boolean }) {
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="grid gap-2 text-sm">
+      <div className="font-medium">{props.node.name} schedule</div>
+      <p className="text-xs text-muted-foreground">
+        {props.loading
+          ? "Loading the schedule from the agent's machine…"
+          : "Connect this machine in Settings → Connections to see and edit its schedule."}
+      </p>
+      <div>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() =>
+            void deleteNodeSchedule(props.node.id).catch((cause: unknown) =>
+              setError(cause instanceof Error ? cause.message : String(cause)),
+            )
+          }
+        >
+          <Trash2Icon />
+          Delete schedule
+        </Button>
+      </div>
+      {error ? (
+        <p role="alert" className="text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </div>
   );
 }
 

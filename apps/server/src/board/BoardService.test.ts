@@ -59,6 +59,11 @@ const makeMachines = Effect.gen(function* () {
   const offline = yield* Ref.make(new Set<EnvironmentId>());
   // A published t3 without run limits drops maxRuns.
   const stock = yield* Ref.make(new Set<EnvironmentId>());
+  // Run once around the next task write, to stage what happens meanwhile.
+  const beforeUpsert = yield* Ref.make<Effect.Effect<void, unknown>>(Effect.void);
+  const afterUpsert = yield* Ref.make<Effect.Effect<void, unknown>>(Effect.void);
+  const once = (hook: Ref.Ref<Effect.Effect<void, unknown>>) =>
+    Ref.getAndSet(hook, Effect.void).pipe(Effect.flatten, Effect.orDie);
   const key = (input: { environmentId: EnvironmentId; taskId: string }) =>
     `${input.environmentId}\0${input.taskId}`;
   const reach = (environmentId: EnvironmentId) =>
@@ -85,6 +90,7 @@ const makeMachines = Effect.gen(function* () {
       ),
     upsertScheduledTask: ({ environmentId, task: input }) =>
       Effect.gen(function* () {
+        yield* once(beforeUpsert);
         yield* reach(environmentId);
         const limited = !(yield* Ref.get(stock)).has(environmentId);
         const k = key({ environmentId, taskId: input.id });
@@ -124,7 +130,8 @@ const makeMachines = Effect.gen(function* () {
           ...(beforeRun === undefined ? {} : { beforeRun }),
         };
         yield* Ref.update(tasks, (all) => new Map(all).set(k, task));
-        return task;
+        yield* once(afterUpsert);
+        return (yield* Ref.get(tasks)).get(k) ?? task;
       }),
     setScheduledTaskEnabled: (input) =>
       reach(input.environmentId).pipe(
@@ -183,7 +190,7 @@ const makeMachines = Effect.gen(function* () {
           ]),
         ),
     );
-  return { schedules, offline, stock, fire, on, rebind };
+  return { schedules, offline, stock, fire, on, rebind, beforeUpsert, afterUpsert };
 });
 
 const makeLayer = Effect.gen(function* () {
@@ -597,4 +604,80 @@ it.effect(
         assert.strictEqual((yield* machines.on(environmentId))[0]?.threadId, "fired-thread");
       }).pipe(Effect.provide(layer));
     }),
+);
+
+it.effect(
+  "schedule saves stay consistent with concurrent deletes, firings and failed cleanups",
+  () =>
+    Effect.gen(function* () {
+      const { layer, machines } = yield* makeLayer;
+      yield* Effect.gen(function* () {
+        const board = yield* BoardService.BoardService;
+        yield* board.createWorkspace({ id: "ws", name: "Workspace" });
+        yield* board.createWorkflow({ id: "w", name: "W", workspaceId: "ws" });
+        for (const id of ["a", "b", "c"]) yield* board.createNode("w", nodeInput(id));
+
+        // A delete that lands while the task is being written must not leave the task behind.
+        yield* Ref.set(machines.beforeUpsert, board.deleteNode("w", "a"));
+        const gone = yield* board.saveNodeSchedule("w", "a", scheduleInput).pipe(Effect.flip);
+        assert.strictEqual(gone._tag, "BoardNotFoundError");
+        assert.deepStrictEqual(yield* machines.on(environmentId), []);
+
+        // A firing between the read and the write does not eat into the granted runs.
+        yield* board.saveNodeSchedule("w", "b", scheduleInput);
+        yield* Ref.set(machines.afterUpsert, machines.fire(environmentId, 1));
+        yield* board.saveNodeSchedule("w", "b", { ...scheduleInput, runs: 2 });
+        assert.deepInclude((yield* machines.on(environmentId))[0], { runCount: 1, maxRuns: 3 });
+
+        // A move that is then rejected keeps the schedule.
+        const rejected = yield* board
+          .updateNode("w", "b", { environmentId: otherEnvironmentId, name: "c" })
+          .pipe(Effect.flip);
+        assert.instanceOf(rejected, BoardConflictError);
+        assert.lengthOf(yield* machines.on(environmentId), 1);
+        assert.isDefined((yield* board.getWorkflow("w")).nodes.find((n) => n.id === "b")?.schedule);
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+it.effect("an unlimited task that cannot be removed stays marked for a later delete", () =>
+  Effect.gen(function* () {
+    const { layer, machines } = yield* makeLayer;
+    yield* Effect.gen(function* () {
+      const board = yield* BoardService.BoardService;
+      yield* board.createWorkspace({ id: "ws", name: "Workspace" });
+      yield* board.createWorkflow({ id: "w", name: "W", workspaceId: "ws" });
+      yield* board.createNode("w", nodeInput("a", { environmentId: otherEnvironmentId }));
+      yield* Ref.set(machines.stock, new Set([otherEnvironmentId]));
+      yield* Ref.set(
+        machines.afterUpsert,
+        Ref.set(machines.offline, new Set([otherEnvironmentId])),
+      );
+      yield* board.saveNodeSchedule("w", "a", scheduleInput).pipe(Effect.flip);
+      assert.isDefined((yield* board.getWorkflow("w")).nodes[0]?.schedule);
+      yield* Ref.set(machines.offline, new Set());
+      yield* board.deleteNode("w", "a");
+      assert.deepStrictEqual(yield* machines.on(otherEnvironmentId), []);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("a /new that could not reach the machine is caught up on the next sync", () =>
+  Effect.gen(function* () {
+    const { layer, machines } = yield* makeLayer;
+    yield* Effect.gen(function* () {
+      const board = yield* BoardService.BoardService;
+      yield* board.createWorkspace({ id: "ws", name: "Workspace" });
+      yield* board.createWorkflow({ id: "w", name: "W", workspaceId: "ws" });
+      yield* board.createNode("w", nodeInput("a"));
+      yield* board.saveNodeSchedule("w", "a", scheduleInput);
+      yield* Ref.set(machines.offline, new Set([environmentId]));
+      yield* board.newNodeChat("w", "a", {}).pipe(Effect.flip);
+      yield* Ref.set(machines.offline, new Set());
+      const chat = (yield* board.getWorkflow("w")).nodes[0]?.chat;
+      assert.notStrictEqual((yield* machines.on(environmentId))[0]?.threadId, chat?.threadId);
+      yield* board.syncNodeSchedule("w", "a");
+      assert.strictEqual((yield* machines.on(environmentId))[0]?.threadId, chat?.threadId);
+    }).pipe(Effect.provide(layer));
+  }),
 );

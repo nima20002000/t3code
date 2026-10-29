@@ -32,6 +32,8 @@ export interface BoardNode {
   readonly schedule?: {
     readonly environmentId: EnvironmentId;
     readonly taskId: ScheduledTaskId;
+    /** The thread the board last bound the task to; another one means the machine moved it. */
+    readonly threadId: ThreadId;
   };
   /** Overrides the workflow's runtime mode for this agent's threads. */
   readonly runtimeMode?: RuntimeMode;

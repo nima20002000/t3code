@@ -386,33 +386,41 @@ const make = Effect.gen(function* () {
     input: BoardUpdateNodeInput,
   ) {
     if (input.environmentId !== undefined) yield* checkMachine(input.environmentId);
-    const before = (yield* getWorkflow(id)).nodes.find((node) => node.id === nodeId);
     const moves = (node: BoardNode) =>
       input.environmentId !== undefined && input.environmentId !== node.environmentId;
-    // The schedule fires into the chat on the old machine, so it goes with the move.
-    if (before && moves(before)) yield* schedules.release([before]);
+    const plan = Effect.fn("BoardService.planNodeUpdate")(function* (workflow: Workflow) {
+      yield* checkEditable(workflow);
+      const current = workflow.nodes.find((node) => node.id === nodeId);
+      if (!current) return yield* new BoardNotFoundError({ message: "Node not found." });
+      const { schedule: _released, ...unscheduled } = current;
+      const node: BoardNode = { ...(moves(current) ? unscheduled : current), ...input };
+      if (
+        node.name !== current.name &&
+        workflow.nodes.some(
+          (entry) =>
+            entry.id !== nodeId &&
+            entry.name.trim().toLowerCase() === node.name.trim().toLowerCase(),
+        )
+      )
+        return yield* new BoardConflictError({ message: "Node id or name already exists." });
+      const next = {
+        ...workflow,
+        nodes: workflow.nodes.map((entry) => (entry.id === nodeId ? node : entry)),
+      };
+      const [problem] = validateGraph(next);
+      if (problem)
+        return yield* new BoardInvalidRequestError({ message: describeProblem(problem) });
+      return { current, node, next };
+    });
+    // The schedule fires into the chat on the old machine, so it goes with a move that will pass.
+    const planned = yield* plan(yield* getWorkflow(id));
+    if (moves(planned.current)) yield* schedules.release([planned.current]);
     return yield* store.transaction(
       Effect.gen(function* () {
         const workflow = yield* getWorkflow(id);
-        yield* checkEditable(workflow);
-        const current = workflow.nodes.find((node) => node.id === nodeId);
-        if (!current) return yield* new BoardNotFoundError({ message: "Node not found." });
-        const { schedule: _released, ...unscheduled } = current;
-        const node: BoardNode = { ...(moves(current) ? unscheduled : current), ...input };
-        if (
-          node.name !== current.name &&
-          workflow.nodes.some(
-            (entry) =>
-              entry.id !== nodeId &&
-              entry.name.trim().toLowerCase() === node.name.trim().toLowerCase(),
-          )
-        )
-          return yield* new BoardConflictError({ message: "Node id or name already exists." });
+        const { node, next } = yield* plan(workflow);
         yield* ensureFolder(workflow.workspaceId, node.environmentId);
-        yield* save({
-          ...workflow,
-          nodes: workflow.nodes.map((entry) => (entry.id === nodeId ? node : entry)),
-        });
+        yield* save(next);
         return node;
       }),
     );

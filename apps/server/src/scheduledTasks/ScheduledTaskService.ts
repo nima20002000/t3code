@@ -683,13 +683,13 @@ export const layer = Layer.effect(
       readonly status: "succeeded" | "failed";
       readonly error: string | null;
       readonly startedAtIso: string;
-      readonly exhausted: boolean;
     }) =>
+      // The limit is read from the row, so a save that raised it during this run keeps it going.
       sql`
         UPDATE scheduled_tasks
         SET updated_at = ${input.completedAtIso},
-            next_run_at = ${input.nextRunAtIso},
-            enabled = CASE WHEN ${input.exhausted ? 1 : 0} = 1 THEN 0 ELSE enabled END,
+            next_run_at = CASE WHEN json_extract(schedule_json, '$.maxRuns') IS NOT NULL AND run_count + 1 >= json_extract(schedule_json, '$.maxRuns') THEN NULL ELSE ${input.nextRunAtIso} END,
+            enabled = CASE WHEN json_extract(schedule_json, '$.maxRuns') IS NOT NULL AND run_count + 1 >= json_extract(schedule_json, '$.maxRuns') THEN 0 ELSE enabled END,
             last_run_status = ${input.status},
             last_run_error = ${input.error},
             run_count = run_count + 1
@@ -922,6 +922,7 @@ export const layer = Layer.effect(
           lastRunStatus,
           lastRunError,
         };
+        const nextUnlimited = nextRunAt({ ...counted, maxRuns: undefined }, completedAt);
         if (current !== null) {
           // startedAtIso in the guard ensures this writes only to the row this
           // run marked as running — a task deleted mid-run and recreated with
@@ -929,11 +930,10 @@ export const layer = Layer.effect(
           const completion = markCompleted({
             id: task.id,
             completedAtIso: completed.updatedAt,
-            nextRunAtIso: completed.nextRunAt,
+            nextRunAtIso: nextUnlimited,
             status: lastRunStatus,
             error: lastRunError,
             startedAtIso,
-            exhausted,
           });
           if (webhook === undefined) yield* completion;
           else

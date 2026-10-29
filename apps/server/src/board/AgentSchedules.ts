@@ -59,7 +59,10 @@ export class AgentSchedules extends Context.Service<
       nodeId: string,
       settings: BoardNewNodeChatInput,
     ) => Effect.Effect<void, ScheduleError>;
-    /** Moves the node's chat to the thread a "new chat" firing started on the machine. */
+    /**
+     * Moves the node's chat to the thread a "new chat" firing started on the machine, or the task
+     * to the node's chat when an earlier move did not reach the machine.
+     */
     readonly sync: (workflowId: string, nodeId: string) => Effect.Effect<void, ScheduleError>;
     /** Deletes the nodes' tasks before the nodes go; fails while a paired machine is unreachable. */
     readonly release: (nodes: ReadonlyArray<BoardNode>) => Effect.Effect<void, BoardInternalError>;
@@ -97,12 +100,6 @@ function upsertOf(
     interactionMode: task.interactionMode,
   };
 }
-
-/** A "new chat" firing rebinds the task on the machine; it is newer than the chat the board has. */
-const movedByMachine = (task: ScheduledTask, chat: Chat) =>
-  task.threadId !== null &&
-  task.threadId !== chat.threadId &&
-  (chat.startedAt === undefined || task.updatedAt > chat.startedAt);
 
 const make = Effect.gen(function* () {
   const store = yield* BoardStore.BoardStore;
@@ -152,28 +149,33 @@ const make = Effect.gen(function* () {
     patchNode(workflowId, nodeId, ({ schedule: _old, ...rest }) =>
       marker ? { ...rest, schedule: marker } : rest,
     );
-  /** The node's chat follows a thread the machine moved the schedule to, when it is newer. */
+  /**
+   * A "new chat" firing rebound the task on its machine away from the thread the board last
+   * bound: the node's chat follows it.
+   */
   const adopt = Effect.fn("AgentSchedules.adopt")(function* (
     workflowId: string,
     nodeId: string,
     marker: Marker,
     task: ScheduledTask,
   ) {
+    const threadId = task.threadId;
+    if (threadId === null || threadId === marker.threadId) return undefined;
     const startedAt = DateTime.formatIso(yield* DateTime.now);
     const node = yield* patchNode(workflowId, nodeId, (current) =>
-      current.chat?.environmentId === marker.environmentId &&
-      task.threadId !== null &&
-      movedByMachine(task, current.chat)
-        ? {
+      current.schedule?.taskId !== marker.taskId ||
+      current.schedule.environmentId !== marker.environmentId
+        ? current
+        : {
             ...current,
             chat: {
               environmentId: marker.environmentId,
               projectId: task.projectId,
-              threadId: task.threadId,
+              threadId,
               startedAt,
             },
-          }
-        : current,
+            schedule: { ...current.schedule, threadId },
+          },
     );
     return node.chat;
   });
@@ -183,8 +185,34 @@ const make = Effect.gen(function* () {
       .deleteScheduledTask(marker)
       .pipe(Effect.mapError(unreachable("remove the schedule")));
   });
-  const readTask = (driver: NodeDriver, marker: Marker, action: string) =>
-    driver.getScheduledTask(marker).pipe(Effect.mapError(unreachable(action)));
+  const readTask = (
+    driver: NodeDriver,
+    marker: Pick<Marker, "environmentId" | "taskId">,
+    action: string,
+  ) => driver.getScheduledTask(marker).pipe(Effect.mapError(unreachable(action)));
+  /** Binds the task to the node's chat, keeping its other settings. */
+  const bindToChat = Effect.fn("AgentSchedules.bindToChat")(function* (
+    workflowId: string,
+    nodeId: string,
+    driver: NodeDriver,
+    marker: Marker,
+    task: ScheduledTask,
+    chat: Chat,
+    settings: BoardNewNodeChatInput,
+  ) {
+    const input = upsertOf(task);
+    if (!input)
+      return yield* new BoardInternalError({
+        message: "The agent's schedule was changed to a webhook in t3.",
+      });
+    yield* driver
+      .upsertScheduledTask({
+        environmentId: marker.environmentId,
+        task: { ...input, projectId: chat.projectId, threadId: chat.threadId, ...settings },
+      })
+      .pipe(Effect.mapError(unreachable("move the schedule to the new chat")));
+    yield* setMarker(workflowId, nodeId, { ...marker, threadId: chat.threadId });
+  });
 
   const save = Effect.fn("AgentSchedules.save")(function* (
     workflowId: string,
@@ -196,53 +224,72 @@ const make = Effect.gen(function* () {
     if (!opened) return yield* new BoardInternalError({ message: "The agent has no chat." });
     if (node.schedule && node.schedule.environmentId !== opened.environmentId)
       yield* deleteTask(node.schedule);
-    const marker = { environmentId: opened.environmentId, taskId: taskIdFor(workflowId, nodeId) };
-    const driver = yield* driverFor(marker.environmentId, "save the schedule");
+    const target = { environmentId: opened.environmentId, taskId: taskIdFor(workflowId, nodeId) };
+    const driver = yield* driverFor(target.environmentId, "save the schedule");
     // Read before marking, so an unreachable machine leaves nothing behind.
-    const existing = yield* readTask(driver, marker, "save the schedule");
-    const chat = (existing && (yield* adopt(workflowId, nodeId, marker, existing))) || opened;
+    const existing = yield* readTask(driver, target, "save the schedule");
+    const kept = node.schedule?.environmentId === target.environmentId ? node.schedule : undefined;
+    const chat = (existing && kept && (yield* adopt(workflowId, nodeId, kept, existing))) || opened;
+    const marker = { ...target, threadId: chat.threadId };
     // The marker goes before the write, so a save whose outcome is unknown can be cleaned up.
     yield* setMarker(workflowId, nodeId, marker);
-    const maxRuns = (existing?.runCount ?? 0) + input.runs;
-    const task = yield* driver
-      .upsertScheduledTask({
-        environmentId: marker.environmentId,
-        task: {
-          id: marker.taskId,
-          title: `${node.name} · ${workflow.name}`,
-          prompt: input.prompt,
-          enabled: true,
-          schedule: input.timing,
-          maxRuns,
-          beforeRun: input.beforeRun === "none" ? null : input.beforeRun,
-          projectId: chat.projectId,
-          threadId: chat.threadId,
-          workspaceStrategy: { type: "root" },
-          modelSelection: existing?.modelSelection ?? node.modelSelection,
-          runtimeMode: existing?.runtimeMode ?? node.runtimeMode ?? workflow.settings.runtimeMode,
-          interactionMode: existing?.interactionMode ?? "default",
-        },
-      })
-      .pipe(
-        Effect.mapError(unreachable("save the schedule")),
-        Effect.tapError(() =>
-          existing
-            ? Effect.void
-            : driver
-                .deleteScheduledTask(marker)
-                .pipe(Effect.andThen(setMarker(workflowId, nodeId, undefined)), Effect.ignore),
-        ),
-      );
+    const write = (runCount: number) =>
+      driver
+        .upsertScheduledTask({
+          environmentId: marker.environmentId,
+          task: {
+            id: marker.taskId,
+            title: `${node.name} · ${workflow.name}`,
+            prompt: input.prompt,
+            enabled: true,
+            schedule: input.timing,
+            maxRuns: runCount + input.runs,
+            beforeRun: input.beforeRun === "none" ? null : input.beforeRun,
+            projectId: chat.projectId,
+            threadId: chat.threadId,
+            workspaceStrategy: { type: "root" },
+            modelSelection: existing?.modelSelection ?? node.modelSelection,
+            runtimeMode: existing?.runtimeMode ?? node.runtimeMode ?? workflow.settings.runtimeMode,
+            interactionMode: existing?.interactionMode ?? "default",
+          },
+        })
+        .pipe(Effect.mapError(unreachable("save the schedule")));
+    const first = yield* write(existing?.runCount ?? 0).pipe(
+      Effect.tapError(() =>
+        existing
+          ? Effect.void
+          : driver
+              .deleteScheduledTask(marker)
+              .pipe(Effect.andThen(setMarker(workflowId, nodeId, undefined)), Effect.ignore),
+      ),
+    );
+    // A firing between the read and the write would eat into the runs just granted.
+    const task =
+      first.maxRuns !== undefined && first.runCount !== (existing?.runCount ?? 0)
+        ? yield* write(first.runCount)
+        : first;
     // A t3 without run limits ignores maxRuns, so the task would never stop.
-    if (task.maxRuns !== maxRuns) {
-      yield* driver.deleteScheduledTask(marker).pipe(Effect.ignore);
-      yield* setMarker(workflowId, nodeId, undefined);
+    if (task.maxRuns === undefined) {
+      // The marker stays while the delete fails, so a later delete can still remove the task.
+      yield* driver
+        .deleteScheduledTask(marker)
+        .pipe(Effect.andThen(setMarker(workflowId, nodeId, undefined)), Effect.ignore);
       return yield* new BoardInternalError({
         message:
           "The agent's machine runs a t3 that cannot stop a schedule after a number of runs. Update it to the board's t3 build.",
       });
     }
-    return (yield* findNode(workflowId, nodeId)).node;
+    // A delete that ran while this save was writing found no task; this save removes it.
+    const after = yield* store.getWorkflow(workflowId);
+    const now = after?.nodes.find((entry) => entry.id === nodeId);
+    if (
+      now?.schedule?.taskId !== marker.taskId ||
+      now.schedule.environmentId !== marker.environmentId
+    ) {
+      yield* driver.deleteScheduledTask(marker).pipe(Effect.ignore);
+      return yield* new BoardNotFoundError({ message: "The agent was removed while scheduling." });
+    }
+    return now;
   });
 
   const setEnabled = Effect.fn("AgentSchedules.setEnabled")(function* (
@@ -262,7 +309,8 @@ const make = Effect.gen(function* () {
     yield* setMarker(workflowId, nodeId, undefined);
   });
 
-  const retarget = Effect.fn("AgentSchedules.retarget")(function* (
+  /** Brings the node's chat and its task back in step, whichever side moved last. */
+  const reconcile = Effect.fn("AgentSchedules.reconcile")(function* (
     workflowId: string,
     nodeId: string,
     settings: BoardNewNodeChatInput,
@@ -276,37 +324,20 @@ const make = Effect.gen(function* () {
       yield* setMarker(workflowId, nodeId, undefined);
       return;
     }
-    const action = "move the schedule to the new chat";
-    const driver = yield* driverFor(marker.environmentId, action);
-    const existing = yield* readTask(driver, marker, action);
-    if (existing === null)
-      return yield* setMarker(workflowId, nodeId, undefined).pipe(Effect.asVoid);
-    const input = upsertOf(existing);
-    if (!input)
-      return yield* new BoardInternalError({
-        message: "The agent's schedule was changed to a webhook in t3.",
-      });
-    yield* driver
-      .upsertScheduledTask({
-        environmentId: marker.environmentId,
-        task: {
-          ...input,
-          projectId: chat.projectId,
-          threadId: chat.threadId,
-          ...settings,
-        },
-      })
-      .pipe(Effect.mapError(unreachable(action)));
-  });
-
-  const sync = Effect.fn("AgentSchedules.sync")(function* (workflowId: string, nodeId: string) {
-    const { node } = yield* findNode(workflowId, nodeId);
-    const marker = node.schedule;
-    if (!marker) return;
     const driver = yield* driverFor(marker.environmentId, "read the schedule");
     const task = yield* readTask(driver, marker, "read the schedule");
-    if (task) yield* adopt(workflowId, nodeId, marker, task);
+    if (task === null) return;
+    if (task.threadId !== marker.threadId) {
+      yield* adopt(workflowId, nodeId, marker, task);
+      return;
+    }
+    if (task.threadId !== chat.threadId)
+      yield* bindToChat(workflowId, nodeId, driver, marker, task, chat, settings);
   });
+
+  const retarget = (workflowId: string, nodeId: string, settings: BoardNewNodeChatInput) =>
+    reconcile(workflowId, nodeId, settings);
+  const sync = (workflowId: string, nodeId: string) => reconcile(workflowId, nodeId, {});
 
   const release = Effect.fn("AgentSchedules.release")(function* (nodes: ReadonlyArray<BoardNode>) {
     for (const node of nodes) {
