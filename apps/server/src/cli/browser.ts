@@ -1,5 +1,6 @@
 import { ServerBrowserMode } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -146,6 +147,15 @@ const headedSetup = Effect.gen(function* () {
           ),
         );
       const deb = path.join(directory, "google-chrome-stable_current_amd64.deb");
+      if ((yield* resolveCommandPath("curl")) === null) {
+        yield* runStep("install curl", "apt-get", [
+          "install",
+          "-y",
+          "--no-install-recommends",
+          "curl",
+          "ca-certificates",
+        ]);
+      }
       yield* runStep("download Google Chrome", "curl", ["-fsSL", "-o", deb, GOOGLE_CHROME_DEB]);
       // apt reads a local package as the unprivileged _apt user; let it in.
       yield* fs.chmod(directory, 0o755).pipe(Effect.ignore);
