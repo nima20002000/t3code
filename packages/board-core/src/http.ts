@@ -280,6 +280,11 @@ const PeerParams = Schema.Struct({ peerId: Id });
 const ScheduleParams = Schema.Struct({ scheduleId: Id });
 
 export const BoardCreateWorkspaceInput = Schema.Struct({ id: Id, name: TrimmedNonEmptyString });
+/** `removeFolders` also deletes the workspace's folder on every machine it has one on. */
+export const BoardDeleteWorkspaceInput = Schema.Struct({
+  removeFolders: Schema.optionalKey(Schema.Boolean),
+});
+export type BoardDeleteWorkspaceInput = typeof BoardDeleteWorkspaceInput.Type;
 export const BoardUpdateWorkspaceInput = Schema.Struct({ name: TrimmedNonEmptyString });
 /** Without `path` the folder is `~/t3-workspaces/<workspace name>` on that machine. */
 export const BoardAddFolderInput = Schema.Struct({
@@ -404,6 +409,7 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
     HttpApiEndpoint.post("deleteWorkspace", "/workspaces/:workspaceId/delete", {
       headers: OptionalAuthHeaders,
       params: WorkspaceParams,
+      payload: BoardDeleteWorkspaceInput,
       success: HttpApiSchema.NoContent,
       error: Errors,
     }),

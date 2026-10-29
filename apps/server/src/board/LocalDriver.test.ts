@@ -4,8 +4,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
-import * as NodeOS from "node:os";
 import * as Stream from "effect/Stream";
 import * as LocalDriver from "./LocalDriver.ts";
 import * as Option from "effect/Option";
@@ -155,32 +153,26 @@ it.effect("removes a workspace project with its threads and tolerates one alread
   }),
 );
 
-it.effect("deletes a board-created folder under ~/t3-workspaces, never one elsewhere", () =>
+it.effect("removes the project's folder only when asked", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const inside = path.join(NodeOS.homedir(), "t3-workspaces", `board-test-${process.pid}`);
-    const outside = yield* fileSystem.makeTempDirectory({ prefix: "board-outside-" });
-    yield* fileSystem.makeDirectory(inside, { recursive: true });
-    for (const [root, kept] of [
-      [inside, false],
-      [outside, true],
-    ] as const) {
-      const layer = projectDriver({
-        getById: () => Effect.succeedSome({ workspaceRoot: root } as never),
-        delete: () => Effect.succeed({} as never),
-      });
-      yield* Effect.gen(function* () {
-        const driver = yield* LocalDriver.LocalDriver;
-        yield* driver.deleteProject({
-          environmentId: thread.environmentId,
-          projectId: thread.projectId,
-          removeFolder: true,
-        });
-      }).pipe(Effect.provide(layer));
-      assert.strictEqual(yield* fileSystem.exists(root), kept);
-    }
-    yield* fileSystem.remove(outside, { recursive: true });
+    const parent = yield* fileSystem.makeTempDirectory({ prefix: "board-driver-" });
+    const root = `${parent}/own`;
+    yield* fileSystem.makeDirectory(root);
+    const layer = projectDriver({
+      delete: () => Effect.succeed({} as never),
+      getById: () => Effect.succeedSome({ workspaceRoot: root } as never),
+      snapshot: Effect.succeed({ projects: [] } as never),
+    });
+    yield* Effect.gen(function* () {
+      const driver = yield* LocalDriver.LocalDriver;
+      const input = { environmentId: thread.environmentId, projectId: thread.projectId };
+      yield* driver.deleteProject(input);
+      assert.isTrue(yield* fileSystem.exists(root));
+      yield* driver.deleteProject({ ...input, removeFolder: true });
+      assert.isFalse(yield* fileSystem.exists(root));
+    }).pipe(Effect.provide(layer));
+    yield* fileSystem.remove(parent, { recursive: true });
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

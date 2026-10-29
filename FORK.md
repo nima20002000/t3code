@@ -32,6 +32,11 @@ a merge (the server route is reserved for the later server phase):
 - `apps/server/src/cli/browser.ts`, `apps/server/src/preview/PreviewBrowserHost.ts` and `apps/server/src/preview/PreviewBrowserHost.test.ts`: `t3 browser setup` finds
   sbin tools under `sudo env "PATH=$PATH"` and treats a written but unloaded AppArmor profile as not set up.
 - `apps/web/src/index.css`: one `@import` of `board/styles/board.css`, so Tailwind and the lint rules know the board's classes.
+- `packages/contracts/src/project.ts`, `packages/contracts/src/rpc.ts`, `apps/server/src/ws.ts`,
+  `apps/server/src/auth/RpcAuthorization.ts`, `apps/server/src/observability/RpcInstrumentation.ts`,
+  and the new `apps/server/src/project/ProjectFolderRemoval.ts`:
+  the `projects.removeFolder` RPC and `removeProjectFolder`, which deletes a project's own folder
+  (never a root, home, a parent of home or a folder holding another project) when a workspace is deleted.
 - `AGENTS.md`: one paragraph pointing agents at this file and the board folders.
 - `pnpm-lock.yaml`: workspace and board dependency lock entries.
 

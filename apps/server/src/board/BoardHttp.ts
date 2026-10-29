@@ -56,7 +56,9 @@ const handlers = HttpApiBuilder.group(
       .handle("updateWorkspace", ({ params, payload }) =>
         operate(board.updateWorkspace(params.workspaceId, payload)),
       )
-      .handle("deleteWorkspace", ({ params }) => operate(board.deleteWorkspace(params.workspaceId)))
+      .handle("deleteWorkspace", ({ params, payload }) =>
+        operate(board.deleteWorkspace(params.workspaceId, payload)),
+      )
       .handle("addFolder", ({ params, payload }) =>
         operate(board.addFolder(params.workspaceId, payload)),
       )

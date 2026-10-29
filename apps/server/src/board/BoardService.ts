@@ -12,6 +12,7 @@ import {
   type BoardCreateNodeInput,
   type BoardCreateScheduleInput,
   type BoardCreateWorkflowInput,
+  type BoardDeleteWorkspaceInput,
   type BoardCreateWorkspaceInput,
   type BoardEdge,
   type BoardNode,
@@ -57,7 +58,7 @@ export class BoardService extends Context.Service<
     readonly getWorkspace: (id: string) => Op<Workspace>;
     readonly createWorkspace: (input: BoardCreateWorkspaceInput) => Op<Workspace>;
     readonly updateWorkspace: (id: string, input: BoardUpdateWorkspaceInput) => Op<Workspace>;
-    readonly deleteWorkspace: (id: string) => Op<void>;
+    readonly deleteWorkspace: (id: string, input?: BoardDeleteWorkspaceInput) => Op<void>;
     readonly addFolder: (id: string, input: BoardAddFolderInput) => Op<Workspace>;
     readonly deleteFolder: (id: string, environmentId: EnvironmentId) => Op<Workspace>;
     readonly getKanban: (workflowId: string) => Op<ReadonlyArray<KanbanCard>>;
@@ -151,12 +152,12 @@ const make = Effect.gen(function* () {
   });
   const removeProjects = Effect.fn("BoardService.removeProjects")(function* (
     workspace: Workspace,
-    environmentId?: EnvironmentId,
+    options: { readonly environmentId?: EnvironmentId; readonly removeFolders: boolean },
   ) {
     for (const folder of workspace.folders) {
       if (
-        !folder.managed ||
-        (environmentId !== undefined && folder.environmentId !== environmentId)
+        !(folder.managed || options.removeFolders) ||
+        (options.environmentId !== undefined && folder.environmentId !== options.environmentId)
       )
         continue;
       yield* drivers.get(folder.environmentId).pipe(
@@ -164,7 +165,7 @@ const make = Effect.gen(function* () {
           driver.deleteProject({
             environmentId: folder.environmentId,
             projectId: folder.projectId,
-            removeFolder: true,
+            removeFolder: options.removeFolders,
           }),
         ),
         Effect.catch((cause) =>
@@ -259,10 +260,13 @@ const make = Effect.gen(function* () {
         return { workspace, next };
       }),
     );
-    yield* removeProjects(removed.workspace, environmentId);
+    yield* removeProjects(removed.workspace, { environmentId, removeFolders: true });
     return removed.next;
   });
-  const deleteWorkspace = Effect.fn("BoardService.deleteWorkspace")(function* (id: string) {
+  const deleteWorkspace = Effect.fn("BoardService.deleteWorkspace")(function* (
+    id: string,
+    input: BoardDeleteWorkspaceInput = {},
+  ) {
     const workspace = yield* getWorkspace(id);
     // Rows go first, in one transaction with the editable check, so no run can start while the
     // slow machine cleanup below runs.
@@ -281,7 +285,7 @@ const make = Effect.gen(function* () {
         yield* store.appendEvent({ kind: "workspace.deleted", workspaceId: id });
       }),
     );
-    yield* removeProjects(workspace);
+    yield* removeProjects(workspace, { removeFolders: input.removeFolders === true });
   });
 
   const create = Effect.fn("BoardService.createWorkflow")(function* (

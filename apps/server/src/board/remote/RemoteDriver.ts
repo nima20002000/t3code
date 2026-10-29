@@ -258,16 +258,23 @@ export function make(store: PeerStore): NodeDriver {
       ).pipe(Effect.mapError((cause) => error("ensureProject", cause)));
       return { adopted: false };
     }),
-    deleteProject: Effect.fn("RemoteDriver.deleteProject")(function* (input) {
-      yield* useClient(store, input, (client) =>
-        client[WS_METHODS.projectsMutate]({
-          type: "project.delete",
-          commandId: CommandId.make(`board:project-delete:${input.projectId}`),
-          projectId: input.projectId,
-          force: true,
-        }),
-      ).pipe(Effect.mapError((cause) => error("deleteProject", cause)));
-    }),
+    deleteProject: Effect.fn("RemoteDriver.deleteProject")(
+      function* (input) {
+        yield* useClient(store, input, (client) =>
+          client[WS_METHODS.projectsMutate]({
+            type: "project.delete",
+            commandId: CommandId.make(`board:project-delete:${input.projectId}`),
+            projectId: input.projectId,
+            force: true,
+          }),
+        );
+        if (input.removeFolder)
+          yield* useClient(store, input, (client) =>
+            client[WS_METHODS.projectsRemoveFolder]({ projectId: input.projectId }),
+          );
+      },
+      Effect.mapError((cause) => error("deleteProject", cause)),
+    ),
     launch: Effect.fn("RemoteDriver.launch")(function* (input) {
       const result = yield* useClient(store, input, (client) =>
         client[ORCHESTRATION_V2_WS_METHODS.launchThread](input.launch),

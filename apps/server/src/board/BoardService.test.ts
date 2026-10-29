@@ -44,9 +44,16 @@ const card = (id: string, assigneeNodeId?: string): KanbanCard => ({
 
 const makeLayer = Effect.gen(function* () {
   const deleted = yield* Queue.unbounded<ProjectId>();
+  const foldersRemoved = yield* Queue.unbounded<ProjectId>();
   const driver: NodeDriver = {
     ensureProject: () => Effect.succeed({ adopted: false }),
-    deleteProject: (input) => Queue.offer(deleted, input.projectId).pipe(Effect.asVoid),
+    deleteProject: (input) =>
+      Queue.offer(deleted, input.projectId).pipe(
+        Effect.andThen(
+          input.removeFolder ? Queue.offer(foldersRemoved, input.projectId) : Effect.void,
+        ),
+        Effect.asVoid,
+      ),
     launch: (input) =>
       Effect.succeed({
         environmentId: input.environmentId,
@@ -71,7 +78,7 @@ const makeLayer = Effect.gen(function* () {
     Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, registry)),
     Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
   );
-  return { deleted, layer };
+  return { deleted, foldersRemoved, layer };
 });
 
 it.effect("workspaces own workflows, need unique names, and get a folder per machine", () =>
@@ -227,6 +234,29 @@ it.effect(
         assert.sameMembers(kinds, ["schedule.deleted", "workflow.deleted", "workspace.deleted"]);
       }).pipe(Effect.provide(layer));
     }),
+);
+
+it.effect("deleting a workspace removes its folder on every machine only when asked", () =>
+  Effect.gen(function* () {
+    for (const removeFolders of [false, true]) {
+      const { deleted, foldersRemoved, layer } = yield* makeLayer;
+      yield* Effect.gen(function* () {
+        const board = yield* BoardService.BoardService;
+        yield* board.createWorkspace({ id: "ws", name: "Workspace" });
+        yield* board.createWorkflow({ id: "w", name: "W", workspaceId: "ws" });
+        yield* board.createNode("w", nodeInput("a"));
+        yield* board.createNode("w", nodeInput("b", { environmentId: otherEnvironmentId }));
+        const projectIds = (yield* board.getWorkspace("ws")).folders.map(
+          (folder) => folder.projectId,
+        );
+        yield* board.deleteWorkspace("ws", removeFolders ? { removeFolders } : {});
+        assert.sameMembers([...(yield* Queue.takeN(deleted, 2))], projectIds);
+        assert.strictEqual(yield* Queue.size(foldersRemoved), removeFolders ? 2 : 0);
+        if (removeFolders)
+          assert.sameMembers([...(yield* Queue.takeN(foldersRemoved, 2))], projectIds);
+      }).pipe(Effect.provide(layer));
+    }
+  }),
 );
 
 it.effect("a workspace with an active run cannot be deleted", () =>

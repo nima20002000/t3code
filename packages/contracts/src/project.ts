@@ -524,6 +524,12 @@ export const ProjectEnsureScratchResult = Schema.Struct({
 });
 export type ProjectEnsureScratchResult = typeof ProjectEnsureScratchResult.Type;
 
+export const ProjectRemoveFolderInput = Schema.Struct({ projectId: ProjectId });
+export type ProjectRemoveFolderInput = typeof ProjectRemoveFolderInput.Type;
+
+export const ProjectRemoveFolderResult = Schema.Struct({ removed: Schema.Boolean });
+export type ProjectRemoveFolderResult = typeof ProjectRemoveFolderResult.Type;
+
 export const ProjectCreateNewInput = Schema.Struct({
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
 });

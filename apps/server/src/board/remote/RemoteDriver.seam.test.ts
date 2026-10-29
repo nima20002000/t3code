@@ -161,6 +161,23 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
         title: "Remote project",
         workspaceRoot: config.cwd,
       });
+      const doomed = NodePath.join(NodeFS.mkdtempSync(NodePath.join(config.cwd, "doomed-")), "own");
+      NodeFS.mkdirSync(doomed);
+      const doomedId = ProjectId.make("board-remote-doomed");
+      yield* client[WS_METHODS.projectsMutate]({
+        type: "project.create",
+        commandId: CommandId.make("board-test-doomed"),
+        projectId: doomedId,
+        title: "Doomed project",
+        workspaceRoot: doomed,
+      });
+      yield* driver.deleteProject({
+        environmentId: peer.environmentId,
+        projectId: doomedId,
+        removeFolder: true,
+      });
+      assert.isFalse(NodeFS.existsSync(doomed));
+
       const thread = yield* driver.launch({
         environmentId: peer.environmentId,
         launch: {
