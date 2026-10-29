@@ -35,7 +35,6 @@ import {
 } from "@t3tools/board-core";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { SqlError } from "effect/sql/SqlError";
@@ -43,6 +42,7 @@ import * as AgentSchedules from "./AgentSchedules.ts";
 import * as BoardStore from "./BoardStore.ts";
 import * as DriverRegistry from "./DriverRegistry.ts";
 import * as TaskEngine from "./TaskEngine.ts";
+import { boardNow, maxRunsAfter, nextBoardRunAt } from "./boardTiming.ts";
 
 type BoardError =
   | SqlError
@@ -487,21 +487,21 @@ const make = Effect.gen(function* () {
     if (!schedule) return yield* new BoardNotFoundError({ message: "Schedule not found." });
     return schedule;
   });
-  const nextRun = Effect.fn("BoardService.nextRun")(function* (everyMs: number) {
-    const timestamp = yield* DateTime.now;
-    return DateTime.formatIso(DateTime.makeUnsafe(DateTime.toEpochMillis(timestamp) + everyMs));
-  });
   const createSchedule = Effect.fn("BoardService.createSchedule")(function* (
     input: BoardCreateScheduleInput,
   ) {
+    const now = yield* boardNow;
     return yield* store.transaction(
       Effect.gen(function* () {
         yield* getWorkflow(input.workflowId);
         if ((yield* store.listSchedules()).some((entry) => entry.id === input.id))
           return yield* new BoardConflictError({ message: "Schedule id already exists." });
+        const { runs, ...rest } = input;
+        const maxRuns = maxRunsAfter(input.timing, 0, runs);
+        const unscheduled = { ...rest, runCount: 0, ...(maxRuns === undefined ? {} : { maxRuns }) };
         const schedule: BoardSchedule = {
-          ...input,
-          nextRunAt: input.enabled ? yield* nextRun(input.everyMs) : null,
+          ...unscheduled,
+          nextRunAt: nextBoardRunAt(unscheduled, now),
         };
         yield* store.putSchedule(schedule);
         yield* store.appendEvent({ kind: "schedule.upserted", schedule });
@@ -513,17 +513,32 @@ const make = Effect.gen(function* () {
     id: string,
     input: BoardUpdateScheduleInput,
   ) {
+    const now = yield* boardNow;
     return yield* store.transaction(
       Effect.gen(function* () {
         const current = yield* findSchedule(id);
-        const merged = { ...current, ...input };
+        const timing = input.timing ?? current.timing;
+        const { maxRuns: _old, ...unlimited } = current;
+        const maxRuns =
+          input.runs === undefined && input.timing?.type !== "once"
+            ? current.maxRuns
+            : maxRunsAfter(timing, current.runCount, input.runs ?? undefined);
+        const merged = {
+          ...unlimited,
+          ...(input.task === undefined ? {} : { task: input.task }),
+          ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
+          timing,
+          ...(maxRuns === undefined ? {} : { maxRuns }),
+        };
+        // Editing only the task keeps the due run; timing, limit or resuming restart the clock.
+        const keep =
+          input.timing === undefined &&
+          input.runs === undefined &&
+          merged.enabled === current.enabled &&
+          current.nextRunAt !== null;
         const schedule: BoardSchedule = {
           ...merged,
-          nextRunAt: !merged.enabled
-            ? null
-            : !current.enabled || input.everyMs !== undefined
-              ? yield* nextRun(merged.everyMs)
-              : current.nextRunAt,
+          nextRunAt: keep ? current.nextRunAt : nextBoardRunAt(merged, now),
         };
         yield* store.putSchedule(schedule);
         yield* store.appendEvent({ kind: "schedule.upserted", schedule });

@@ -271,3 +271,60 @@ it.effect("compacts or moves to a fresh thread before a bound run", () =>
     Effect.provide(SqlitePersistence.layerMemory),
   ),
 );
+
+it.effect("a start time makes a one-off, and keeps a time of day from firing before it", () =>
+  Effect.gen(function* () {
+    vi.stubEnv("TZ", "UTC");
+    yield* TestClock.setTime(Date.parse("2026-09-09T12:00:00.000Z"));
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          dependencies,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: () => Effect.succeed({} as never),
+          }),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const once = yield* service.upsert(
+        yield* decodeInput({
+          ...input,
+          commandId: "once",
+          threadId: "thread-once",
+          startAt: "2026-10-01T08:15:00.000Z",
+          maxRuns: 1,
+          schedule: { type: "interval", everyMs: 60_000 },
+        }),
+      );
+      expect(once.task.nextRunAt).toBe("2026-10-01T08:15:00.000Z");
+      const fired = yield* service.runNow({ id: once.task.id });
+      expect(fired.task).toMatchObject({ runCount: 1, enabled: false, nextRunAt: null });
+
+      // 2026-10-01 is a Thursday; the first Monday 09:00 after it is 2026-10-05.
+      const weekly = yield* service.upsert(
+        yield* decodeInput({
+          ...input,
+          commandId: "weekly",
+          startAt: "2026-10-01T08:15:00.000Z",
+          schedule: { type: "fixed_time", timeOfDay: "09:00", weekdays: [1] },
+        }),
+      );
+      expect(weekly.task.nextRunAt).toBe("2026-10-05T09:00:00.000Z");
+      const unstarted = yield* service.upsert(
+        yield* decodeInput({
+          ...input,
+          commandId: "weekly",
+          id: weekly.task.id,
+          startAt: null,
+          schedule: { type: "fixed_time", timeOfDay: "09:00", weekdays: [1] },
+        }),
+      );
+      expect(unstarted.task.nextRunAt).toBe("2026-09-14T09:00:00.000Z");
+    }).pipe(Effect.provide(layer));
+  }).pipe(
+    Effect.provideService(ServerActivation, Effect.never),
+    Effect.provide(SqlitePersistence.layerMemory),
+  ),
+);

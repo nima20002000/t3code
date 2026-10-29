@@ -305,7 +305,7 @@ it.effect(
           id: "s",
           workflowId: "w",
           task: "Work",
-          everyMs: 60_000,
+          timing: { type: "interval", everyMs: 60_000 },
           enabled: true,
         });
         const workflow = (yield* store.getWorkflow("w"))!;
@@ -563,7 +563,7 @@ it.effect("a machine whose t3 cannot stop after N runs is refused", () =>
       yield* board.createNode("w", nodeInput("a", { environmentId: otherEnvironmentId }));
       yield* Ref.set(machines.stock, new Set([otherEnvironmentId]));
       const failure = yield* board.saveNodeSchedule("w", "a", scheduleInput).pipe(Effect.flip);
-      assert.include(failure.message, "cannot stop a schedule");
+      assert.include(failure.message, "without run limits");
       assert.deepStrictEqual(yield* machines.on(otherEnvironmentId), []);
       assert.isUndefined((yield* board.getWorkflow("w")).nodes[0]?.schedule);
     }).pipe(Effect.provide(layer));

@@ -204,6 +204,11 @@ export const ScheduledTaskBeforeRun = Schema.Literals(["compact", "new_thread"])
 });
 export type ScheduledTaskBeforeRun = typeof ScheduledTaskBeforeRun.Type;
 
+const ScheduledTaskStartAt = IsoDateTime.annotate({
+  description:
+    "No scheduled run before this time; the first is at it (interval) or at the first occurrence after it. With maxRuns 1, a one-off.",
+});
+
 export const ScheduledTask = Schema.Struct({
   id: ScheduledTaskId,
   title: TrimmedNonEmptyString,
@@ -227,6 +232,7 @@ export const ScheduledTask = Schema.Struct({
   runCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   maxRuns: Schema.optional(ScheduledTaskMaxRuns),
   beforeRun: Schema.optional(ScheduledTaskBeforeRun),
+  startAt: Schema.optional(ScheduledTaskStartAt),
   webhook: Schema.optional(ScheduledTaskWebhookEndpoint),
 });
 export type ScheduledTask = typeof ScheduledTask.Type;
@@ -255,6 +261,9 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
     description: "Omitted: keep stored. null: no limit.",
   }),
   beforeRun: Schema.optional(Schema.NullOr(ScheduledTaskBeforeRun)).annotate({
+    description: "Omitted: keep stored. null: none.",
+  }),
+  startAt: Schema.optional(Schema.NullOr(ScheduledTaskStartAt)).annotate({
     description: "Omitted: keep stored. null: none.",
   }),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,

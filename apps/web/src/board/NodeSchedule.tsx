@@ -10,13 +10,9 @@ import {
   type BoardNode,
 } from "./boardStore";
 import { useNodeConnections } from "./useNodeConnection";
-import {
-  formOf,
-  scheduleInput,
-  scheduleLabel,
-  scheduleSummary,
-  type ScheduleForm,
-} from "./nodeSchedule";
+import { formOf, scheduleInput, type ScheduleForm } from "./nodeSchedule";
+import { ScheduleTimingFields } from "./ScheduleTimingFields";
+import { scheduleLabel, scheduleSummary } from "./scheduleTiming";
 import {
   Button,
   Popover,
@@ -27,7 +23,6 @@ import {
 } from "./upstream";
 
 const FIELD_CLASS = "h-8 w-full rounded-md border bg-background px-2 text-sm";
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /** The agent's schedule: a clock on the node that shows runs left and opens the editor. */
 export function NodeScheduleButton({ node }: { readonly node: BoardNode }) {
@@ -173,77 +168,11 @@ function ScheduleEditor(props: { readonly node: BoardNode; readonly task: Schedu
           onChange={(event) => patch({ prompt: event.target.value })}
         />
       </label>
-      <label className="grid gap-1 text-xs text-muted-foreground">
-        When
-        <select
-          className={FIELD_CLASS}
-          value={form.mode}
-          onChange={(event) => patch({ mode: event.target.value as ScheduleForm["mode"] })}
-        >
-          <option value="interval">Every few minutes</option>
-          <option value="time">At a time of day</option>
-        </select>
-      </label>
-      {form.mode === "interval" ? (
-        <label className="grid gap-1 text-xs text-muted-foreground">
-          Every (minutes, at least 1)
-          <input
-            className={FIELD_CLASS}
-            type="number"
-            min={1}
-            value={form.minutes}
-            onChange={(event) => patch({ minutes: event.target.value })}
-          />
-        </label>
-      ) : (
-        <div className="grid gap-1 text-xs text-muted-foreground">
-          <label className="grid gap-1">
-            Time (the machine's clock)
-            <input
-              className={FIELD_CLASS}
-              type="time"
-              value={form.timeOfDay}
-              onChange={(event) => patch({ timeOfDay: event.target.value })}
-            />
-          </label>
-          <div
-            className="flex flex-wrap gap-1"
-            role="group"
-            aria-label="Days (none means every day)"
-          >
-            {WEEKDAYS.map((day, index) => {
-              const on = form.weekdays.includes(index);
-              return (
-                <Button
-                  key={day}
-                  size="micro"
-                  variant={on ? "default" : "outline"}
-                  aria-pressed={on}
-                  onClick={() =>
-                    patch({
-                      weekdays: on
-                        ? form.weekdays.filter((entry) => entry !== index)
-                        : [...form.weekdays, index],
-                    })
-                  }
-                >
-                  {day}
-                </Button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-      <label className="grid gap-1 text-xs text-muted-foreground">
-        Times
-        <input
-          className={FIELD_CLASS}
-          type="number"
-          min={1}
-          value={form.runs}
-          onChange={(event) => patch({ runs: event.target.value })}
-        />
-      </label>
+      <ScheduleTimingFields
+        form={form.timing}
+        onChange={(timing) => patch({ timing: { ...form.timing, ...timing } })}
+        clock="the machine's clock"
+      />
       <label className="grid gap-1 text-xs text-muted-foreground">
         Before each firing
         <select

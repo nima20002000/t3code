@@ -37,6 +37,20 @@ export function nextScheduledRunAt(
   return null;
 }
 
+/** Like `nextScheduledRunAt`, but no run comes before `startAt`. */
+export function nextScheduledRunAtFrom(
+  schedule: ScheduledTaskSchedule,
+  from: DateTime.DateTime,
+  startAt: DateTime.DateTime | undefined,
+): DateTime.DateTime | null {
+  if (startAt === undefined || DateTime.toEpochMillis(from) >= DateTime.toEpochMillis(startAt))
+    return nextScheduledRunAt(schedule, from);
+  if (schedule.type === "interval") return startAt;
+  // Occurrences are local times, so look from startAt in the zone `from` is in.
+  const start = DateTime.isZoned(from) ? DateTime.setZone(startAt, from.zone) : startAt;
+  return nextScheduledRunAt(schedule, DateTime.subtractDuration(start, 1));
+}
+
 function weekdayKey(weekdays: ReadonlyArray<number> | undefined): string {
   const unique = [...new Set(weekdays ?? [])].toSorted((x, y) => x - y);
   if (unique.length === 0 || unique.length === 7) return "daily";

@@ -10,6 +10,7 @@ import {
   type BoardSaveNodeScheduleInput,
   type NodeDriver,
   type NodeDriverError,
+  taskScheduleOf,
 } from "@t3tools/board-core";
 import {
   ScheduledTaskId,
@@ -94,6 +95,7 @@ function upsertOf(
     threadId: task.threadId,
     maxRuns: task.maxRuns ?? null,
     beforeRun: task.beforeRun ?? null,
+    startAt: task.startAt ?? null,
     workspaceStrategy: task.workspaceStrategy,
     modelSelection: task.modelSelection,
     runtimeMode: task.runtimeMode,
@@ -233,6 +235,8 @@ const make = Effect.gen(function* () {
     const marker = { ...target, threadId: chat.threadId };
     // The marker goes before the write, so a save whose outcome is unknown can be cleaned up.
     yield* setMarker(workflowId, nodeId, marker);
+    const plan = taskScheduleOf(input.timing, input.runs);
+    const beforeRun = input.beforeRun === "none" ? null : input.beforeRun;
     const write = (runCount: number) =>
       driver
         .upsertScheduledTask({
@@ -242,9 +246,10 @@ const make = Effect.gen(function* () {
             title: `${node.name} · ${workflow.name}`,
             prompt: input.prompt,
             enabled: true,
-            schedule: input.timing,
-            maxRuns: runCount + input.runs,
-            beforeRun: input.beforeRun === "none" ? null : input.beforeRun,
+            schedule: plan.schedule,
+            startAt: plan.startAt ?? null,
+            maxRuns: plan.runs === undefined ? null : runCount + plan.runs,
+            beforeRun,
             projectId: chat.projectId,
             threadId: chat.threadId,
             workspaceStrategy: { type: "root" },
@@ -265,18 +270,24 @@ const make = Effect.gen(function* () {
     );
     // A firing between the read and the write would eat into the runs just granted.
     const task =
-      first.maxRuns !== undefined && first.runCount !== (existing?.runCount ?? 0)
+      plan.runs !== undefined &&
+      first.maxRuns !== undefined &&
+      first.runCount !== (existing?.runCount ?? 0)
         ? yield* write(first.runCount)
         : first;
-    // A t3 without run limits ignores maxRuns, so the task would never stop.
-    if (task.maxRuns === undefined) {
+    // A published t3 drops the fields it does not know, so the task would not do what was asked.
+    if (
+      (plan.runs !== undefined && task.maxRuns === undefined) ||
+      (plan.startAt !== undefined && task.startAt === undefined) ||
+      (beforeRun !== null && task.beforeRun === undefined)
+    ) {
       // The marker stays while the delete fails, so a later delete can still remove the task.
       yield* driver
         .deleteScheduledTask(marker)
         .pipe(Effect.andThen(setMarker(workflowId, nodeId, undefined)), Effect.ignore);
       return yield* new BoardInternalError({
         message:
-          "The agent's machine runs a t3 that cannot stop a schedule after a number of runs. Update it to the board's t3 build.",
+          "The agent's machine runs a t3 without run limits, start times or chat preparation for schedules. Update it to the board's t3 build.",
       });
     }
     // A delete that ran while this save was writing found no task; this save removes it.

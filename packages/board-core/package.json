@@ -10,7 +10,8 @@
     "./kanban": "./src/kanban.ts",
     "./http": "./src/http.ts",
     "./NodeDriver": "./src/NodeDriver.ts",
-    "./runView": "./src/runView.ts"
+    "./runView": "./src/runView.ts",
+    "./timing": "./src/timing.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -165,11 +165,35 @@ const taskCardMigration = Effect.gen(function* () {
   yield* sql`ALTER TABLE board_tasks ADD COLUMN card_id TEXT`;
 });
 
+/** Workflow schedules were `everyMs` only; they now carry a timing and count their runs. */
+const scheduleTimingMigration = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const upgrade = (data: string) => {
+    const { everyMs, ...rest } = decodeJson(data) as { readonly everyMs?: number };
+    return everyMs === undefined
+      ? data
+      : encodeJson({ ...rest, timing: { type: "interval", everyMs }, runCount: 0 });
+  };
+  const rows = yield* sql<JsonRow & { readonly id: string }>`SELECT id, data FROM board_schedules`;
+  for (const row of rows)
+    yield* sql`UPDATE board_schedules SET data = ${upgrade(row.data)} WHERE id = ${row.id}`;
+  const events = yield* sql<
+    JsonRow & { readonly sequence: number }
+  >`SELECT sequence, data FROM board_task_events WHERE data LIKE '%"schedule.upserted"%'`;
+  for (const event of events) {
+    const parsed = decodeJson(event.data) as { readonly kind: string; readonly schedule: unknown };
+    if (parsed.kind !== "schedule.upserted") continue;
+    const schedule = decodeJson(upgrade(encodeJson(parsed.schedule)));
+    yield* sql`UPDATE board_task_events SET data = ${encodeJson({ ...parsed, schedule })} WHERE sequence = ${event.sequence}`;
+  }
+});
+
 export const migrations = {
   "1_Board": migration,
   "2_BoardIntents": intentsMigration,
   "3_BoardWorkspaces": workspacesMigration,
   "4_BoardTaskCards": taskCardMigration,
+  "5_BoardScheduleTiming": scheduleTimingMigration,
 };
 
 export const migrate = Migrator.make({})({

@@ -50,7 +50,7 @@ import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
-import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
+import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAtFrom } from "./Schedule.ts";
 import {
   redactHeaders,
   redactQuery,
@@ -172,6 +172,7 @@ const decodeScheduleExtrasJson = Schema.decodeUnknownOption(
     Schema.Struct({
       maxRuns: ScheduledTask.fields.maxRuns,
       beforeRun: ScheduledTask.fields.beforeRun,
+      startAt: ScheduledTask.fields.startAt,
     }),
   ),
 );
@@ -180,6 +181,7 @@ const scheduleJson = (task: ScheduledTask) =>
     ...task.schedule,
     ...(task.maxRuns === undefined ? {} : { maxRuns: task.maxRuns }),
     ...(task.beforeRun === undefined ? {} : { beforeRun: task.beforeRun }),
+    ...(task.startAt === undefined ? {} : { startAt: task.startAt }),
   });
 const runsExhausted = (task: Pick<ScheduledTask, "runCount" | "maxRuns">) =>
   task.maxRuns !== undefined && task.runCount >= task.maxRuns;
@@ -296,13 +298,15 @@ function iso(value: DateTime.DateTime): string {
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
 
 function nextRunAt(
-  task: Pick<ScheduledTask, "enabled" | "schedule" | "runCount" | "maxRuns">,
+  task: Pick<ScheduledTask, "enabled" | "schedule" | "runCount" | "maxRuns" | "startAt">,
   from: DateTime.DateTime,
 ): string | null {
   if (!task.enabled || runsExhausted(task)) return null;
+  const startAt =
+    task.startAt === undefined ? undefined : Option.getOrUndefined(DateTime.make(task.startAt));
   // Decoded intervals can overflow DateTime; unrepresentable occurrences have no next run.
   try {
-    const next = nextScheduledRunAt(task.schedule, from);
+    const next = nextScheduledRunAtFrom(task.schedule, from, startAt);
     return next !== null && Number.isFinite(DateTime.toEpochMillis(next)) ? iso(next) : null;
   } catch {
     return null;
@@ -363,6 +367,7 @@ const decodeRow = Effect.fnUntraced(
       runCount: row.run_count,
       ...(extras?.maxRuns === undefined ? {} : { maxRuns: extras.maxRuns }),
       ...(extras?.beforeRun === undefined ? {} : { beforeRun: extras.beforeRun }),
+      ...(extras?.startAt === undefined ? {} : { startAt: extras.startAt }),
       ...(webhook === undefined ? {} : { webhook }),
     });
   },
@@ -1191,12 +1196,15 @@ export const layer = Layer.effect(
         input.maxRuns === undefined ? existingTask?.maxRuns : (input.maxRuns ?? undefined);
       const beforeRun =
         input.beforeRun === undefined ? existingTask?.beforeRun : (input.beforeRun ?? undefined);
+      const startAt =
+        input.startAt === undefined ? existingTask?.startAt : (input.startAt ?? undefined);
       const runCount = existingTask?.runCount ?? 0;
       // A task that ran out of runs has no next run; raising its limit must schedule one.
       const scheduleUnchanged =
         existingTask !== null &&
         existingTask.enabled === input.enabled &&
         isSameSchedule(existingTask.schedule, schedule) &&
+        existingTask.startAt === startAt &&
         !(existingTask.nextRunAt === null && runsExhausted(existingTask));
       const task: ScheduledTask = {
         id,
@@ -1216,13 +1224,14 @@ export const layer = Layer.effect(
         updatedAt: iso(now),
         nextRunAt: scheduleUnchanged
           ? existingTask.nextRunAt
-          : nextRunAt({ enabled: input.enabled, schedule, runCount, maxRuns }, now),
+          : nextRunAt({ enabled: input.enabled, schedule, runCount, maxRuns, startAt }, now),
         lastRunAt: existingTask?.lastRunAt ?? null,
         lastRunStatus: existingTask?.lastRunStatus ?? "never",
         lastRunError: existingTask?.lastRunError ?? null,
         runCount,
         ...(maxRuns === undefined ? {} : { maxRuns }),
         ...(beforeRun === undefined ? {} : { beforeRun }),
+        ...(startAt === undefined ? {} : { startAt }),
       };
       yield* saveTask(task, input.requireExisting === true, webhook);
       yield* notifyChanged;

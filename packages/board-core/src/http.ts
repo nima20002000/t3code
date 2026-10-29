@@ -2,7 +2,6 @@ import {
   EnvironmentAuthenticatedAuth,
   EnvironmentId,
   EnvironmentScopeRequiredError,
-  MIN_SCHEDULED_TASK_INTERVAL_MS,
   ModelSelection,
   NonNegativeInt,
   PositiveInt,
@@ -14,6 +13,7 @@ import {
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { BoardScheduleRuns, BoardTimingSchema } from "./timing.ts";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
@@ -160,11 +160,14 @@ export const BoardPeerSchema = Schema.Struct({
   expiresAt: Schema.optionalKey(Schema.String),
 });
 export type BoardPeer = typeof BoardPeerSchema.Type;
+/** A workflow's own schedule, run by the hub; it stops once `runCount` reaches `maxRuns`. */
 export const BoardScheduleSchema = Schema.Struct({
   id: Id,
   workflowId: Id,
   task: TrimmedNonEmptyString,
-  everyMs: PositiveInt,
+  timing: BoardTimingSchema,
+  maxRuns: Schema.optionalKey(PositiveInt),
+  runCount: NonNegativeInt,
   enabled: Schema.Boolean,
   nextRunAt: Schema.NullOr(Schema.String),
 });
@@ -331,30 +334,14 @@ export const BoardUpdateNodeInput = Schema.Struct({
   x: Schema.optionalKey(Schema.Number),
   y: Schema.optionalKey(Schema.Number),
 });
-/** When an agent's schedule fires: every `everyMs`, or at a time of day on the machine's clock. */
-export const BoardNodeScheduleTiming = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("interval"),
-    everyMs: Schema.Int.check(Schema.isGreaterThanOrEqualTo(MIN_SCHEDULED_TASK_INTERVAL_MS)),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("fixed_time"),
-    timeOfDay: Schema.String.check(Schema.isPattern(/^([01]?\d|2[0-3]):([0-5]\d)$/)),
-    /** 0 is Sunday; unset means every day. */
-    weekdays: Schema.optionalKey(
-      Schema.Array(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 6 }))),
-    ),
-  }),
-]);
-export type BoardNodeScheduleTiming = typeof BoardNodeScheduleTiming.Type;
 /** What happens to the agent's chat before each firing sends the prompt into it. */
 export const BoardNodeScheduleBeforeRun = Schema.Literals(["compact", "new_thread", "none"]);
 export type BoardNodeScheduleBeforeRun = typeof BoardNodeScheduleBeforeRun.Type;
-/** `runs` more firings from now; each sends `prompt` into the agent's chat. */
+/** `runs` more firings from now (none: no limit); each sends `prompt` into the agent's chat. */
 export const BoardSaveNodeScheduleInput = Schema.Struct({
   prompt: TrimmedNonEmptyString,
-  timing: BoardNodeScheduleTiming,
-  runs: PositiveInt,
+  timing: BoardTimingSchema,
+  runs: Schema.optionalKey(BoardScheduleRuns),
   beforeRun: BoardNodeScheduleBeforeRun,
 });
 export type BoardSaveNodeScheduleInput = typeof BoardSaveNodeScheduleInput.Type;
@@ -372,12 +359,15 @@ export const BoardCreateScheduleInput = Schema.Struct({
   id: Id,
   workflowId: Id,
   task: TrimmedNonEmptyString,
-  everyMs: PositiveInt,
+  timing: BoardTimingSchema,
+  runs: Schema.optionalKey(BoardScheduleRuns),
   enabled: Schema.Boolean,
 });
+/** `runs` counts from now; null removes the limit. */
 export const BoardUpdateScheduleInput = Schema.Struct({
   task: Schema.optionalKey(TrimmedNonEmptyString),
-  everyMs: Schema.optionalKey(PositiveInt),
+  timing: Schema.optionalKey(BoardTimingSchema),
+  runs: Schema.optionalKey(Schema.NullOr(BoardScheduleRuns)),
   enabled: Schema.optionalKey(Schema.Boolean),
 });
 
