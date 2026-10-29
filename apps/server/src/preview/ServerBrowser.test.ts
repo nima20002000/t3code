@@ -9,6 +9,8 @@ import { it } from "@effect/vitest";
 import {
   type BrowserRecordingFrameRate,
   EnvironmentId,
+  type ServerSettings,
+  type ServerSettingsPatch,
   PreviewTabId,
   ProviderInstanceId,
   ThreadId,
@@ -33,6 +35,7 @@ import * as Broker from "../mcp/PreviewAutomationBroker.ts";
 import * as DesktopChannel from "./DesktopBrowserChannel.ts";
 import * as Manager from "./Manager.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 
@@ -58,6 +61,11 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       const context = makeContext();
       desktopConnections.push({ endpoint, context });
       return { browser: { close: async () => {} }, page: context.page as unknown as Page };
+    }
+    async relaunch() {
+      relaunches.push(contexts.length);
+      for (const context of contexts) await context.close();
+      relaunched?.resolve();
     }
     async close() {
       for (const context of contexts) await context.close();
@@ -261,6 +269,8 @@ function makeEncoderPage() {
 const contexts: ReturnType<typeof makeContext>[] = [];
 const encoderStreams: Array<{ frameRate: number | undefined; bitsPerSecond: number }> = [];
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
+const relaunches: Array<number> = [];
+let relaunched: PromiseWithResolvers<void> | null = null;
 let contextGate: PromiseWithResolvers<void> | null = null;
 let pageCopy = "";
 let keyCopy = "";
@@ -342,6 +352,20 @@ const dependencies = Layer.mergeAll(
     turn: (threadId, active) => Effect.sync(() => desktopTurns.emit("turn", threadId, active)),
   }),
   PreviewAgentActivity.layer,
+  // Test settings that announce their changes, as the real service does.
+  Layer.effect(
+    ServerSettingsService,
+    Effect.gen(function* () {
+      const settings = yield* ServerSettingsService;
+      const changes = yield* PubSub.unbounded<ServerSettings>({ replay: 1 });
+      return {
+        ...settings,
+        updateSettings: (patch: ServerSettingsPatch) =>
+          settings.updateSettings(patch).pipe(Effect.tap((next) => PubSub.publish(changes, next))),
+        streamChanges: Stream.fromPubSub(changes),
+      };
+    }),
+  ).pipe(Layer.provide(ServerSettingsService.layerTest())),
 ).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" })),
   Layer.provideMerge(NodeServices.layer),
@@ -372,6 +396,8 @@ beforeEach(() => {
   contexts.length = 0;
   encoderStreams.length = 0;
   contextRequests.length = 0;
+  relaunches.length = 0;
+  relaunched = null;
   contextGate = null;
   contextFailure = null;
   initialNavigation = null;
@@ -1279,4 +1305,35 @@ it.live(
         });
       }),
     ).pipe(Effect.provide(layer)),
+);
+
+it.live("switching the browser mode relaunches it and reopens server tabs at their page", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const settings = yield* ServerSettingsService;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      yield* viewer.input({ type: "navigate", url: "https://example.com/kept" });
+      relaunched = Promise.withResolvers();
+      yield* settings.updateSettings({ serverBrowserMode: "headed" });
+      yield* Effect.promise(() => relaunched!.promise);
+      expect(relaunches).toEqual([1]);
+      // The viewer reconnects instead of losing the tab.
+      const outputs = yield* Queue.takeAll(viewer.output);
+      expect(outputs.map((output) => output._tag)).toContain("reconnect");
+      yield* browser.attachViewer(viewerInput(tabId, true));
+      expect(contexts).toHaveLength(2);
+      expect(contexts[1]!.page.goto).toHaveBeenCalledWith(
+        "https://example.com/kept",
+        expect.objectContaining({ waitUntil: "commit" }),
+      );
+      // Saving the same mode again leaves the browser alone.
+      yield* settings.updateSettings({ serverBrowserMode: "headed" });
+      relaunched = Promise.withResolvers();
+      yield* settings.updateSettings({ serverBrowserProxy: "http://127.0.0.1:3128" });
+      yield* Effect.promise(() => relaunched!.promise);
+      expect(relaunches).toEqual([1, 2]);
+    }),
+  ).pipe(Effect.provide(layer)),
 );

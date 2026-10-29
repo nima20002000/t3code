@@ -1,3 +1,4 @@
+import { ServerBrowserMode } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -5,7 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Command } from "effect/cli";
+import { Command, Flag } from "effect/cli";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -91,37 +92,94 @@ const installedBrowser = Effect.fn("browserSetup.installedBrowser")(function* (b
   return Option.none<string>();
 });
 
-/**
- * Chrome starts without fonts, but pages then render no text. Without
- * fontconfig there is no `fc-match` at all, which counts as no font.
- */
-const fontAvailable = Effect.gen(function* () {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const font = yield* spawner
-    .string(
-      ChildProcess.make("fc-match", ["--format=%{file}", "sans-serif"], {
-        stdin: "ignore",
-        stderr: "ignore",
-      }),
-    )
-    .pipe(
-      Effect.timeout("5 seconds"),
-      Effect.orElseSucceed(() => ""),
-    );
-  return font.trim() !== "";
-}).pipe(Effect.withSpan("browserSetup.fontAvailable"));
-
 const FONT_PACKAGES = ["fontconfig", "fonts-liberation"];
 
-const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe(
-  Command.withDescription(
-    "Set up this Linux host for T3's browser: allow Chrome's sandbox and install its libraries and fonts.",
+const modeFlag = Flag.Literals("mode", ServerBrowserMode.literals).pipe(
+  Flag.withDescription(
+    "Which browser to set up: headless (T3's own, the default) or headed (a visible Google Chrome on a display).",
   ),
-  Command.withHandler(({ baseDir }) =>
+  Flag.withDefault("headless" as const),
+);
+
+const GOOGLE_CHROME_DEB =
+  "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb";
+
+/** Headed mode needs a real Chrome, a display (Xvfb when none runs) and fonts. */
+const headedSetup = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const needs = yield* PreviewBrowserHost.headedNeeds;
+  if (needs.length === 0) {
+    return yield* Console.log("This host is ready to show T3's browser.");
+  }
+  const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.setupSubcommand("headed"));
+  if ((yield* HostProcess.UserId) !== 0) {
+    if (needs.includes("browser")) yield* Console.log("Setup installs Google Chrome.");
+    if (needs.includes("display")) yield* Console.log("Setup installs Xvfb to show it on.");
+    if (needs.includes("fonts")) yield* Console.log("Setup installs fontconfig and system fonts.");
+    return yield* Console.log(`\nThis needs root. Run:\n\n  ${setupCommand}\n`);
+  }
+  if (!(yield* fs.exists("/usr/bin/apt-get").pipe(Effect.orElseSucceed(() => false)))) {
+    return yield* Console.log(
+      `Install ${[
+        needs.includes("browser") ? "Google Chrome or Chromium" : null,
+        needs.includes("display") ? "Xvfb" : null,
+        needs.includes("fonts") ? "fontconfig and system fonts" : null,
+      ]
+        .filter(Boolean)
+        .join(", ")} with your package manager, then run this again.`,
+    );
+  }
+  yield* runStep("refresh the package lists", "apt-get", ["update"]);
+  const packages = [
+    ...(needs.includes("display") ? ["xvfb"] : []),
+    ...(needs.includes("fonts") ? FONT_PACKAGES : []),
+  ];
+  if (needs.includes("browser")) {
+    if ((yield* HostProcess.Architecture) === "x64") {
+      const directory = yield* fs
+        .makeTempDirectoryScoped({ prefix: "t3-chrome-" })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new BrowserSetupStepError({ step: "make a download folder", detail: cause.message }),
+          ),
+        );
+      const deb = path.join(directory, "google-chrome-stable_current_amd64.deb");
+      yield* runStep("download Google Chrome", "curl", ["-fsSL", "-o", deb, GOOGLE_CHROME_DEB]);
+      // apt reads a local package as the unprivileged _apt user; let it in.
+      yield* fs.chmod(directory, 0o755).pipe(Effect.ignore);
+      yield* runStep("install Google Chrome", "apt-get", ["install", "-y", deb]);
+    } else {
+      packages.push("chromium");
+    }
+  }
+  if (packages.length > 0) {
+    yield* runStep("install the browser's packages", "apt-get", [
+      "install",
+      "-y",
+      "--no-install-recommends",
+      ...packages,
+    ]);
+  }
+  const left = yield* PreviewBrowserHost.headedNeeds;
+  yield* Console.log(
+    left.length === 0
+      ? "This host is ready to show T3's browser."
+      : `Setup finished, but this host still lacks: ${left.join(", ")}.`,
+  );
+}).pipe(Effect.scoped);
+
+const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag, mode: modeFlag }).pipe(
+  Command.withDescription(
+    "Set up this Linux host for T3's browser: allow Chrome's sandbox and install its libraries and fonts, or with --mode headed install Google Chrome and a display.",
+  ),
+  Command.withHandler(({ baseDir, mode }) =>
     Effect.gen(function* () {
       if ((yield* HostProcess.Platform) !== "linux") {
         return yield* Console.log("Nothing to set up: T3's browser runs as is on this system.");
       }
+      if (mode === "headed") return yield* headedSetup;
       const fs = yield* FileSystem.FileSystem;
       const isRoot = (yield* HostProcess.UserId) === 0;
       const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
@@ -137,7 +195,7 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
       const missing = Option.isSome(browser)
         ? yield* PreviewBrowserHost.missingLibraries(browser.value)
         : [];
-      const needsFonts = !(yield* fontAvailable);
+      const needsFonts = !(yield* PreviewBrowserHost.fontAvailable);
       const hasApt = yield* fs.exists("/usr/bin/apt-get").pipe(Effect.orElseSucceed(() => false));
 
       if (!needsProfile && missing.length === 0 && !needsFonts) {
@@ -225,7 +283,7 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
           "--no-install-recommends",
           ...FONT_PACKAGES,
         ]);
-        if (!(yield* fontAvailable)) {
+        if (!(yield* PreviewBrowserHost.fontAvailable)) {
           return yield* Console.log(
             "Font packages are installed, but Fontconfig still finds no system font. Check its configuration and run setup again.",
           );
@@ -241,6 +299,6 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
 );
 
 export const browserCommand = Command.make("browser").pipe(
-  Command.withDescription("Manage T3's headless browser on this host."),
+  Command.withDescription("Manage T3's browser on this host."),
   Command.withSubcommands([browserSetupCommand]),
 );

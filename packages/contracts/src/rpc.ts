@@ -270,6 +270,7 @@ import {
   PreviewListResult,
   PreviewClearProfileError,
   PreviewClearProfileInput,
+  PreviewSetupHostResult,
   PreviewReportProfilesInput,
   PreviewNavigateInput,
   PreviewOpenInput,
@@ -461,6 +462,7 @@ export const WS_METHODS = {
   previewClose: "preview.close",
   previewList: "preview.list",
   previewClearProfile: "preview.clearProfile",
+  previewSetupHost: "preview.setupHost",
   previewReportProfiles: "preview.reportProfiles",
   previewReportStatus: "preview.reportStatus",
 
@@ -1546,6 +1548,12 @@ const WsPreviewClearProfileRpc = Rpc.make(WS_METHODS.previewClearProfile, {
   error: Schema.Union([PreviewClearProfileError, EnvironmentAuthorizationError]),
 });
 
+const WsPreviewSetupHostRpc = Rpc.make(WS_METHODS.previewSetupHost, {
+  payload: Schema.Struct({}),
+  success: PreviewSetupHostResult,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsPreviewReportProfilesRpc = Rpc.make(WS_METHODS.previewReportProfiles, {
   payload: PreviewReportProfilesInput,
   error: EnvironmentAuthorizationError,
@@ -2080,6 +2088,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewCloseRpc,
   WsPreviewListRpc,
   WsPreviewClearProfileRpc,
+  WsPreviewSetupHostRpc,
   WsPreviewReportProfilesRpc,
   WsPreviewReportStatusRpc,
   WsSubscribePreviewEventsRpc,

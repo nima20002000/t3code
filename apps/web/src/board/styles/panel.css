@@ -73,7 +73,7 @@
 }
 
 /* The terminal window keeps one terminal; its frame's close button ends it. */
-.board-window:is([data-window-id^="terminal:"], [data-window-id^="setup:"])
+.board-window[data-window-id^="terminal:"]
   [data-thread-terminal-drawer]
   > .pointer-events-none.absolute {
   display: none;

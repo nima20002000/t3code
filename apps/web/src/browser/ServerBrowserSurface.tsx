@@ -12,8 +12,9 @@ import {
   type PreviewStreamMouseButton,
   type PreviewStreamPointer,
   type PreviewStreamViewport,
-  previewStreamHostSetupMessage,
+  previewStreamHostSetupReason,
 } from "@t3tools/client-runtime/preview/server-browser-stream";
+import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
   PreviewStreamHostSetup,
@@ -24,7 +25,6 @@ import {
   type KeyboardEvent,
   type PointerEvent,
   type Ref,
-  useContext,
   useEffect,
   useEffectEvent,
   useImperativeHandle,
@@ -34,21 +34,13 @@ import {
 
 import { AgentCursorMark } from "~/components/preview/AgentBrowserCursor";
 import { CommandBlock } from "~/components/CommandBlock";
-import {
-  AlertDialog,
-  AlertDialogClose,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogPopup,
-  AlertDialogTitle,
-} from "~/components/ui/alert-dialog";
 import { Button } from "~/components/ui/button";
-import { HostSetupRunnerContext } from "./hostSetupRunner";
 import { Input } from "~/components/ui/input";
 import { toastManager } from "~/components/ui/toast";
 import { cn } from "~/lib/utils";
+import { previewEnvironment } from "~/state/preview";
 import { refreshPreviewStreamAccess, usePreviewStreamAccess } from "~/state/previewStream";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { observeResize } from "~/lib/observeResize";
 
 export interface ServerBrowserHandle {
@@ -60,6 +52,9 @@ export interface ServerBrowserHandle {
 }
 
 const RESIZE_THROTTLE_MS = 150;
+/** Menus and popups open from the browser's chrome render in portals outside it. */
+const FLOATING_LAYERS =
+  '[data-slot$="-popup"], [data-slot$="-positioner"], [role="menu"], [role="listbox"]';
 // Reuse nearby probes when a slow link would return the tap's answer after it ends.
 const PROBE_REUSE_PX = 24;
 const PROBE_REUSE_MS = 10_000;
@@ -200,8 +195,8 @@ export function ServerBrowserSurface(props: {
   const [accessDenied, setAccessDenied] = useState(false);
   const access = usePreviewStreamAccess(environmentId, { retry: visible && !accessDenied });
   const [hostSetup, setHostSetup] = useState<PreviewStreamHostSetup | null>(null);
-  const runHostSetup = useContext(HostSetupRunnerContext);
-  const [confirmingSetup, setConfirmingSetup] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const takingRef = useRef(false);
   const pendingMoveRef = useRef<MouseInput | null>(null);
   const pendingWheelRef = useRef<WheelInput | null>(null);
   const inputFrameRef = useRef<number | null>(null);
@@ -307,6 +302,38 @@ export function ServerBrowserSurface(props: {
   };
 
   const focusInput = () => inputRef.current?.focus({ preventScroll: true });
+
+  /** Using the page takes control, as the Take control button does; the agent waits meanwhile. */
+  const takeControlOnUse = () => {
+    const current = controlRef.current;
+    if (!current?.canOperate || current.controller === "you") return;
+    if (current.controller === "another-viewer" || takingRef.current) return;
+    takingRef.current = true;
+    send({ type: "takeControl" });
+  };
+  const releaseControlOnLeave = useEffectEvent(() => {
+    if (controlRef.current?.controller === "you") send({ type: "releaseControl" });
+  });
+  const controlling = control?.controller === "you";
+  // oxlint-disable-next-line t3code/react-effect-budget -- listens on the document for clicks outside this browser
+  useEffect(() => {
+    if (!controlling) return;
+    // The page took control from a click, so the keyboard follows it there.
+    if (takingRef.current) {
+      takingRef.current = false;
+      inputRef.current?.focus({ preventScroll: true });
+    }
+    const onPointerDown = (event: globalThis.PointerEvent) => {
+      if (!(event.target instanceof Element)) return;
+      const root = rootRef.current;
+      // The browser's own chrome (address bar, its menus) counts as inside.
+      const scope = root?.closest("[data-server-browser-scope]") ?? root;
+      if (!scope || scope.contains(event.target) || event.target.closest(FLOATING_LAYERS)) return;
+      releaseControlOnLeave();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [controlling]);
 
   useImperativeHandle(
     ref,
@@ -416,6 +443,8 @@ export function ServerBrowserSurface(props: {
             next.dialog?.defaultValue !== previous?.dialog?.defaultValue
           )
             setPromptText(next.dialog?.defaultValue ?? "");
+          // A refused take (another viewer got there first) must not block the next one.
+          if (next.controller !== "you") takingRef.current = false;
           if (next.controller !== "you") {
             clearInput();
           } else if (previous?.controller !== "you") {
@@ -425,6 +454,7 @@ export function ServerBrowserSurface(props: {
         },
         onConnectedChange: (connected) => {
           if (connected) return;
+          takingRef.current = false;
           setFileChooser(null);
           controlRef.current = null;
           setControl(null);
@@ -475,6 +505,7 @@ export function ServerBrowserSurface(props: {
     if (!canvas) return;
     // Registered natively: React's wheel listener is passive and cannot stop the panel scrolling.
     const onWheel = (event: WheelEvent) => {
+      takeControlOnUse();
       const point = pagePoint(event.clientX, event.clientY, false);
       if (!point) return;
       event.preventDefault();
@@ -488,7 +519,7 @@ export function ServerBrowserSurface(props: {
     };
     canvas.addEventListener("wheel", onWheel, { passive: false });
     return () => canvas.removeEventListener("wheel", onWheel);
-  }, [pagePoint, queueWheel]);
+  }, [pagePoint, queueWheel, takeControlOnUse]);
 
   useEffect(
     () => () => {
@@ -498,6 +529,7 @@ export function ServerBrowserSurface(props: {
   );
 
   const handlePointer = (event: PointerEvent<HTMLCanvasElement>) => {
+    if (event.type === "pointerdown") takeControlOnUse();
     if (controlRef.current?.controller !== "you") return;
     const { type, pointerId, clientX, clientY } = event;
     const cancelled = type === "pointercancel";
@@ -710,6 +742,7 @@ export function ServerBrowserSurface(props: {
 
   return (
     <div
+      ref={rootRef}
       className={cn("relative flex flex-col overflow-hidden", className)}
       data-server-browser-surface={tabId}
     >
@@ -772,6 +805,19 @@ export function ServerBrowserSurface(props: {
           disabled={pdfUrl !== null || control?.controller !== "you"}
           defaultValue={INPUT_SENTINEL}
           onFocus={(event) => resetInput(event.currentTarget)}
+          onBlur={(event) => {
+            // Focus moving elsewhere in the app hands control back; leaving the window does not.
+            const next = event.relatedTarget;
+            const scope =
+              rootRef.current?.closest("[data-server-browser-scope]") ?? rootRef.current;
+            if (
+              next instanceof Element &&
+              scope &&
+              !scope.contains(next) &&
+              !next.closest(FLOATING_LAYERS)
+            )
+              releaseControlOnLeave();
+          }}
           className="sr-only top-0 left-0 text-base"
           onKeyDown={(event) => handleKey("down", event)}
           onKeyUp={(event) => handleKey("up", event)}
@@ -866,54 +912,12 @@ export function ServerBrowserSurface(props: {
         ) : null}
       </div>
       {visible && hostSetup ? (
-        <div className="visible absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background p-4 text-center">
-          <p role="alert" className="max-w-sm text-sm text-muted-foreground">
-            {previewStreamHostSetupMessage(hostSetup)}
-          </p>
-          {runHostSetup ? (
-            <div className="flex gap-2">
-              <Button size="sm" onClick={() => setConfirmingSetup(true)}>
-                Set up
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setHostSetup(null)}>
-                Try again
-              </Button>
-            </div>
-          ) : (
-            <>
-              <CommandBlock command={hostSetup.command} className="w-full max-w-md text-left" />
-              <Button variant="outline" size="sm" onClick={() => setHostSetup(null)}>
-                Try again
-              </Button>
-            </>
-          )}
-          {runHostSetup ? (
-            <AlertDialog open={confirmingSetup} onOpenChange={setConfirmingSetup}>
-              <AlertDialogPopup>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Run browser setup on this machine?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This runs the command below in a terminal on the machine this browser runs on.
-                    It needs administrator rights, so the terminal may ask for your password. Once
-                    it finishes, try the browser again.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <CommandBlock command={hostSetup.command} className="mx-6 text-left" />
-                <AlertDialogFooter>
-                  <AlertDialogClose render={<Button variant="outline" />}>Decline</AlertDialogClose>
-                  <Button
-                    onClick={() => {
-                      setConfirmingSetup(false);
-                      runHostSetup(hostSetup.command);
-                    }}
-                  >
-                    Run setup
-                  </Button>
-                </AlertDialogFooter>
-              </AlertDialogPopup>
-            </AlertDialog>
-          ) : null}
-        </div>
+        <HostSetupPanel
+          key={JSON.stringify(hostSetup)}
+          environmentId={environmentId}
+          setup={hostSetup}
+          onRetry={() => setHostSetup(null)}
+        />
       ) : null}
       {visible && accessDenied ? (
         // The page can be invisible beneath an empty or unreachable state; reconnect must remain reachable.
@@ -961,4 +965,87 @@ function placeAgentCursor(
     left: (box.width - width) / 2 + (pointer.x * width) / viewport.width,
     top: (box.height - height) / 2 + (pointer.y * height) / viewport.height,
   };
+}
+
+type HostSetupState =
+  | { readonly _tag: "idle" }
+  | { readonly _tag: "running" }
+  | { readonly _tag: "manual"; readonly note: string; readonly command: string };
+
+/**
+ * The browser's own machine sets itself up when asked, then the browser retries. Where it
+ * cannot (no passwordless sudo, no permission), the command is shown to run by hand.
+ */
+function HostSetupPanel(props: {
+  readonly environmentId: EnvironmentId;
+  readonly setup: PreviewStreamHostSetup;
+  readonly onRetry: () => void;
+}) {
+  const canSetUp = useAtomValue(previewEnvironment.setupHost.permissionAtom(props.environmentId));
+  const runSetupHost = useAtomCommand(previewEnvironment.setupHost, { reportFailure: false });
+  const [state, setState] = useState<HostSetupState>({ _tag: "idle" });
+  const setUp = () => {
+    setState({ _tag: "running" });
+    void runSetupHost({ environmentId: props.environmentId, input: {} }).then((result) => {
+      if (result._tag !== "Success") {
+        setState({
+          _tag: "manual",
+          note: "Could not run setup from here. Run this on the machine, then try again:",
+          command: props.setup.command,
+        });
+      } else if (result.value._tag === "Ready") {
+        props.onRetry();
+      } else if (result.value._tag === "NeedsPassword") {
+        setState({
+          _tag: "manual",
+          note: "Setup needs root, and sudo on this machine asks for a password. Run this on it, then try again:",
+          command: result.value.command,
+        });
+      } else {
+        setState({
+          _tag: "manual",
+          note: `Setup failed: ${result.value.detail}`,
+          command: result.value.command,
+        });
+      }
+    });
+  };
+  const manual =
+    state._tag === "manual"
+      ? state
+      : canSetUp
+        ? null
+        : { note: "Run this once on the machine, then try again:", command: props.setup.command };
+  return (
+    <div className="visible absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background p-4 text-center">
+      <p role="alert" className="max-w-sm text-sm text-muted-foreground">
+        {previewStreamHostSetupReason(props.setup)}
+      </p>
+      {manual ? (
+        <>
+          <p className="max-w-md text-xs whitespace-pre-wrap text-muted-foreground">
+            {manual.note}
+          </p>
+          <CommandBlock command={manual.command} className="w-full max-w-md text-left" />
+          <Button variant="outline" size="sm" onClick={props.onRetry}>
+            Try again
+          </Button>
+        </>
+      ) : (
+        <div className="flex gap-2">
+          <Button size="sm" disabled={state._tag === "running"} onClick={setUp}>
+            {state._tag === "running" ? "Setting up…" : "Set up"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={state._tag === "running"}
+            onClick={props.onRetry}
+          >
+            Try again
+          </Button>
+        </div>
+      )}
+    </div>
+  );
 }

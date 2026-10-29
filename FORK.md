@@ -26,11 +26,25 @@ a merge (the server route is reserved for the later server phase):
   `apps/web/src/components/chat/useComposerSend.ts`, `apps/web/src/components/chat/ChatComposer.tsx` and
   `apps/web/src/composer-logic.ts`: the composer's `/new` command, offered where a `ComposerNewThreadContext`
   handler is provided (the board's chat windows).
-- `apps/web/src/browser/hostSetupRunner.ts` and `apps/web/src/browser/ServerBrowserSurface.tsx`: a browser whose
-  host needs setup offers to run it, after confirming, where a `HostSetupRunnerContext` runner is provided
-  (the board's browser windows run it in the agent's terminal).
 - `apps/server/src/cli/browser.ts`, `apps/server/src/preview/PreviewBrowserHost.ts` and `apps/server/src/preview/PreviewBrowserHost.test.ts`: `t3 browser setup` finds
-  sbin tools under `sudo env "PATH=$PATH"` and treats a written but unloaded AppArmor profile as not set up.
+  sbin tools under `sudo env "PATH=$PATH"`, treats a written but unloaded AppArmor profile as not set up, sets up headed
+  mode (`--mode headed`: Google Chrome, Xvfb, fonts), and the server runs its own setup with `sudo -n` (`runHostSetup`).
+- Server browser mode and proxy (headless or a visible Chrome on a display, an optional browser-only proxy), stored per
+  machine in its server settings: `packages/contracts/src/settings.ts` (`serverBrowserMode`, `serverBrowserProxy`),
+  `apps/server/src/preview/ServerBrowserContexts.ts` and `apps/server/src/preview/ServerBrowserContexts.test.ts` (launch options per mode and proxy, Xvfb, relaunch),
+  `apps/server/src/preview/ServerBrowser.ts` and `apps/server/src/preview/ServerBrowser.test.ts` (reads the settings, relaunches and reopens tabs on a change,
+  the `setupHost` method), `apps/server/src/preview/ServerBrowserStream.ts` and `apps/server/src/preview/ServerBrowserStream.test.ts` (headed setup reason),
+  `apps/web/src/components/settings/IntegrationsSettings.tsx` and `apps/web/src/components/settings/settingsSearch.ts`
+  (Settings, Browser, Paired machines).
+- The browser's Set up button runs setup on the browser's own machine: `packages/contracts/src/preview.ts`,
+  `packages/contracts/src/rpc.ts` and `packages/contracts/src/clientRpcPermissions.ts` (`preview.setupHost`, guarded by
+  `environment:maintain`), `apps/server/src/ws.ts`, `apps/server/src/auth/RpcAuthorization.ts`,
+  `apps/server/src/observability/RpcInstrumentation.ts`, `packages/client-runtime/src/state/preview.ts`,
+  `packages/client-runtime/src/preview/serverBrowserStream.ts` (setup reasons), and
+  `apps/web/src/browser/ServerBrowserSurface.tsx` with its test `apps/web/src/browser/ServerBrowserSurface.browser.test.tsx`.
+- Using a server browser's page takes control and a click outside hands it back: `apps/web/src/browser/ServerBrowserSurface.tsx`,
+  plus a `data-server-browser-scope` marker on the browser chrome in `apps/web/src/components/preview/PreviewView.tsx` and
+  `apps/web/src/components/preview/ThreadPreviewMiniPlayer.tsx`.
 - `apps/web/src/index.css`: one `@import` of `board/styles/board.css`, so Tailwind and the lint rules know the board's classes.
 - `AGENTS.md`: one paragraph pointing agents at this file and the board folders.
 - `pnpm-lock.yaml`: workspace and board dependency lock entries.

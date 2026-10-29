@@ -42,6 +42,9 @@ import {
   ThreadId,
   SERVER_BROWSER_AUTOMATION_CLIENT_ID,
   type PreviewAppearancePreference,
+  DEFAULT_SERVER_BROWSER_MODE,
+  type PreviewSetupHostResult,
+  type ServerBrowserMode,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
@@ -58,6 +61,9 @@ import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Exit from "effect/Exit";
+import type * as FileSystem from "effect/FileSystem";
+import type * as Path from "effect/Path";
+import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -75,6 +81,7 @@ import { PENDING_ATTACHMENT_THREAD_SEGMENT } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as PreviewAutomationBroker from "../mcp/PreviewAutomationBroker.ts";
 import * as DesktopBrowserChannel from "./DesktopBrowserChannel.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
@@ -82,7 +89,11 @@ import * as PreviewManager from "./Manager.ts";
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
-import { presentAsChrome, ServerBrowserContexts } from "./ServerBrowserContexts.ts";
+import {
+  type BrowserLaunchConfig,
+  presentAsChrome,
+  ServerBrowserContexts,
+} from "./ServerBrowserContexts.ts";
 import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
 import { installPdfDocumentNavigation, isPdfAssetUrl } from "./PdfDocumentNavigation.ts";
 
@@ -141,6 +152,7 @@ const isHostSetupError = Schema.is(
     PreviewBrowserHost.PreviewBrowserSandboxError,
     PreviewBrowserHost.PreviewBrowserLibrariesError,
     PreviewBrowserHost.PreviewBrowserRootError,
+    PreviewBrowserHost.PreviewBrowserHeadedError,
   ]),
 );
 
@@ -242,6 +254,9 @@ export class ServerBrowser extends Context.Service<
     readonly clearProfile: (profileId: string) => Effect.Effect<void, PreviewClearProfileError>;
 
     readonly reportProfiles: (input: PreviewReportProfilesInput) => Effect.Effect<void>;
+
+    /** Runs this host's setup for its configured browser mode, as root without prompting. */
+    readonly setupHost: Effect.Effect<PreviewSetupHostResult>;
   }
 >()("t3/preview/ServerBrowser") {}
 
@@ -458,11 +473,55 @@ const make = Effect.gen(function* () {
   const agentTurns = yield* (yield* PreviewAgentActivity.PreviewAgentActivity).changes;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
-  const launchServices = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>();
+  const launchServices = yield* Effect.context<
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+  >();
+  const runHost = Effect.runPromiseWith(launchServices);
+  const settingsService = yield* ServerSettingsService;
   const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
+  const headedSetupCommand = yield* resolveRootCliCommand(
+    PreviewBrowserHost.setupSubcommand("headed"),
+  );
+  const setupCommandFor = (mode: ServerBrowserMode) =>
+    mode === "headed" ? headedSetupCommand : setupCommand;
+  const browserSettings = settingsService.getSettings.pipe(
+    Effect.map((settings) => ({
+      mode: settings.serverBrowserMode,
+      proxy: settings.serverBrowserProxy,
+    })),
+    Effect.orElseSucceed(() => ({ mode: DEFAULT_SERVER_BROWSER_MODE, proxy: "" })),
+  );
+  const launchConfig = Effect.gen(function* () {
+    const { mode, proxy } = yield* browserSettings;
+    if (mode === "headless") {
+      return { mode, proxy, executablePath: yield* previewBrowser.executable };
+    }
+    const executable = yield* PreviewBrowserHost.headedBrowser;
+    if (Option.isNone(executable)) {
+      return yield* new PreviewBrowserHost.PreviewBrowserHeadedError({
+        setupCommand: headedSetupCommand,
+        missing: "browser",
+      });
+    }
+    const display = yield* PreviewBrowserHost.headedDisplay;
+    if (display._tag === "none") {
+      return yield* new PreviewBrowserHost.PreviewBrowserHeadedError({
+        setupCommand: headedSetupCommand,
+        missing: "display",
+      });
+    }
+    return {
+      mode,
+      proxy,
+      executablePath: executable.value,
+      display: display._tag === "xvfb" ? "xvfb" : display.display || undefined,
+    } satisfies BrowserLaunchConfig;
+  });
 
   const tabs = new Map<string, ServerTab>();
   const pendingTabs = new Map<string, Promise<ServerTab>>();
+  /** Pages a browser relaunch closed, by tab: they reopen at this URL when next used. */
+  const reopenUrls = new Map<string, string>();
 
   const closedPendingTabs = new Set<string>();
   const adoptedPages = new Map<string, { readonly page: Page; readonly openerTabId: string }>();
@@ -472,18 +531,27 @@ const make = Effect.gen(function* () {
 
   const contexts = new ServerBrowserContexts({
     profilesDir: NodePath.join(config.stateDir, "server-browser", "profiles"),
-    executable: () => runPromise(previewBrowser.executable),
+    launchConfig: () => runHost(launchConfig),
     // Playwright's launch error drops Chrome's own output; its sandbox note survives.
-    diagnose: (executable, cause) =>
-      Effect.runPromiseWith(launchServices)(
-        PreviewBrowserHost.diagnoseLaunchFailure({
-          executable,
-          setupCommand,
-          output: /sandboxing failed/i.test(String(cause))
-            ? PreviewBrowserHost.NO_SANDBOX_SIGNATURE
-            : "",
-        }),
-      ),
+    diagnose: (config, cause) =>
+      config.mode === "headed"
+        ? Promise.resolve(
+            /missing x server|cannot open display/i.test(String(cause))
+              ? new PreviewBrowserHost.PreviewBrowserHeadedError({
+                  setupCommand: headedSetupCommand,
+                  missing: "display",
+                })
+              : undefined,
+          )
+        : runHost(
+            PreviewBrowserHost.diagnoseLaunchFailure({
+              executable: config.executablePath,
+              setupCommand,
+              output: /sandboxing failed/i.test(String(cause))
+                ? PreviewBrowserHost.NO_SANDBOX_SIGNATURE
+                : "",
+            }),
+          ),
     onContextClose: (context) => {
       for (const tab of tabs.values()) {
         if (tab.page.context() === context) dropTab(tab, true);
@@ -655,14 +723,14 @@ const make = Effect.gen(function* () {
 
   const sessionOpen = (tab: ServerTab) => !closedSessions.has(tabKey(tab.threadId, tab.tabId));
 
-  const dropTab = (tab: ServerTab, closeSession: boolean) => {
+  const dropTab = (tab: ServerTab, closeSession: boolean, reopen = false) => {
     const key = tabKey(tab.threadId, tab.tabId);
     if (tabs.get(key) !== tab) return;
     tabs.delete(key);
     tab.closing = true;
     clearAbortedNavigation(tab);
     // A desktop page outlives the connection unless its session closed with it.
-    const end = tab.desktop && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
+    const end = reopen || (tab.desktop && !closeSession && sessionOpen(tab)) ? "reconnect" : "gone";
     for (const viewer of tab.viewers) viewer.push({ _tag: end });
     void tab.control.close().catch(constVoid);
     if (tab.desktop) void tab.desktop.close().catch(constVoid);
@@ -884,15 +952,21 @@ const make = Effect.gen(function* () {
     tabs.set(key, tab);
     reportLiveTabs();
     // Existing desktop and popup PDFs can start loading before interception attaches.
-    if (
+    const reopenUrl = reopenUrls.get(key);
+    reopenUrls.delete(key);
+    const initialUrl =
       snapshot.navStatus._tag === "Loading" &&
       ((!adopted && !desktop) || isPdfAssetUrl(snapshot.navStatus.url))
-    ) {
+        ? snapshot.navStatus.url
+        : !adopted && !desktop
+          ? reopenUrl
+          : undefined;
+    if (initialUrl !== undefined) {
       const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
       tab.initialNavigation = (
-        (desktop || adopted) && page.url() === snapshot.navStatus.url
+        (desktop || adopted) && page.url() === initialUrl
           ? page.reload(options)
-          : page.goto(snapshot.navStatus.url, options)
+          : page.goto(initialUrl, options)
       ).then(constVoid, (cause: unknown) => {
         throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
       });
@@ -2437,6 +2511,7 @@ const make = Effect.gen(function* () {
 
   yield* manager.events.pipe(Stream.runForEach(mirrorManagerEvent), Effect.forkScoped);
   if (
+    (yield* browserSettings).mode === "headless" &&
     !PreviewBrowserHost.sandboxDisabled(yield* HostProcess.Environment) &&
     (yield* PreviewBrowserHost.sandboxBlocked)
   ) {
@@ -2516,6 +2591,69 @@ const make = Effect.gen(function* () {
     }),
   );
 
+  /** Closes the browser so the next tab launches it with the current mode and proxy; tabs reopen by URL. */
+  const relaunchBrowser = async () => {
+    // Dropping the current entry while iterating a Map is safe.
+    for (const tab of tabs.values()) {
+      if (tab.desktop) continue;
+      const url = tab.page.url();
+      if (/^https?:/i.test(url)) reopenUrls.set(tabKey(tab.threadId, tab.tabId), url);
+      dropTab(tab, false, true);
+    }
+    await contexts.relaunch();
+  };
+  const launchKey = ({ mode, proxy }: { readonly mode: string; readonly proxy: string }) =>
+    JSON.stringify([mode, proxy]);
+  let currentLaunch = launchKey(yield* browserSettings);
+  yield* settingsService.streamChanges.pipe(
+    Stream.runForEach((settings) => {
+      const next = launchKey({
+        mode: settings.serverBrowserMode,
+        proxy: settings.serverBrowserProxy,
+      });
+      if (next === currentLaunch) return Effect.void;
+      currentLaunch = next;
+      return Effect.promise(relaunchBrowser);
+    }),
+    Effect.forkScoped,
+  );
+
+  const setupArgv = Effect.gen(function* () {
+    const cli = (yield* HostProcess.IsExecutable)
+      ? [yield* HostProcess.ExecutablePath]
+      : [yield* HostProcess.ExecutablePath, (yield* HostProcess.Arguments)[1] ?? ""];
+    return (mode: ServerBrowserMode) => [
+      ...cli,
+      "browser",
+      "setup",
+      "--mode",
+      mode,
+      "--base-dir",
+      config.baseDir,
+    ];
+  });
+  const argvFor = yield* setupArgv;
+  const setupLock = yield* Semaphore.make(1);
+  const setupHost = Effect.gen(function* () {
+    const { mode } = yield* browserSettings;
+    const needsSetup =
+      mode === "headed"
+        ? PreviewBrowserHost.headedNeeds.pipe(Effect.map((needs) => needs.length > 0))
+        : previewBrowser.executable.pipe(
+            Effect.option,
+            Effect.flatMap(PreviewBrowserHost.headlessNeeds),
+            Effect.map((needs) => needs.length > 0),
+          );
+    const result = yield* PreviewBrowserHost.runHostSetup({
+      needsSetup,
+      argv: argvFor(mode),
+      command: setupCommandFor(mode),
+    });
+    // Fonts and libraries reach a running browser only after it relaunches.
+    if (result._tag === "Ready" && result.ranSetup) yield* Effect.promise(relaunchBrowser);
+    return result;
+  }).pipe(Effect.provide(launchServices), setupLock.withPermits(1));
+
   const clearProfile = (profileId: string) =>
     Effect.tryPromise({
       try: () => contexts.clearProfile(profileId),
@@ -2528,6 +2666,7 @@ const make = Effect.gen(function* () {
     reportProfiles,
     openDownload,
     answerFileChooser,
+    setupHost,
   });
 });
 

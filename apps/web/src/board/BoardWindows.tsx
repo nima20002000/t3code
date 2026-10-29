@@ -15,8 +15,7 @@ import { agentNodeSize } from "./foreman/signalEdge";
 import { IconButton } from "./toolbar/IconButton";
 import type { BoardNode } from "./boardStore";
 
-/** A setup window is a terminal of its own that runs a browser host setup command. */
-export type BoardWindowKind = "chat" | "browser" | "terminal" | "setup" | "settings";
+export type BoardWindowKind = "chat" | "browser" | "terminal" | "settings";
 
 /** An agent's chat, browser, terminal or settings, as an object on the canvas beside the agent. */
 export type WindowFlowNode = Node<
@@ -88,7 +87,6 @@ const WINDOW_SIZE: Record<BoardWindowKind, { readonly width: number; readonly he
   chat: { width: 440, height: 600 },
   browser: { width: 640, height: 480 },
   terminal: { width: 520, height: 320 },
-  setup: { width: 520, height: 320 },
   settings: { width: 420, height: 600 },
 };
 const GAP = 48;

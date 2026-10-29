@@ -495,7 +495,6 @@ function BoardWindowNode(props: BoardWindowProps) {
     case "browser":
       return <BrowserWindow {...props} />;
     case "terminal":
-    case "setup":
       return <TerminalWindow {...props} />;
     case "settings":
       return <AgentSettingsWindow {...props} />;

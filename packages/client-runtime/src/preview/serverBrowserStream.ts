@@ -445,7 +445,7 @@ const decodeHostSetup = (reason: string): PreviewStreamHostSetup => {
   try {
     const value = JSON.parse(reason) as Partial<PreviewStreamHostSetup>;
     if (
-      (value.need === "sandbox" || value.need === "libraries") &&
+      (value.need === "sandbox" || value.need === "libraries" || value.need === "browser") &&
       typeof value.command === "string"
     ) {
       return { need: value.need, command: value.command };
@@ -454,7 +454,12 @@ const decodeHostSetup = (reason: string): PreviewStreamHostSetup => {
   return { need: "sandbox", command: "sudo npx t3 browser setup" };
 };
 
-export const previewStreamHostSetupMessage = (setup: PreviewStreamHostSetup) =>
+export const previewStreamHostSetupReason = (setup: PreviewStreamHostSetup) =>
   setup.need === "sandbox"
-    ? "This server's host blocks the sandbox its browser runs in. Run this once on the host, then try again:"
-    : "This server's host is missing libraries its browser needs. Run this once on the host, then try again:";
+    ? "This server's host blocks the sandbox its browser runs in."
+    : setup.need === "libraries"
+      ? "This server's host is missing libraries its browser needs."
+      : "This server is set to show its browser, but it lacks Google Chrome or a display to show it on.";
+
+export const previewStreamHostSetupMessage = (setup: PreviewStreamHostSetup) =>
+  `${previewStreamHostSetupReason(setup)} Run this once on the host, then try again:`;

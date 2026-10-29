@@ -79,6 +79,10 @@ export function createPreviewEnvironmentAtoms<R, E>(
       label: "environment-data:preview:clear-profile",
       tag: WS_METHODS.previewClearProfile,
     }),
+    setupHost: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:setup-host",
+      tag: WS_METHODS.previewSetupHost,
+    }),
     reportProfiles: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:report-profiles",
       tag: WS_METHODS.previewReportProfiles,

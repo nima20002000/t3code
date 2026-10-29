@@ -216,8 +216,11 @@ const hostSetup = (cause: unknown): PreviewStreamHostSetup | undefined =>
     ? { need: "sandbox", command: cause.setupCommand }
     : isLibrariesError(cause)
       ? { need: "libraries", command: cause.setupCommand }
-      : undefined;
+      : isHeadedError(cause)
+        ? { need: "browser", command: cause.setupCommand }
+        : undefined;
 const isSandboxError = Schema.is(PreviewBrowserHost.PreviewBrowserSandboxError);
+const isHeadedError = Schema.is(PreviewBrowserHost.PreviewBrowserHeadedError);
 const isLibrariesError = Schema.is(PreviewBrowserHost.PreviewBrowserLibrariesError);
 const encodeHostSetup = Schema.encodeSync(Schema.fromJsonString(PreviewStreamHostSetup));
 
