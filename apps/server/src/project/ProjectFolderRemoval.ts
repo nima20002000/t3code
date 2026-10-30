@@ -6,7 +6,8 @@ import * as Schema from "effect/Schema";
 import * as NodeOS from "node:os";
 
 import type { ProjectId } from "@t3tools/contracts";
-import * as ProjectService from "./ProjectService.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import { ProjectNotFoundError } from "./ProjectService.ts";
 
 export class ProjectFolderRefusedError extends Schema.TaggedError<ProjectFolderRefusedError>()(
   "ProjectFolderRefusedError",
@@ -17,45 +18,56 @@ export class ProjectFolderRefusedError extends Schema.TaggedError<ProjectFolderR
   }
 }
 
-/** Why a project's folder must not be deleted, or null. Never a root, home, a parent of home or a folder holding another project. */
-export function folderRefusal(
-  path: Path.Path,
-  workspaceRoot: string,
-  otherRoots: ReadonlyArray<string>,
-  home = NodeOS.homedir(),
-): string | null {
-  if (!path.isAbsolute(workspaceRoot)) return "the path is not absolute.";
-  const root = path.resolve(workspaceRoot);
-  const contains = (inner: string) => {
-    const relative = path.relative(root, path.resolve(inner));
-    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-  };
-  if (root.split(path.sep).filter(Boolean).length < 2) return "the path is too shallow.";
-  if (contains(home)) return "the path is the home folder or a parent of it.";
-  if (otherRoots.some(contains)) return "another project lives inside it.";
-  return null;
+/** True when `inner` is `outer` or lies below it (a name like `..x` is not "outside"). */
+export function isWithin(path: Path.Path, outer: string, inner: string): boolean {
+  const relative = path.relative(outer, inner);
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
 }
 
-/** Deletes a project's own workspace folder (also after the project was deleted) and says whether it existed. */
+/**
+ * Deletes the folder at `confirmedPath` (what the user saw; `~` is this machine's home), only when
+ * it resolves to the project's current root and holds no other project, soft-deleted or not, and
+ * is neither home, a parent of home, nor shallower than two segments. Call it while the project is
+ * still active: that keeps the root from being claimed by a new project during the check.
+ */
 export const removeProjectFolder = Effect.fn("ProjectFolderRemoval.remove")(function* (
   projectId: ProjectId,
+  confirmedPath: string,
 ) {
-  const projects = yield* ProjectService.ProjectService;
+  const projects = yield* ProjectStore.ProjectStoreV2;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const project = yield* projects.getById(projectId, { includeDeleted: true });
-  if (Option.isNone(project)) return yield* new ProjectService.ProjectNotFoundError({ projectId });
-  const workspaceRoot = project.value.workspaceRoot;
-  const others = (yield* projects.snapshot).projects
-    .filter((other) => other.id !== projectId)
-    .map((other) => other.workspaceRoot);
-  const refuse = (reason: string) => new ProjectFolderRefusedError({ workspaceRoot, reason });
-  const direct = folderRefusal(path, workspaceRoot, others);
-  if (direct !== null) return yield* refuse(direct);
-  if (!(yield* fileSystem.exists(workspaceRoot))) return { removed: false };
-  const real = yield* fileSystem.realPath(workspaceRoot);
-  const resolved = folderRefusal(path, real, others);
-  if (resolved !== null) return yield* refuse(resolved);
-  yield* fileSystem.remove(real, { recursive: true, force: true });
+  const own = yield* projects.get(projectId, { includeDeleted: true });
+  if (Option.isNone(own)) return yield* new ProjectNotFoundError({ projectId });
+  const refuse = (reason: string) =>
+    new ProjectFolderRefusedError({ workspaceRoot: confirmedPath, reason });
+
+  const home = NodeOS.homedir();
+  const expanded =
+    confirmedPath === "~" || confirmedPath.startsWith("~/")
+      ? path.join(home, confirmedPath.slice(1))
+      : confirmedPath;
+  if (!path.isAbsolute(expanded)) return yield* refuse("the path is not absolute.");
+  // Symlinked spellings of the same folder must compare equal, so everything is resolved.
+  const canonical = (target: string) =>
+    fileSystem.realPath(target).pipe(Effect.orElseSucceed(() => path.resolve(target)));
+  if (!(yield* fileSystem.exists(expanded))) return { removed: false };
+  const target = yield* canonical(expanded);
+  if ((yield* canonical(own.value.workspaceRoot)) !== target)
+    return yield* refuse("it is not this project's folder.");
+  if (target.split(path.sep).filter(Boolean).length < 2)
+    return yield* refuse("the path is too shallow.");
+  if (isWithin(path, target, yield* canonical(home)))
+    return yield* refuse("the path is the home folder or a parent of it.");
+  const others = yield* projects.list({ includeDeleted: true });
+  for (const other of others) {
+    if (other.projectId === projectId) continue;
+    if (isWithin(path, target, yield* canonical(other.workspaceRoot)))
+      return yield* refuse("another project lives inside it.");
+  }
+  yield* fileSystem.remove(target, { recursive: true, force: true });
   return { removed: true };
 });

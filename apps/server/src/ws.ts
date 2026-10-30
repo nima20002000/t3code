@@ -2749,7 +2749,7 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.projectsRemoveFolder]: (input) =>
-          removeProjectFolder(input.projectId).pipe(
+          removeProjectFolder(input.projectId, input.path).pipe(
             Effect.mapError(
               (cause) => new OrchestrationDispatchCommandError({ message: cause.message, cause }),
             ),

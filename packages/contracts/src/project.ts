@@ -524,7 +524,11 @@ export const ProjectEnsureScratchResult = Schema.Struct({
 });
 export type ProjectEnsureScratchResult = typeof ProjectEnsureScratchResult.Type;
 
-export const ProjectRemoveFolderInput = Schema.Struct({ projectId: ProjectId });
+/** `path` is the folder the user confirmed; the machine deletes it only if it is the project's root. */
+export const ProjectRemoveFolderInput = Schema.Struct({
+  projectId: ProjectId,
+  path: Schema.String,
+});
 export type ProjectRemoveFolderInput = typeof ProjectRemoveFolderInput.Type;
 
 export const ProjectRemoveFolderResult = Schema.Struct({ removed: Schema.Boolean });

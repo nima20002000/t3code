@@ -7,4 +7,5 @@ export * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 export * as Scheduler from "../scheduling/Scheduler.ts";
 export { forkParked } from "../serverActivation.ts";
 export * as ProjectFolderRemoval from "../project/ProjectFolderRemoval.ts";
+export * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 export * as ProjectService from "../project/ProjectService.ts";

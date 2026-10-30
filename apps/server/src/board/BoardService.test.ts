@@ -4,12 +4,14 @@ import {
   BoardInvalidRequestError,
   type BoardCreateNodeInput,
   type KanbanCard,
+  NodeDriverError,
   type NodeDriver,
 } from "@t3tools/board-core";
 import { EnvironmentId, ProjectId, ProviderInstanceId, RunId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as BoardService from "./BoardService.ts";
@@ -45,12 +47,21 @@ const card = (id: string, assigneeNodeId?: string): KanbanCard => ({
 const makeLayer = Effect.gen(function* () {
   const deleted = yield* Queue.unbounded<ProjectId>();
   const foldersRemoved = yield* Queue.unbounded<ProjectId>();
+  const failing = yield* Ref.make<ProjectId | null>(null);
   const driver: NodeDriver = {
     ensureProject: () => Effect.succeed({ adopted: false }),
     deleteProject: (input) =>
-      Queue.offer(deleted, input.projectId).pipe(
+      Ref.get(failing).pipe(
+        Effect.flatMap((id) =>
+          id === input.projectId && input.removeFolderPath !== undefined
+            ? Effect.fail(new NodeDriverError({ operation: "deleteProject", message: "boom" }))
+            : Effect.void,
+        ),
+        Effect.andThen(Queue.offer(deleted, input.projectId)),
         Effect.andThen(
-          input.removeFolder ? Queue.offer(foldersRemoved, input.projectId) : Effect.void,
+          input.removeFolderPath !== undefined
+            ? Queue.offer(foldersRemoved, input.projectId)
+            : Effect.void,
         ),
         Effect.asVoid,
       ),
@@ -78,7 +89,7 @@ const makeLayer = Effect.gen(function* () {
     Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, registry)),
     Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
   );
-  return { deleted, foldersRemoved, layer };
+  return { deleted, foldersRemoved, failing, layer };
 });
 
 it.effect("workspaces own workflows, need unique names, and get a folder per machine", () =>
@@ -256,6 +267,65 @@ it.effect("deleting a workspace removes its folder on every machine only when as
           assert.sameMembers([...(yield* Queue.takeN(foldersRemoved, 2))], projectIds);
       }).pipe(Effect.provide(layer));
     }
+  }),
+);
+
+it.effect("a machine that cannot delete its folder keeps the whole workspace for a retry", () =>
+  Effect.gen(function* () {
+    const { deleted, foldersRemoved, failing, layer } = yield* makeLayer;
+    yield* Effect.gen(function* () {
+      const board = yield* BoardService.BoardService;
+      yield* board.createWorkspace({ id: "ws", name: "Workspace" });
+      yield* board.createWorkflow({ id: "w", name: "W", workspaceId: "ws" });
+      yield* board.createNode("w", nodeInput("a"));
+      yield* board.createNode("w", nodeInput("b", { environmentId: otherEnvironmentId }));
+      const [first, second] = (yield* board.getWorkspace("ws")).folders;
+      yield* Ref.set(failing, second!.projectId);
+      const failure = yield* board.deleteWorkspace("ws", { removeFolders: true }).pipe(Effect.flip);
+      assert.instanceOf(failure, BoardConflictError);
+      assert.include(failure.message, second!.path);
+      // The other machine was still cleaned, and the board keeps the workspace.
+      assert.deepStrictEqual([...(yield* Queue.takeN(foldersRemoved, 1))], [first!.projectId]);
+      assert.strictEqual((yield* board.getWorkspace("ws")).id, "ws");
+      yield* Ref.set(failing, null);
+      yield* board.deleteWorkspace("ws", { removeFolders: true });
+      assert.strictEqual(yield* Queue.size(deleted), 3);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("removing one folder in settings never deletes an adopted folder", () =>
+  Effect.gen(function* () {
+    const { foldersRemoved, deleted, layer } = yield* makeLayer;
+    yield* Effect.gen(function* () {
+      const board = yield* BoardService.BoardService;
+      const store = yield* BoardStore.BoardStore;
+      yield* board.createWorkspace({ id: "ws", name: "Workspace" });
+      const workspace = yield* board.getWorkspace("ws");
+      yield* store.transaction(
+        store.putWorkspace({
+          ...workspace,
+          folders: [
+            {
+              environmentId,
+              projectId: ProjectId.make("adopted"),
+              path: "/srv/repo",
+              managed: false,
+            },
+            {
+              environmentId: otherEnvironmentId,
+              projectId: ProjectId.make("made"),
+              path: "/srv/made",
+              managed: true,
+            },
+          ],
+        }),
+      );
+      yield* board.deleteFolder("ws", environmentId);
+      assert.strictEqual(yield* Queue.size(deleted), 0);
+      yield* board.deleteFolder("ws", otherEnvironmentId);
+      assert.deepStrictEqual([...(yield* Queue.takeN(foldersRemoved, 1))], ["made"]);
+    }).pipe(Effect.provide(layer));
   }),
 );
 

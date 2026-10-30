@@ -40,16 +40,21 @@ type Client = Effect.Success<typeof makeClient>;
 
 class RemoteStateError extends Schema.TaggedError<RemoteStateError>()("RemoteStateError", {
   reason: Schema.String,
+  defect: Schema.optional(Schema.Defect()),
 }) {}
 
 class PeerExpiredError extends Schema.TaggedError<PeerExpiredError>()("PeerExpiredError", {}) {}
+
+const isRemoteStateError = Schema.is(RemoteStateError);
 
 const error = (operation: NodeDriverError["operation"], cause: unknown) =>
   new NodeDriverError({
     operation,
     message: hasTag(cause, "PeerExpiredError")
       ? "Re-pair needed: access to this machine expired."
-      : `Remote board ${operation} failed.`,
+      : operation === "deleteProject" && isRemoteStateError(cause)
+        ? cause.reason
+        : `Remote board ${operation} failed.`,
     ...(retryable(cause) ? { retryable: true } : {}),
     cause,
   });
@@ -260,6 +265,22 @@ export function make(store: PeerStore): NodeDriver {
     }),
     deleteProject: Effect.fn("RemoteDriver.deleteProject")(
       function* (input) {
+        if (input.removeFolderPath !== undefined) {
+          const path = input.removeFolderPath;
+          yield* useClient(store, input, (client) =>
+            client[WS_METHODS.projectsRemoveFolder]({ projectId: input.projectId, path }).pipe(
+              // A peer on an older t3 reports the unknown method as a defect.
+              Effect.catchDefect((defect) =>
+                Effect.fail(
+                  new RemoteStateError({
+                    reason: "Update t3 on that machine to delete folders.",
+                    defect,
+                  }),
+                ),
+              ),
+            ),
+          );
+        }
         yield* useClient(store, input, (client) =>
           client[WS_METHODS.projectsMutate]({
             type: "project.delete",
@@ -268,10 +289,6 @@ export function make(store: PeerStore): NodeDriver {
             force: true,
           }),
         );
-        if (input.removeFolder)
-          yield* useClient(store, input, (client) =>
-            client[WS_METHODS.projectsRemoveFolder]({ projectId: input.projectId }),
-          );
       },
       Effect.mapError((cause) => error("deleteProject", cause)),
     ),

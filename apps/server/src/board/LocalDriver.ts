@@ -13,6 +13,7 @@ import { latestContinuation } from "./restartContinuation.ts";
 import {
   ProjectFolderRemoval,
   ProjectService,
+  ProjectStore,
   ThreadLaunch,
   ThreadManagement,
 } from "./upstream.ts";
@@ -27,7 +28,8 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const removalServices = Context.make(ProjectService.ProjectService, projects).pipe(
+  const projectStore = yield* ProjectStore.ProjectStoreV2;
+  const removalServices = Context.make(ProjectStore.ProjectStoreV2, projectStore).pipe(
     Context.add(FileSystem.FileSystem, fileSystem),
     Context.add(Path.Path, path),
   );
@@ -218,6 +220,14 @@ const make = Effect.gen(function* () {
   );
   const deleteProject: NodeDriver["deleteProject"] = Effect.fn("LocalDriver.deleteProject")(
     function* (input) {
+      if (input.removeFolderPath !== undefined)
+        yield* ProjectFolderRemoval.removeProjectFolder(
+          input.projectId,
+          input.removeFolderPath,
+        ).pipe(
+          Effect.provideContext(removalServices),
+          Effect.catchTags({ ProjectNotFoundError: () => Effect.void }),
+        );
       yield* projects
         .delete({
           commandId: CommandId.make(`board:project-delete:${input.projectId}`),
@@ -225,11 +235,6 @@ const make = Effect.gen(function* () {
           force: true,
         })
         .pipe(Effect.catchTags({ ProjectNotFoundError: () => Effect.void }));
-      if (input.removeFolder)
-        yield* ProjectFolderRemoval.removeProjectFolder(input.projectId).pipe(
-          Effect.provideContext(removalServices),
-          Effect.catchTags({ ProjectNotFoundError: () => Effect.void }),
-        );
     },
     Effect.mapError(error("deleteProject")),
   );

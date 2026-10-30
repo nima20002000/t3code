@@ -6,32 +6,49 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as NodeOS from "node:os";
 
-import { folderRefusal, removeProjectFolder } from "../project/ProjectFolderRemoval.ts";
-import { ProjectService } from "./upstream.ts";
+import { isWithin, removeProjectFolder } from "../project/ProjectFolderRemoval.ts";
+import { ProjectStore } from "./upstream.ts";
 
 const projectId = ProjectId.make("p");
 const withRoots = (roots: { readonly own: string; readonly others?: ReadonlyArray<string> }) =>
   Effect.provideService(
-    ProjectService.ProjectService,
-    ProjectService.ProjectService.of({
-      getById: () => Effect.succeedSome({ workspaceRoot: roots.own } as never),
-      snapshot: Effect.succeed({
-        projects: (roots.others ?? []).map((workspaceRoot, i) => ({ id: `o${i}`, workspaceRoot })),
-      } as never),
+    ProjectStore.ProjectStoreV2,
+    ProjectStore.ProjectStoreV2.of({
+      get: () => Effect.succeedSome({ projectId, workspaceRoot: roots.own } as never),
+      list: () =>
+        Effect.succeed([
+          { projectId, workspaceRoot: roots.own },
+          ...(roots.others ?? []).map((workspaceRoot, i) => ({
+            projectId: `o${i}`,
+            workspaceRoot,
+          })),
+        ] as never),
     } as never),
   );
 
-it.effect("deletes the project's own folder and nothing beside it", () =>
+const tempParent = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem.makeTempDirectory({ prefix: "board-folder-" });
+});
+
+it.effect("deletes the confirmed folder only when it is the project's root", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const parent = yield* fileSystem.makeTempDirectory({ prefix: "board-folder-" });
+    const parent = yield* tempParent;
     const own = path.join(parent, "own");
     const sibling = path.join(parent, "sibling");
-    yield* fileSystem.makeDirectory(path.join(own, "deep"), { recursive: true });
-    yield* fileSystem.writeFileString(path.join(own, "deep", "a.txt"), "x");
-    yield* fileSystem.makeDirectory(sibling);
-    const remove = removeProjectFolder(projectId).pipe(withRoots({ own, others: [sibling] }));
+    const moved = path.join(parent, "moved");
+    for (const dir of [path.join(own, "deep"), sibling, moved])
+      yield* fileSystem.makeDirectory(dir, { recursive: true });
+    // The project root was changed to `moved` after the user confirmed `own`.
+    const mismatch = yield* removeProjectFolder(projectId, own).pipe(
+      withRoots({ own: moved }),
+      Effect.flip,
+    );
+    assert.strictEqual(mismatch._tag, "ProjectFolderRefusedError");
+    assert.isTrue(yield* fileSystem.exists(own));
+    const remove = removeProjectFolder(projectId, own).pipe(withRoots({ own, others: [sibling] }));
     assert.deepStrictEqual(yield* remove, { removed: true });
     assert.isFalse(yield* fileSystem.exists(own));
     assert.isTrue(yield* fileSystem.exists(sibling));
@@ -40,16 +57,46 @@ it.effect("deletes the project's own folder and nothing beside it", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("refuses roots, home, parents of home, relative paths and shared parents", () =>
+it.effect("refuses roots, home, parents of home and relative paths", () =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
     const home = NodeOS.homedir();
     for (const own of ["/", "/home", home, path.dirname(home), "relative/dir"]) {
-      assert.notStrictEqual(folderRefusal(path, own, []), null, own);
-      const refused = yield* removeProjectFolder(projectId).pipe(withRoots({ own }), Effect.flip);
+      const refused = yield* removeProjectFolder(projectId, own).pipe(
+        withRoots({ own }),
+        Effect.flip,
+      );
       assert.strictEqual(refused._tag, "ProjectFolderRefusedError", own);
     }
-    assert.notStrictEqual(folderRefusal(path, "/srv/shared", ["/srv/shared/inner"]), null);
-    assert.strictEqual(folderRefusal(path, path.join(home, "t3-workspaces", "w"), []), null);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("refuses a folder holding another project, however the other is spelled", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* tempParent;
+    const own = path.join(parent, "work");
+    yield* fileSystem.makeDirectory(path.join(own, "..important"), { recursive: true });
+    yield* fileSystem.makeDirectory(path.join(own, "inner"), { recursive: true });
+    yield* fileSystem.symlink(path.join(own, "inner"), path.join(parent, "alias"));
+    for (const other of [path.join(own, "..important"), path.join(parent, "alias")]) {
+      const refused = yield* removeProjectFolder(projectId, own).pipe(
+        withRoots({ own, others: [other] }),
+        Effect.flip,
+      );
+      assert.strictEqual(refused._tag, "ProjectFolderRefusedError", other);
+      assert.isTrue(yield* fileSystem.exists(own));
+    }
+    yield* fileSystem.remove(parent, { recursive: true });
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("treats ..name as inside, not outside", () =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    assert.isTrue(isWithin(path, "/srv/work", "/srv/work/..important"));
+    assert.isFalse(isWithin(path, "/srv/work", "/srv/other"));
+    assert.isFalse(isWithin(path, "/srv/work", "/srv"));
   }).pipe(Effect.provide(NodeServices.layer)),
 );

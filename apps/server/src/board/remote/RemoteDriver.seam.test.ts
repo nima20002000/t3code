@@ -174,7 +174,7 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
       yield* driver.deleteProject({
         environmentId: peer.environmentId,
         projectId: doomedId,
-        removeFolder: true,
+        removeFolderPath: doomed,
       });
       assert.isFalse(NodeFS.existsSync(doomed));
 
