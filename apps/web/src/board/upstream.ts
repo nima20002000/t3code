@@ -89,3 +89,11 @@ export { useAtomCommand } from "../state/use-atom-command";
 export { primaryServerKeybindingsAtom } from "../state/server";
 export { readLocalApi } from "../localApi";
 export { useStableCallback } from "../hooks/useStableCallback";
+export { QRCodeSvg } from "../components/ui/qr-code";
+export { createServerPairingCredential } from "../environments/primary/auth";
+export { resolveDesktopPairingUrl } from "../components/settings/pairingUrls";
+export { isQrShareableEndpoint } from "../components/settings/ConnectionsSettings.logic";
+export {
+  desktopNetworkAccessStateAtom,
+  refreshDesktopNetworkAccessState,
+} from "../state/desktopNetworkAccess";

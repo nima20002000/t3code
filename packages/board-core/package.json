@@ -12,7 +12,8 @@
     "./NodeDriver": "./src/NodeDriver.ts",
     "./runView": "./src/runView.ts",
     "./timing": "./src/timing.ts",
-    "./sharedFiles": "./src/sharedFiles.ts"
+    "./sharedFiles": "./src/sharedFiles.ts",
+    "./pairingLink": "./src/pairingLink.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

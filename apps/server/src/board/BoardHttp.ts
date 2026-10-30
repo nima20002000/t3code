@@ -4,7 +4,11 @@ import {
   BoardNotFoundError,
   type NodeDriverError,
 } from "@t3tools/board-core";
-import { AuthOrchestrationOperateScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
+import {
+  AuthEnvironmentMaintainScope,
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -18,6 +22,7 @@ import * as BoardPeers from "./BoardPeers.ts";
 import * as BoardService from "./BoardService.ts";
 import * as BoardStore from "./BoardStore.ts";
 import * as DriverRegistry from "./DriverRegistry.ts";
+import * as TailscaleJoin from "./TailscaleJoin.ts";
 import * as TaskEngine from "./TaskEngine.ts";
 import * as SharedFileStore from "./SharedFileStore.ts";
 import * as WorkspaceFiles from "./WorkspaceFiles.ts";
@@ -48,6 +53,12 @@ const read = <A, R>(effect: Effect.Effect<A, ServiceError, R>) =>
   );
 const operate = <A, R>(effect: Effect.Effect<A, ServiceError, R>) =>
   AuthHttp.requireEnvironmentScope(AuthOrchestrationOperateScope).pipe(
+    Effect.andThen(mapFailures(effect)),
+  );
+
+// Joining a tailnet changes this computer's network, so it needs the right to maintain it.
+const maintain = <A, R>(effect: Effect.Effect<A, ServiceError, R>) =>
+  AuthHttp.requireEnvironmentScope(AuthEnvironmentMaintainScope).pipe(
     Effect.andThen(mapFailures(effect)),
   );
 
@@ -123,6 +134,8 @@ const handlers = HttpApiBuilder.group(
       )
       .handle("listPeers", () => read(board.listPeers()))
       .handle("pairPeer", ({ payload }) => operate(peers.pair(payload)))
+      .handle("getTailscale", () => maintain(TailscaleJoin.status()))
+      .handle("joinTailscale", ({ payload }) => maintain(TailscaleJoin.join(payload.authKey)))
       .handle("deletePeer", ({ params }) => operate(peers.remove(params.peerId)))
       .handle("listRuns", ({ params }) =>
         read(board.getWorkflow(params.workflowId).pipe(Effect.map((workflow) => workflow.runs))),

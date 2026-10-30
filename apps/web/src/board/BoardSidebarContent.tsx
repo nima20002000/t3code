@@ -1,5 +1,12 @@
 import { useNavigate } from "@tanstack/react-router";
-import { FolderIcon, MoreHorizontalIcon, PlusIcon, SettingsIcon, WorkflowIcon } from "lucide-react";
+import {
+  FolderIcon,
+  MonitorUpIcon,
+  MoreHorizontalIcon,
+  PlusIcon,
+  SettingsIcon,
+  WorkflowIcon,
+} from "lucide-react";
 import { useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
 
 import {
@@ -20,8 +27,9 @@ import {
   NameDialog,
   WorkspaceSettingsDialog,
 } from "./WorkspaceDialogs";
+import { JoinBoardDialog, takeJoinBoardReopen } from "./JoinBoardDialog";
 import { IconButton } from "./toolbar/IconButton";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "./upstream";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger, isElectron } from "./upstream";
 
 type Dialog =
   | { readonly kind: "new-workspace" }
@@ -30,7 +38,8 @@ type Dialog =
   | { readonly kind: "workspace-settings"; readonly id: string }
   | { readonly kind: "new-workflow"; readonly workspaceId: string }
   | { readonly kind: "rename-workflow"; readonly id: string; readonly name: string }
-  | { readonly kind: "delete-workflow"; readonly id: string; readonly name: string };
+  | { readonly kind: "delete-workflow"; readonly id: string; readonly name: string }
+  | { readonly kind: "join-board" };
 
 const FOLDED = 48;
 const MIN_OPEN = 180;
@@ -96,7 +105,9 @@ export function BoardSidebarPanel() {
   const { snapshot, currentId } = useBoardState();
   const workspaces = useBoardWorkspaces();
   const workflows = snapshot?.workflows ?? [];
-  const [dialog, setDialog] = useState<Dialog | null>(null);
+  const [dialog, setDialog] = useState<Dialog | null>(() =>
+    takeJoinBoardReopen() ? { kind: "join-board" } : null,
+  );
   const close = () => setDialog(null);
   const navigate = useNavigate();
   const [width, setWidth] = useState(() => readWidth(WIDTH_KEY, DEFAULT_OPEN));
@@ -310,6 +321,13 @@ export function BoardSidebarPanel() {
         ))}
       </nav>
       <div className="shrink-0 p-2">
+        {isElectron ? (
+          <Row
+            icon={<MonitorUpIcon className="size-4" />}
+            label="Add to a board"
+            onClick={() => setDialog({ kind: "join-board" })}
+          />
+        ) : null}
         <Row
           icon={<SettingsIcon className="size-4" />}
           label="Settings"
@@ -389,6 +407,7 @@ export function BoardSidebarPanel() {
           onClose={close}
         />
       ) : null}
+      {dialog?.kind === "join-board" ? <JoinBoardDialog onClose={close} /> : null}
       {settingsWorkspace ? (
         <WorkspaceSettingsDialog workspace={settingsWorkspace} onClose={close} />
       ) : null}

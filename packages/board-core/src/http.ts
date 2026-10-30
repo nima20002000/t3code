@@ -170,6 +170,15 @@ export const BoardWorkflowSchema = Schema.Struct({
   settings: BoardWorkflowSettingsSchema,
   kanban: Schema.optionalKey(BoardKanbanPlacementSchema),
 });
+/** This computer's Tailscale: whether the CLI exists, and its IPv4 and tailnet while it is connected. */
+export const BoardTailscaleStatusSchema = Schema.Struct({
+  installed: Schema.Boolean,
+  ipv4: Schema.NullOr(Schema.String),
+  tailnet: Schema.NullOr(Schema.String),
+});
+export type BoardTailscaleStatus = typeof BoardTailscaleStatusSchema.Type;
+export const BoardJoinTailscaleInput = Schema.Struct({ authKey: TrimmedNonEmptyString });
+
 export const BoardPeerSchema = Schema.Struct({
   id: Id,
   name: TrimmedNonEmptyString,
@@ -420,8 +429,9 @@ export const BoardSaveNodeScheduleInput = Schema.Struct({
 });
 export type BoardSaveNodeScheduleInput = typeof BoardSaveNodeScheduleInput.Type;
 export const BoardSetNodeScheduleEnabledInput = Schema.Struct({ enabled: Schema.Boolean });
+/** Without a name the machine is named after the computer's own label. */
 export const BoardPairPeerInput = Schema.Struct({
-  name: TrimmedNonEmptyString,
+  name: Schema.optionalKey(TrimmedNonEmptyString),
   pairingUrlOrCode: TrimmedNonEmptyString,
   host: Schema.optionalKey(TrimmedNonEmptyString),
 });
@@ -687,6 +697,21 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
       headers: OptionalAuthHeaders,
       params: PeerParams,
       success: HttpApiSchema.NoContent,
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.get("getTailscale", "/tailscale", {
+      headers: OptionalAuthHeaders,
+      success: BoardTailscaleStatusSchema,
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("joinTailscale", "/tailscale/join", {
+      headers: OptionalAuthHeaders,
+      payload: BoardJoinTailscaleInput,
+      success: BoardTailscaleStatusSchema,
       error: Errors,
     }),
   )

@@ -6,3 +6,4 @@ export * from "./http.ts";
 export * from "./NodeDriver.ts";
 export * from "./timing.ts";
 export * from "./sharedFiles.ts";
+export * from "./pairingLink.ts";
