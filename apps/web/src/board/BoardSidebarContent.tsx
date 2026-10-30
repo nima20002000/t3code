@@ -29,7 +29,16 @@ import {
 } from "./WorkspaceDialogs";
 import { JoinBoardDialog, takeJoinBoardReopen } from "./JoinBoardDialog";
 import { IconButton } from "./toolbar/IconButton";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger, isElectron } from "./upstream";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuTrigger,
+  SidebarMenu,
+  SidebarUpdatePill,
+  isElectron,
+} from "./upstream";
 
 type Dialog =
   | { readonly kind: "new-workspace" }
@@ -328,14 +337,21 @@ export function BoardSidebarPanel() {
             onClick={() => setDialog({ kind: "join-board" })}
           />
         ) : null}
-        <Row
-          icon={<SettingsIcon className="size-4" />}
-          label="Settings"
-          onClick={() => {
-            markSettingsFromBoard();
-            void navigate({ to: "/settings" });
-          }}
-        />
+        {/* t3's update control (this app and every connected server) sits beside Settings, as in
+            t3's own sidebar; on the folded rail it stacks under it. */}
+        <SidebarMenu className="flex-row items-center [[data-folded=true]_&]:flex-col">
+          <li className="min-w-0 flex-1 [[data-folded=true]_&]:w-full">
+            <Row
+              icon={<SettingsIcon className="size-4" />}
+              label="Settings"
+              onClick={() => {
+                markSettingsFromBoard();
+                void navigate({ to: "/settings" });
+              }}
+            />
+          </li>
+          <SidebarUpdatePill />
+        </SidebarMenu>
       </div>
       <div
         role="separator"
