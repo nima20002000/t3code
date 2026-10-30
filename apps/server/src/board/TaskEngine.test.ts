@@ -29,6 +29,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as AgentSchedules from "./AgentSchedules.ts";
 import * as BoardStore from "./BoardStore.ts";
 import * as DriverRegistry from "./DriverRegistry.ts";
 import * as TaskEngine from "./TaskEngine.ts";
@@ -97,6 +98,10 @@ const makeHarness = Effect.gen(function* () {
         }),
       ),
     interrupt: ({ thread: target }) => Queue.offer(interrupts, target.threadId).pipe(Effect.asVoid),
+    getScheduledTask: () => Effect.succeed(null),
+    upsertScheduledTask: () => Effect.die("no schedules here"),
+    setScheduledTaskEnabled: () => Effect.void,
+    deleteScheduledTask: () => Effect.void,
   };
   const registry = DriverRegistry.DriverRegistry.of({
     get: () => Effect.succeed(driver),
@@ -161,6 +166,7 @@ it.effect("schedules outlive a deleted node and go with their workflow", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness;
     const layer = BoardService.layer.pipe(
+      Layer.provide(AgentSchedules.layer),
       Layer.provideMerge(TaskEngine.layer),
       Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
       Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
@@ -174,7 +180,7 @@ it.effect("schedules outlive a deleted node and go with their workflow", () =>
           id: `schedule:${id}`,
           workflowId: "workflow",
           task: "Work",
-          everyMs: 60_000,
+          timing: { type: "interval", everyMs: 60_000 },
           enabled: true,
         });
       }
@@ -714,7 +720,8 @@ it.effect("starts due schedules without a client and advances the persisted dead
             id: "schedule",
             workflowId: "workflow",
             task: "Scheduled task",
-            everyMs: 60_000,
+            timing: { type: "interval", everyMs: 60_000 },
+            runCount: 0,
             enabled: true,
             nextRunAt: DateTime.formatIso(yield* DateTime.now),
           });
@@ -730,6 +737,41 @@ it.effect("starts due schedules without a client and advances the persisted dead
       );
       assert.strictEqual(event.kind, "schedule.upserted");
       if (event.kind === "schedule.upserted") assert.notStrictEqual(event.schedule.nextRunAt, null);
+      yield* harness.reply(sent, finish);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("a workflow schedule with a run limit stops after its last run", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const layer = BoardScheduler.layer.pipe(
+      Layer.provideMerge(TaskEngine.layer),
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(
+        Effect.gen(function* () {
+          yield* seed(store, setupWorkflow());
+          yield* store.putSchedule({
+            id: "limited",
+            workflowId: "workflow",
+            task: "Last task",
+            timing: { type: "interval", everyMs: 60_000 },
+            maxRuns: 2,
+            runCount: 1,
+            enabled: true,
+            nextRunAt: DateTime.formatIso(yield* DateTime.now),
+          });
+        }),
+      );
+      yield* TestClock.adjust("5 seconds");
+      const sent = yield* Queue.take(harness.sends);
+      assert.include(sent.text, "Last task");
+      const [schedule] = yield* store.listSchedules();
+      assert.deepInclude(schedule, { runCount: 2, enabled: false, nextRunAt: null });
       yield* harness.reply(sent, finish);
     }).pipe(Effect.provide(layer));
   }),
@@ -1013,7 +1055,8 @@ it.effect("does not start a schedule while a run is active and skips a paused sc
         workflowId: "workflow",
         nodeId: "root",
         task: "Scheduled task",
-        everyMs: 60_000,
+        timing: { type: "interval" as const, everyMs: 60_000 },
+        runCount: 0,
         nextRunAt: dueAt,
       };
       yield* store.transaction(

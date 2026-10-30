@@ -5,6 +5,9 @@ import type {
   OrchestrationV2ThreadLaunchInput,
   ProjectId,
   RunId,
+  ScheduledTask,
+  ScheduledTaskId,
+  ScheduledTaskUpsertInput,
   ThreadId,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
@@ -61,6 +64,7 @@ export class NodeDriverError extends Schema.TaggedError<NodeDriverError>()("Node
     "interrupt",
     "ensureProject",
     "deleteProject",
+    "schedule",
   ]),
   message: Schema.String,
   /** The outcome is unknown, so repeating the call with the same ids is safe. */
@@ -71,6 +75,11 @@ export class NodeDriverError extends Schema.TaggedError<NodeDriverError>()("Node
 export interface BoardDriverProject {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
+}
+
+export interface BoardDriverScheduledTask {
+  readonly environmentId: EnvironmentId;
+  readonly taskId: ScheduledTaskId;
 }
 
 export interface NodeDriver {
@@ -104,4 +113,19 @@ export interface NodeDriver {
     readonly commandId: CommandId;
     readonly runId?: RunId;
   }) => Effect.Effect<void, NodeDriverError>;
+  /** t3's scheduled tasks on that machine, which keeps firing them while the hub is off. */
+  readonly getScheduledTask: (
+    input: BoardDriverScheduledTask,
+  ) => Effect.Effect<ScheduledTask | null, NodeDriverError>;
+  readonly upsertScheduledTask: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly task: ScheduledTaskUpsertInput & { readonly id: ScheduledTaskId };
+  }) => Effect.Effect<ScheduledTask, NodeDriverError>;
+  readonly setScheduledTaskEnabled: (
+    input: BoardDriverScheduledTask & { readonly enabled: boolean },
+  ) => Effect.Effect<void, NodeDriverError>;
+  /** Succeeds when the task is already gone. */
+  readonly deleteScheduledTask: (
+    input: BoardDriverScheduledTask,
+  ) => Effect.Effect<void, NodeDriverError>;
 }

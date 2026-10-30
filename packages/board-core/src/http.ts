@@ -8,10 +8,12 @@ import {
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
+  ScheduledTaskId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { BoardScheduleRuns, BoardTimingSchema } from "./timing.ts";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
@@ -37,6 +39,20 @@ export const BoardNodeSchema = Schema.Struct({
       projectId: ProjectId,
       threadId: ThreadId,
       startedAt: Schema.optionalKey(Schema.String),
+    }),
+  ),
+  schedule: Schema.optionalKey(
+    Schema.Struct({
+      environmentId: EnvironmentId,
+      taskId: ScheduledTaskId,
+      threadId: Schema.optionalKey(ThreadId),
+      rebind: Schema.optionalKey(
+        Schema.Struct({
+          modelSelection: Schema.optionalKey(ModelSelection),
+          runtimeMode: Schema.optionalKey(RuntimeMode),
+          interactionMode: Schema.optionalKey(ProviderInteractionMode),
+        }),
+      ),
     }),
   ),
   runtimeMode: Schema.optionalKey(RuntimeMode),
@@ -155,11 +171,14 @@ export const BoardPeerSchema = Schema.Struct({
   expiresAt: Schema.optionalKey(Schema.String),
 });
 export type BoardPeer = typeof BoardPeerSchema.Type;
+/** A workflow's own schedule, run by the hub; it stops once `runCount` reaches `maxRuns`. */
 export const BoardScheduleSchema = Schema.Struct({
   id: Id,
   workflowId: Id,
   task: TrimmedNonEmptyString,
-  everyMs: PositiveInt,
+  timing: BoardTimingSchema,
+  maxRuns: Schema.optionalKey(PositiveInt),
+  runCount: NonNegativeInt,
   enabled: Schema.Boolean,
   nextRunAt: Schema.NullOr(Schema.String),
 });
@@ -333,6 +352,18 @@ export const BoardUpdateNodeInput = Schema.Struct({
   x: Schema.optionalKey(Schema.Number),
   y: Schema.optionalKey(Schema.Number),
 });
+/** What happens to the agent's chat before each firing sends the prompt into it. */
+export const BoardNodeScheduleBeforeRun = Schema.Literals(["compact", "new_thread", "none"]);
+export type BoardNodeScheduleBeforeRun = typeof BoardNodeScheduleBeforeRun.Type;
+/** `runs` more firings from now (none: no limit); each sends `prompt` into the agent's chat. */
+export const BoardSaveNodeScheduleInput = Schema.Struct({
+  prompt: TrimmedNonEmptyString,
+  timing: BoardTimingSchema,
+  runs: Schema.optionalKey(BoardScheduleRuns),
+  beforeRun: BoardNodeScheduleBeforeRun,
+});
+export type BoardSaveNodeScheduleInput = typeof BoardSaveNodeScheduleInput.Type;
+export const BoardSetNodeScheduleEnabledInput = Schema.Struct({ enabled: Schema.Boolean });
 export const BoardPairPeerInput = Schema.Struct({
   name: TrimmedNonEmptyString,
   pairingUrlOrCode: TrimmedNonEmptyString,
@@ -346,12 +377,15 @@ export const BoardCreateScheduleInput = Schema.Struct({
   id: Id,
   workflowId: Id,
   task: TrimmedNonEmptyString,
-  everyMs: PositiveInt,
+  timing: BoardTimingSchema,
+  runs: Schema.optionalKey(BoardScheduleRuns),
   enabled: Schema.Boolean,
 });
+/** `runs` counts from now; null removes the limit. */
 export const BoardUpdateScheduleInput = Schema.Struct({
   task: Schema.optionalKey(TrimmedNonEmptyString),
-  everyMs: Schema.optionalKey(PositiveInt),
+  timing: Schema.optionalKey(BoardTimingSchema),
+  runs: Schema.optionalKey(Schema.NullOr(BoardScheduleRuns)),
   enabled: Schema.optionalKey(Schema.Boolean),
 });
 
@@ -507,6 +541,48 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
       success: BoardNodeSchema,
       error: Errors,
     }),
+  )
+  .add(
+    HttpApiEndpoint.post("saveNodeSchedule", "/workflows/:workflowId/nodes/:nodeId/schedule", {
+      headers: OptionalAuthHeaders,
+      params: NodeParams,
+      payload: BoardSaveNodeScheduleInput,
+      success: BoardNodeSchema,
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post(
+      "setNodeScheduleEnabled",
+      "/workflows/:workflowId/nodes/:nodeId/schedule/enabled",
+      {
+        headers: OptionalAuthHeaders,
+        params: NodeParams,
+        payload: BoardSetNodeScheduleEnabledInput,
+        success: HttpApiSchema.NoContent,
+        error: Errors,
+      },
+    ),
+  )
+  .add(
+    HttpApiEndpoint.post("syncNodeSchedule", "/workflows/:workflowId/nodes/:nodeId/schedule/sync", {
+      headers: OptionalAuthHeaders,
+      params: NodeParams,
+      success: HttpApiSchema.NoContent,
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post(
+      "deleteNodeSchedule",
+      "/workflows/:workflowId/nodes/:nodeId/schedule/delete",
+      {
+        headers: OptionalAuthHeaders,
+        params: NodeParams,
+        success: HttpApiSchema.NoContent,
+        error: Errors,
+      },
+    ),
   )
   .add(
     HttpApiEndpoint.post("deleteNode", "/workflows/:workflowId/nodes/:nodeId/delete", {

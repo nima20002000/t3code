@@ -17,6 +17,7 @@ import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 
 it.effect("keeps core and board migration histories and board data across reopening", () =>
   Effect.scoped(
@@ -72,6 +73,7 @@ it.effect("keeps core and board migration histories and board data across reopen
             { migration_id: 2, name: "BoardIntents" },
             { migration_id: 3, name: "BoardWorkspaces" },
             { migration_id: 4, name: "BoardTaskCards" },
+            { migration_id: 5, name: "BoardScheduleTiming" },
           ]);
           const snapshot = yield* store.snapshot();
           assert.strictEqual(snapshot.sequence, 2);
@@ -92,6 +94,7 @@ it.effect("keeps core and board migration histories and board data across reopen
             Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
             Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
             Layer.provide(Layer.mock(ProjectStore.ProjectStoreV2)({})),
+            Layer.provide(Layer.mock(ScheduledTasks.ScheduledTaskService)({})),
           );
           yield* Effect.gen(function* () {
             const drivers = yield* DriverRegistry.DriverRegistry;

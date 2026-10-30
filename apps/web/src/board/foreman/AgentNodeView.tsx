@@ -39,6 +39,7 @@ export function AgentNodeView({
   selected,
   size,
   actions,
+  accessory,
   children,
 }: {
   name: string;
@@ -56,6 +57,8 @@ export function AgentNodeView({
   /** Diameter in px; the stylesheet's default when unset. */
   size?: number;
   actions: ReadonlyArray<AgentNodeAction>;
+  /** Extra controls after the action buttons, such as a popover trigger. */
+  accessory?: ReactNode;
   children?: ReactNode;
 }) {
   const hover = useHoverControls();
@@ -115,6 +118,7 @@ export function AgentNodeView({
               {action.icon}
             </button>
           ))}
+          {accessory}
         </span>
       </div>
       {children}

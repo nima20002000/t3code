@@ -51,6 +51,7 @@ import {
 } from "./BoardWindows";
 import { copyNodes, deleteNodes, duplicateNodes, hasCopiedNodes, pasteNodes } from "./nodeActions";
 import { AgentDialog } from "./AddAgentDialog";
+import { NodeScheduleButton } from "./NodeSchedule";
 import {
   addEdge,
   redo,
@@ -336,6 +337,7 @@ function AgentCard({ data, selected, width }: NodeProps<AgentFlowNode>) {
       selected={selected}
       size={width ?? agentNodeSize(node)}
       actions={actions}
+      accessory={<NodeScheduleButton node={node} />}
       role={node.profile === "orchestrator" ? "Orchestrator" : "Worker"}
     >
       <ResizeRing
