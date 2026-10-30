@@ -95,7 +95,7 @@ export const request = Effect.fn("PeerPairing.request")(
 );
 
 export const pair = Effect.fn("PeerPairing.pair")(function* (input: {
-  readonly name: string;
+  readonly name?: string;
   readonly pairingUrlOrCode: string;
   readonly host?: string;
   readonly localEnvironmentId?: EnvironmentId;
@@ -143,7 +143,7 @@ export const pair = Effect.fn("PeerPairing.pair")(function* (input: {
     return yield* new PeerPairingError({ stage: "exchange" });
   const peer: Peer = {
     id: descriptor.environmentId,
-    name: input.name,
+    name: input.name ?? descriptor.label,
     environmentId: descriptor.environmentId,
     url: target.httpBaseUrl,
     bearer: token.access_token,

@@ -2,6 +2,7 @@ import {
   BoardInternalError,
   BoardInvalidRequestError,
   BoardNotFoundError,
+  checkPairingLink,
   type BoardPairPeerInput,
   type BoardPeer,
 } from "@t3tools/board-core";
@@ -86,8 +87,12 @@ const make = Effect.gen(function* () {
     ),
   );
   const pair = Effect.fn("BoardPeers.pair")(function* (input: BoardPairPeerInput) {
+    const link = checkPairingLink(input.pairingUrlOrCode);
+    if (link.kind === "problem")
+      return yield* new BoardInvalidRequestError({ message: link.message });
     const peer = yield* PeerPairing.pair({
       ...input,
+      ...(link.kind === "link" ? { pairingUrlOrCode: link.url } : {}),
       localEnvironmentId,
       store: pairingStore,
     }).pipe(
@@ -110,8 +115,8 @@ const make = Effect.gen(function* () {
                 : cause.stage === "protocol"
                   ? "This machine uses an incompatible orchestration protocol."
                   : cause.stage === "descriptor"
-                    ? "Could not reach the machine or read its identity."
-                    : "Could not exchange the pairing credential. Check that it is valid and try again.";
+                    ? "Could not reach that computer. Check that it is on, its app is open, and it is on the same network or Tailscale."
+                    : "That computer did not accept the link. A link works once and expires; create a new one and try again.";
           return Effect.fail(new BoardInvalidRequestError({ message }));
         },
       }),

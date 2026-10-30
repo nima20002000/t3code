@@ -1,3 +1,4 @@
+import { checkPairingLink } from "@t3tools/board-core/pairingLink";
 import { MonitorIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
@@ -14,9 +15,11 @@ export function MachinesButton() {
   const [host, setHost] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isLink = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(link.trim());
+  const check = checkPairingLink(link);
+  const isLink = check.kind === "link";
+  const ready = link.trim() !== "" && check.kind !== "problem" && (isLink || host.trim() !== "");
   const pair = async () => {
-    if (!name.trim() || !link.trim() || (!isLink && !host.trim()) || busy) return;
+    if (!ready || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -24,7 +27,7 @@ export function MachinesButton() {
         client.pairPeer({
           headers: {},
           payload: {
-            name: name.trim(),
+            ...(name.trim() ? { name: name.trim() } : {}),
             pairingUrlOrCode: link.trim(),
             ...(!isLink ? { host: host.trim() } : {}),
           },
@@ -53,7 +56,8 @@ export function MachinesButton() {
     <ToolbarPopover label="Machines" icon={<MonitorIcon />}>
       <div className="grid gap-2">
         <p className="text-xs text-muted-foreground">
-          Pair machines here for the hub. Connect them in Settings → Connections to use their chats.
+          Computers the board's agents can work on. Connect them in Settings → Connections to use
+          their chats.
         </p>
         <div>
           {primary?.label ?? "Hub"} <span className="text-muted-foreground">· hub</span>
@@ -77,23 +81,33 @@ export function MachinesButton() {
             </Button>
           </div>
         ))}
+        <h3 className="mt-2 font-medium">Add a computer</h3>
+        <p className="text-xs text-muted-foreground">
+          On the new computer, open the app and choose “Add to a board” at the bottom left, then
+          paste its link here.
+        </p>
         <label className="grid gap-1">
-          Name
-          <Input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="Machine name"
-          />
-        </label>
-        <label className="grid gap-1">
-          Pairing link or code
+          Link from the new computer
           <Input
             value={link}
             onChange={(event) => setLink(event.target.value)}
-            placeholder="Paste pairing link or code"
+            placeholder="http://…/pair#token=…"
           />
         </label>
-        {link.trim() && !isLink ? (
+        {check.kind === "problem" && link.trim() ? (
+          <p className="text-xs text-destructive">{check.message}</p>
+        ) : check.kind === "link" && check.warning ? (
+          <p className="text-xs text-warning">{check.warning}</p>
+        ) : null}
+        <label className="grid gap-1">
+          Name (optional)
+          <Input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Uses the computer's own name"
+          />
+        </label>
+        {check.kind === "code" && link.trim() ? (
           <label className="grid gap-1">
             Machine address
             <Input
@@ -103,12 +117,8 @@ export function MachinesButton() {
             />
           </label>
         ) : null}
-        <Button
-          size="sm"
-          disabled={busy || !name.trim() || !link.trim() || (!isLink && !host.trim())}
-          onClick={() => void pair()}
-        >
-          {busy ? "Pairing…" : "Pair machine"}
+        <Button size="sm" disabled={busy || !ready} onClick={() => void pair()}>
+          {busy ? "Adding…" : "Add computer"}
         </Button>
         {error ? (
           <p role="alert" className="text-destructive">

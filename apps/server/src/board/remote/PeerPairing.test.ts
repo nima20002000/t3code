@@ -8,7 +8,7 @@ import * as PeerStore from "./PeerStore.ts";
 
 const descriptor = (version: number) => ({
   environmentId: "remote-machine",
-  label: "Remote",
+  label: "Office PC",
   platform: { os: "linux", arch: "x64" },
   serverVersion: "1.0",
   orchestrationProtocolVersion: version,
@@ -69,5 +69,10 @@ it.effect(
       );
       yield* store.remove(peer.environmentId);
       assert.deepEqual(yield* store.list(), []);
+      const unnamed = yield* PeerPairing.pair({
+        pairingUrlOrCode: "http://peer.test/pair#token=link-token",
+        store,
+      }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
+      assert.equal(unnamed.name, "Office PC");
     }),
 );
