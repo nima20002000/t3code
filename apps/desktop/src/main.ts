@@ -19,6 +19,7 @@ import * as Electron from "electron";
 
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
 import serverPackageJson from "../../server/package.json" with { type: "json" };
 
@@ -113,7 +114,11 @@ const resolveDesktopSshCliRunner = (
       nodeEngineRange: serverPackageJson.engines.node,
     };
   }
-  return { archiveVersion: environment.appVersion };
+  // Board fork: SSH installs honour the same release mirror as `t3 update`.
+  return {
+    archiveVersion: environment.appVersion,
+    releaseBaseUrl: process.env[CLI_RELEASE_BASE_URL_ENV]?.trim() || null,
+  };
 };
 
 const layerDesktopSshEnvironment = Layer.unwrap(

@@ -56,9 +56,11 @@ export function resolveVersionMismatch(
 
   const clientCore = versionCore(normalizedClientVersion);
   const serverCore = versionCore(normalizedServerVersion);
+  // Board fork: fork builds of one upstream base differ only by their `-board.N` build number.
+  const clientTrack = parseSemver(normalizedClientVersion)?.prerelease[0];
   const compareNightlyBuilds =
-    parseSemver(normalizedClientVersion)?.prerelease[0] === "nightly" &&
-    parseSemver(normalizedServerVersion)?.prerelease[0] === "nightly";
+    (clientTrack === "nightly" || clientTrack === "board") &&
+    parseSemver(normalizedServerVersion)?.prerelease[0] === clientTrack;
   const serverIsBehind =
     parseSemver(clientCore) && parseSemver(serverCore)
       ? compareSemverVersions(

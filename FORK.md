@@ -71,6 +71,13 @@ a merge (the server route is reserved for the later server phase):
   (never a root, home, a parent of home or a folder holding another project) when a workspace is deleted.
 - `packages/shared/src/cliRelease.ts`: `CLI_RELEASE_REPOSITORY` is the fork (`nima20002000/t3code`), so `t3 update`,
   pinned runtimes and remote installs download the fork's releases (guarded by `apps/server/src/board/forkRelease.test.ts`).
+- Only fork releases count as t3 updates: `apps/web/src/state/npmRelease.ts` answers t3's release lookups (is a
+  version out, the newest on a track) from the fork's GitHub releases through `apps/web/src/board/forkReleaseLookup.ts`
+  instead of npm, so Update everything moves connected servers to fork versions (which are never on npm) and a track
+  switch never offers npm's upstream `t3`. `apps/web/src/versionSkew.ts` compares two `-board.N` builds by build
+  number (as it does nightlies), so a server on an older fork build of the same base counts as behind. `apps/desktop/src/app/DesktopStartupRecovery.ts` links the fork's releases,
+  `apps/server/src/cloud/servicePreflight.ts` (and `apps/server/src/cloud/servicePreflight.test.ts`) names the fork's
+  `install.sh`, and `apps/desktop/src/main.ts` passes `T3CODE_RELEASE_BASE_URL` to SSH installs like `t3 update` does.
 - `apps/desktop/scripts/dev-electron.mjs`: on Linux the dev app runs with `--disable-gpu` (`T3CODE_DESKTOP_GPU=1` turns
   the GPU back on) after an amdgpu fault during a relaunch took down the desktop. Each launch, restart reason, exit and
   a GPU snapshot go to `.t3/logs/dev-electron.log`, and Chromium's own log to `.t3/logs/electron-<time>.log`.
@@ -94,7 +101,9 @@ archive, SHA256SUMS) into `release/board-<version>` and restores the package ver
 not a pre-release: the desktop updater reads only the fork's latest full release. The release also carries `install.sh`
 (`scripts/board-install.sh`), so a Linux server installs with
 `curl -fsSL https://github.com/nima20002000/t3code/releases/latest/download/install.sh | sh` and gets a link for
-Machines → Add a computer. Keep new board code in the owned
+Machines → Add a computer. A server installed that way (a service-managed headless server) updates itself to
+each newer fork release once nothing runs on it (`apps/server/src/board/AutoUpdate.ts`; `T3_BOARD_AUTO_UPDATE=0`
+turns it off). Keep new board code in the owned
 folders; do not patch upstream internals to make the board work.
 
 ## Sync and test policy
