@@ -97,6 +97,7 @@ export function newWindowNode(
   node: BoardNode,
   open: ReadonlyArray<WindowFlowNode>,
   options: WindowOptions = {},
+  occupied: ReadonlyArray<Pick<Node, "position" | "width" | "height">> = [],
 ): WindowFlowNode {
   const { width, height } = WINDOW_SIZE[kind];
   const size = agentNodeSize(node);
@@ -108,9 +109,9 @@ export function newWindowNode(
     : { x: node.x + size / 2 - width / 2, y: node.y + size + GAP };
   for (let moved = true; moved;) {
     moved = false;
-    for (const window of open) {
-      const right = window.position.x + widthOf(window);
-      const bottom = window.position.y + (window.height ?? WINDOW_SIZE[window.data.kind].height);
+    for (const window of [...open, ...occupied]) {
+      const right = window.position.x + (window.width ?? 0);
+      const bottom = window.position.y + (window.height ?? 0);
       const overlaps =
         position.x < right &&
         window.position.x < position.x + width &&
@@ -290,26 +291,28 @@ export function BoardWindowFrame(props: {
           style={{ WebkitAppRegion: "drag" } as CSSProperties}
         />
       ) : (
-        <NodeResizer minWidth={280} minHeight={180} />
+        <NodeResizer minWidth={280} minHeight={180} autoScale={false} />
       )}
       <div className="board-window-header">
         {props.title}
         <div className="flex-1" />
-        {props.actions}
-        {props.canFullScreen === false ? null : (
+        <div className="nodrag nopan flex items-center gap-1">
+          {props.actions}
+          {props.canFullScreen === false ? null : (
+            <IconButton
+              label={fullScreen ? "Exit full screen" : "Full screen"}
+              onClick={toggleFullScreen}
+            >
+              {fullScreen ? <Minimize2Icon size={15} /> : <Maximize2Icon size={15} />}
+            </IconButton>
+          )}
           <IconButton
-            label={fullScreen ? "Exit full screen" : "Full screen"}
-            onClick={toggleFullScreen}
+            label={props.closeLabel ?? `Close ${props.label}`}
+            onClick={props.onClose ?? (() => windows.close(props.id))}
           >
-            {fullScreen ? <Minimize2Icon size={15} /> : <Maximize2Icon size={15} />}
+            <XIcon size={15} />
           </IconButton>
-        )}
-        <IconButton
-          label={props.closeLabel ?? `Close ${props.label}`}
-          onClick={props.onClose ?? (() => windows.close(props.id))}
-        >
-          <XIcon size={15} />
-        </IconButton>
+        </div>
       </div>
       <div className="nodrag nopan nowheel nokey relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-xl">
         {props.children}

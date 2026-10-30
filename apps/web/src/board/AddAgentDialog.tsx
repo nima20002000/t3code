@@ -17,6 +17,7 @@ import {
   type BoardNode,
 } from "./boardStore";
 import { pairConnectedMachine } from "./boardApi";
+import { loadWindows } from "./BoardWindows";
 import { useBoardMachines } from "./useBoardMachines";
 import {
   Button,
@@ -137,7 +138,17 @@ export function AgentDialog(props: {
         modelSelection: selection,
         runtimeMode: access,
         ...(role.trim() ? { prompt: role } : {}),
-        ...nextNodePosition(workflow, profile),
+        ...nextNodePosition(
+          workflow,
+          profile,
+          loadWindows(workflowId)
+            .filter((window) => workflow.nodes.some((node) => node.id === window.data.nodeId))
+            .map((window) => ({
+              ...window.position,
+              width: window.width ?? 0,
+              height: window.height ?? 0,
+            })),
+        ),
       });
       props.onClose();
     } catch (cause) {

@@ -1334,15 +1334,14 @@ const make = Effect.gen(function* () {
         }),
       )
       .pipe(
-        Effect.catchIf(
-          (error) => error._tag === "SqlError",
-          (cause) =>
+        Effect.catchTags({
+          SqlError: (cause) =>
             Effect.logError("Could not start board run", { cause }).pipe(
               Effect.andThen(
                 Effect.fail(new BoardInternalError({ message: "Could not start board run." })),
               ),
             ),
-        ),
+        }),
       );
     if (result) yield* spawn(input.id);
     return result;

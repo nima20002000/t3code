@@ -1,6 +1,67 @@
 import { expect, it, vi } from "vite-plus/test";
 
-import { loadWindows, raiseWindow, requestFullScreen, syncNativeViews } from "./BoardWindows";
+import {
+  loadWindows,
+  newWindowNode,
+  raiseWindow,
+  requestFullScreen,
+  syncNativeViews,
+} from "./BoardWindows";
+import { nextNodePosition, type BoardNode } from "./boardStore";
+
+it("opens an agent's windows clear of the kanban and other agents", () => {
+  const node = {
+    id: "scout",
+    name: "Scout",
+    profile: "orchestrator",
+    environmentId: "local",
+    modelSelection: { instanceId: "devReplay", model: "showcase" },
+    x: 0,
+    y: 0,
+    threadId: "",
+  } as BoardNode;
+  const kanban = {
+    id: ":kanban",
+    position: { x: -300, y: 350 },
+    width: 900,
+    height: 320,
+    data: {},
+  };
+  const other = { id: "worker", position: { x: 0, y: 700 }, width: 318, height: 318, data: {} };
+  const chat = newWindowNode("chat", node, [], {}, [kanban, other]);
+  const terminal = newWindowNode("terminal", node, [chat], {}, [kanban, other]);
+  for (const window of [chat, terminal]) {
+    for (const occupied of [kanban, other, ...(window === terminal ? [chat] : [])]) {
+      expect(
+        window.position.x + window.width! <= occupied.position.x ||
+          window.position.x >= occupied.position.x + occupied.width! ||
+          window.position.y + window.height! <= occupied.position.y ||
+          window.position.y >= occupied.position.y + occupied.height!,
+      ).toBe(true);
+    }
+  }
+});
+
+it("adds agents clear of resized agents, the kanban and open windows", () => {
+  const occupied = [
+    { x: 40, y: 40, width: 520, height: 520 },
+    { x: 640, y: 40, width: 900, height: 320 },
+    { x: 0, y: 600, width: 440, height: 600 },
+  ];
+  const workflow = {
+    nodes: [{ id: "scout", profile: "orchestrator", size: 520, x: 40, y: 40 } as BoardNode],
+    kanban: occupied[1]!,
+  };
+  const position = nextNodePosition(workflow, "orchestrator", [occupied[2]!]);
+  for (const box of occupied) {
+    expect(
+      position.x >= box.x + box.width ||
+        position.x + 318 <= box.x ||
+        position.y >= box.y + box.height ||
+        position.y + 318 <= box.y,
+    ).toBe(true);
+  }
+});
 
 const fixed = (style: string, attributes: Record<string, string> = {}) => {
   const element = document.createElement("div");

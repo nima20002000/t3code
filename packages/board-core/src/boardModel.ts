@@ -307,6 +307,7 @@ export const MAX_HISTORY = 100;
 export interface EditSnapshot {
   readonly nodes: ReadonlyArray<BoardNode>;
   readonly edges: ReadonlyArray<BoardEdge>;
+  readonly kanban?: KanbanPlacement;
 }
 
 export interface History {
@@ -316,8 +317,12 @@ export interface History {
   readonly future: ReadonlyArray<EditSnapshot>;
 }
 
-export function snapshotOf(workflow: Pick<Workflow, "nodes" | "edges">): EditSnapshot {
-  return { nodes: workflow.nodes, edges: workflow.edges };
+export function snapshotOf(workflow: Pick<Workflow, "nodes" | "edges" | "kanban">): EditSnapshot {
+  return {
+    nodes: workflow.nodes,
+    edges: workflow.edges,
+    ...(workflow.kanban ? { kanban: workflow.kanban } : {}),
+  };
 }
 
 export function createHistory(origin: EditSnapshot): History {
@@ -327,7 +332,12 @@ export function createHistory(origin: EditSnapshot): History {
 /** Records `current` as an undo step (call before applying an edit). Clears redo. */
 export function recordHistory(history: History, current: EditSnapshot): History {
   const last = history.past.at(-1);
-  if (last !== undefined && last.nodes === current.nodes && last.edges === current.edges) {
+  if (
+    last !== undefined &&
+    last.nodes === current.nodes &&
+    last.edges === current.edges &&
+    last.kanban === current.kanban
+  ) {
     return { ...history, future: [] };
   }
   return { ...history, past: [...history.past, current].slice(-MAX_HISTORY), future: [] };
@@ -367,8 +377,10 @@ export function discardHistory(history: History): {
 /** Dropped nodes take their pending wakes with them. */
 export function applySnapshot(workflow: Workflow, snapshot: EditSnapshot): Workflow {
   const ids = new Set(snapshot.nodes.map((node) => node.id));
+  const { kanban: _kanban, ...rest } = workflow;
   return {
-    ...workflow,
+    ...rest,
+    ...(snapshot.kanban ? { kanban: snapshot.kanban } : {}),
     nodes: snapshot.nodes,
     edges: snapshot.edges,
     pending: workflow.pending.filter((wake) => ids.has(wake.from) && ids.has(wake.to)),
@@ -378,7 +390,7 @@ export function applySnapshot(workflow: Workflow, snapshot: EditSnapshot): Workf
 export function snapshotsEqual(a: EditSnapshot, b: EditSnapshot): boolean {
   return (
     a === b ||
-    (a.nodes === b.nodes && a.edges === b.edges) ||
+    (a.nodes === b.nodes && a.edges === b.edges && a.kanban === b.kanban) ||
     JSON.stringify(a) === JSON.stringify(b)
   );
 }
