@@ -376,6 +376,24 @@ const make = Effect.gen(function* () {
               } else {
                 yield* store.putTask({ ...task, status: "stopped" });
               }
+              const node = run?.definition.nodes.find((entry) => entry.id === task.nodeId);
+              const card =
+                task.cardId === undefined
+                  ? undefined
+                  : (yield* store.listKanban(task.workflowId)).find(
+                      (entry) => entry.id === task.cardId,
+                    );
+              if (node && (task.cardId === undefined || card?.status === "doing"))
+                yield* moveWorkerCard(
+                  task.workflowId,
+                  node,
+                  [["doing"]],
+                  "blocked",
+                  workflowId === undefined
+                    ? "Stopped because a sibling request failed."
+                    : "Stopped by user.",
+                  task.cardId,
+                );
             }
             if (!workflow || !run || run.status !== "running") return { targets: selected, run };
             const at = yield* now;
@@ -407,6 +425,11 @@ const make = Effect.gen(function* () {
           const result = yield* interruptTask(task.id).pipe(Effect.result);
           if (Result.isFailure(result)) {
             if (result.failure._tag === "SqlError") return yield* result.failure;
+            if (result.failure.retryable) {
+              // The machine is away; the task retries until it is back (see process).
+              yield* spawn(task.id);
+              continue;
+            }
             failure ??= result.failure;
             yield* Effect.logWarning("Could not interrupt board task", {
               taskId: task.id,
@@ -604,7 +627,15 @@ const make = Effect.gen(function* () {
       const task = yield* store.getTask(taskId);
       if (!task) return;
       if (task.status === "completing") {
-        yield* lockFor(task.runId).withPermits(1)(interruptTask(task.id));
+        // Retried promptly: a restarted machine may already be continuing the stopped turn.
+        yield* lockFor(task.runId)
+          .withPermits(1)(interruptTask(task.id))
+          .pipe(
+            Effect.retry({
+              while: (error) => error._tag === "NodeDriverError" && error.retryable === true,
+              schedule: Schedule.spaced("1 second"),
+            }),
+          );
         return;
       }
       if (terminal(task.status)) return;
@@ -724,6 +755,7 @@ const make = Effect.gen(function* () {
         );
         if (Option.isNone(settled)) {
           const latest = yield* store.getTask(task.id);
+          if (latest?.status === "completing") continue;
           if (latest && !terminal(latest.status))
             yield* failTask(task.id, "The thread's settlement stream ended unexpectedly.");
           return;

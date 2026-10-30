@@ -36,6 +36,9 @@ const recorded = (label: string) => {
   return structuredClone(frame);
 };
 
+/** Tests turn this off to keep a session's first turn running, as a long agent turn would. */
+export const fakeTurns = { completeFirst: true };
+
 export function layer(tag: typeof CodexAdapter.CodexAppServerClientFactory) {
   return Layer.succeed(tag, {
     open: () =>
@@ -84,7 +87,7 @@ export function layer(tag: typeof CodexAdapter.CodexAppServerClientFactory) {
                   method: started.method,
                   params: { threadId, turn: { ...started.params.turn, id: turnId } },
                 });
-                if (turnNumber === 1) {
+                if (turnNumber === 1 && fakeTurns.completeFirst) {
                   const item = {
                     type: "agentMessage",
                     id: "fake-answer",
