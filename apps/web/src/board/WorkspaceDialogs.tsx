@@ -150,7 +150,12 @@ export function DeleteWorkspaceDialog(props: {
           <Button
             variant="destructive"
             onClick={() => {
-              removeWorkspace(workspace.id, removeFolders);
+              removeWorkspace(
+                workspace.id,
+                removeFolders
+                  ? folders.map(({ environmentId, path }) => ({ environmentId, path }))
+                  : [],
+              );
               props.onClose();
             }}
           >

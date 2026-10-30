@@ -7,7 +7,6 @@ import * as NodeOS from "node:os";
 
 import type { ProjectId } from "@t3tools/contracts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
-import { ProjectNotFoundError } from "./ProjectService.ts";
 
 export class ProjectFolderRefusedError extends Schema.TaggedError<ProjectFolderRefusedError>()(
   "ProjectFolderRefusedError",
@@ -41,7 +40,8 @@ export const removeProjectFolder = Effect.fn("ProjectFolderRemoval.remove")(func
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const own = yield* projects.get(projectId, { includeDeleted: true });
-  if (Option.isNone(own)) return yield* new ProjectNotFoundError({ projectId });
+  // A folder whose project was never created on this machine has nothing to delete.
+  if (Option.isNone(own)) return { removed: false };
   const refuse = (reason: string) =>
     new ProjectFolderRefusedError({ workspaceRoot: confirmedPath, reason });
 
@@ -65,8 +65,10 @@ export const removeProjectFolder = Effect.fn("ProjectFolderRemoval.remove")(func
   const others = yield* projects.list({ includeDeleted: true });
   for (const other of others) {
     if (other.projectId === projectId) continue;
-    if (isWithin(path, target, yield* canonical(other.workspaceRoot)))
-      return yield* refuse("another project lives inside it.");
+    const otherRoot = yield* canonical(other.workspaceRoot);
+    // A deleted project that sat on this very folder is history, not a second owner.
+    if (other.deletedAt !== null && otherRoot === target) continue;
+    if (isWithin(path, target, otherRoot)) return yield* refuse("another project lives inside it.");
   }
   yield* fileSystem.remove(target, { recursive: true, force: true });
   return { removed: true };

@@ -336,13 +336,16 @@ export function renameWorkspace(id: string, name: string) {
     ),
   );
 }
-export function removeWorkspace(id: string, removeFolders = false) {
+export function removeWorkspace(
+  id: string,
+  removeFolders: ReadonlyArray<{ environmentId: EnvironmentId; path: string }> = [],
+) {
   perform("Could not delete workspace", () =>
     runBoardMutation((client) =>
       client.deleteWorkspace({
         headers: {},
         params: { workspaceId: id },
-        payload: removeFolders ? { removeFolders } : {},
+        payload: removeFolders.length > 0 ? { removeFolders } : {},
       }),
     ),
   );

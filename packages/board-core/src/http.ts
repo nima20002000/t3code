@@ -280,9 +280,11 @@ const PeerParams = Schema.Struct({ peerId: Id });
 const ScheduleParams = Schema.Struct({ scheduleId: Id });
 
 export const BoardCreateWorkspaceInput = Schema.Struct({ id: Id, name: TrimmedNonEmptyString });
-/** `removeFolders` also deletes the workspace's folder on every machine it has one on. */
+/** `removeFolders` lists the exact folders the user confirmed; only those are deleted from disk. */
 export const BoardDeleteWorkspaceInput = Schema.Struct({
-  removeFolders: Schema.optionalKey(Schema.Boolean),
+  removeFolders: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ environmentId: EnvironmentId, path: Schema.String })),
+  ),
 });
 export type BoardDeleteWorkspaceInput = typeof BoardDeleteWorkspaceInput.Type;
 export const BoardUpdateWorkspaceInput = Schema.Struct({ name: TrimmedNonEmptyString });

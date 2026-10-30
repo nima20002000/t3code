@@ -155,23 +155,28 @@ const make = Effect.gen(function* () {
       return yield* new BoardConflictError({ message: "A workspace with that name exists." });
   });
   /**
-   * Removes the projects (and, per `folders`, the confirmed folders) of a workspace's machines.
-   * "managed" deletes board-created folders, "all" every folder with a recorded path; a folder
-   * without a path (migrated) is never deleted. A folder is deleted before its project; a failing
+   * Removes the projects (and the confirmed folders) of a workspace's machines.
+   * Only folders listed in `confirmed` (machine and path as shown to the user) are deleted from disk. A folder is deleted before its project; a failing
    * machine is skipped, the others still run, and the failures come back as one error.
    */
   const removeProjects = Effect.fn("BoardService.removeProjects")(function* (
     workspace: Workspace,
     options: {
       readonly environmentId?: EnvironmentId;
-      readonly folders: "none" | "managed" | "all";
+      readonly confirmed: ReadonlyArray<{
+        readonly environmentId: EnvironmentId;
+        readonly path: string;
+      }>;
     },
   ) {
     const failed: Array<string> = [];
     for (const folder of workspace.folders) {
-      const hasPath = folder.path !== "";
+      // Only a folder whose machine and path the user confirmed is ever deleted from disk.
       const removeFolderPath =
-        hasPath && (options.folders === "all" || (options.folders === "managed" && folder.managed))
+        folder.path !== "" &&
+        options.confirmed.some(
+          (entry) => entry.environmentId === folder.environmentId && entry.path === folder.path,
+        )
           ? folder.path
           : undefined;
       if (
@@ -199,7 +204,7 @@ const make = Effect.gen(function* () {
         failed.push(`${folder.path || folder.environmentId} (${reason})`);
       }
     }
-    if (failed.length > 0 && options.folders !== "none")
+    if (failed.length > 0 && options.confirmed.length > 0)
       return yield* new BoardConflictError({
         message: `Could not delete the folder on: ${failed.join("; ")}. Nothing on the board was deleted; try again.`,
       });
@@ -280,8 +285,8 @@ const make = Effect.gen(function* () {
         });
       return workspace;
     });
-    // Only folders the board created are deleted here; an adopted folder stays on disk.
-    yield* removeProjects(yield* store.transaction(check), { environmentId, folders: "managed" });
+    // Settings never deletes files: only the confirmed workspace delete does.
+    yield* removeProjects(yield* store.transaction(check), { environmentId, confirmed: [] });
     return yield* store.transaction(
       Effect.gen(function* () {
         const workspace = yield* check;
@@ -296,7 +301,7 @@ const make = Effect.gen(function* () {
     id: string,
     input: BoardDeleteWorkspaceInput = {},
   ) {
-    const removeFolders = input.removeFolders === true;
+    const removeFolders = input.removeFolders ?? [];
     const workspace = yield* getWorkspace(id);
     const deleteRows = store.transaction(
       Effect.gen(function* () {
@@ -313,7 +318,7 @@ const make = Effect.gen(function* () {
         yield* store.appendEvent({ kind: "workspace.deleted", workspaceId: id });
       }),
     );
-    if (removeFolders) {
+    if (removeFolders.length > 0) {
       // Folders go first: if any machine fails, the workspace stays so the delete can be retried.
       yield* store.transaction(
         Effect.gen(function* () {
@@ -323,14 +328,14 @@ const make = Effect.gen(function* () {
             yield* checkEditable(workflow);
         }),
       );
-      yield* removeProjects(workspace, { folders: "all" });
+      yield* removeProjects(workspace, { confirmed: removeFolders });
       yield* deleteRows;
       return;
     }
     // Rows go first, in one transaction with the editable check, so no run can start while the
     // slow machine cleanup below runs.
     yield* deleteRows;
-    yield* removeProjects(workspace, { folders: "none" });
+    yield* removeProjects(workspace, { confirmed: [] });
   });
 
   const create = Effect.fn("BoardService.createWorkflow")(function* (

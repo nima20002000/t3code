@@ -10,7 +10,11 @@ import { isWithin, removeProjectFolder } from "../project/ProjectFolderRemoval.t
 import { ProjectStore } from "./upstream.ts";
 
 const projectId = ProjectId.make("p");
-const withRoots = (roots: { readonly own: string; readonly others?: ReadonlyArray<string> }) =>
+const withRoots = (roots: {
+  readonly own: string;
+  readonly others?: ReadonlyArray<string>;
+  readonly deleted?: boolean;
+}) =>
   Effect.provideService(
     ProjectStore.ProjectStoreV2,
     ProjectStore.ProjectStoreV2.of({
@@ -21,6 +25,7 @@ const withRoots = (roots: { readonly own: string; readonly others?: ReadonlyArra
           ...(roots.others ?? []).map((workspaceRoot, i) => ({
             projectId: `o${i}`,
             workspaceRoot,
+            deletedAt: roots.deleted === true ? "2026-01-01T00:00:00.000Z" : null,
           })),
         ] as never),
     } as never),
@@ -88,6 +93,21 @@ it.effect("refuses a folder holding another project, however the other is spelle
       assert.strictEqual(refused._tag, "ProjectFolderRefusedError", other);
       assert.isTrue(yield* fileSystem.exists(own));
     }
+    yield* fileSystem.remove(parent, { recursive: true });
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("a deleted project that sat on the same folder does not block its removal", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* tempParent;
+    const own = path.join(parent, "work");
+    yield* fileSystem.makeDirectory(own);
+    const result = yield* removeProjectFolder(projectId, own).pipe(
+      withRoots({ own, others: [own], deleted: true }),
+    );
+    assert.deepStrictEqual(result, { removed: true });
     yield* fileSystem.remove(parent, { recursive: true });
   }).pipe(Effect.provide(NodeServices.layer)),
 );

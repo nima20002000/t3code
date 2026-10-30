@@ -224,10 +224,7 @@ const make = Effect.gen(function* () {
         yield* ProjectFolderRemoval.removeProjectFolder(
           input.projectId,
           input.removeFolderPath,
-        ).pipe(
-          Effect.provideContext(removalServices),
-          Effect.catchTags({ ProjectNotFoundError: () => Effect.void }),
-        );
+        ).pipe(Effect.provideContext(removalServices));
       yield* projects
         .delete({
           commandId: CommandId.make(`board:project-delete:${input.projectId}`),

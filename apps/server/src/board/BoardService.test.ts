@@ -257,16 +257,43 @@ it.effect("deleting a workspace removes its folder on every machine only when as
         yield* board.createWorkflow({ id: "w", name: "W", workspaceId: "ws" });
         yield* board.createNode("w", nodeInput("a"));
         yield* board.createNode("w", nodeInput("b", { environmentId: otherEnvironmentId }));
-        const projectIds = (yield* board.getWorkspace("ws")).folders.map(
-          (folder) => folder.projectId,
+        const folders = (yield* board.getWorkspace("ws")).folders;
+        const projectIds = folders.map((folder) => folder.projectId);
+        yield* board.deleteWorkspace(
+          "ws",
+          removeFolders
+            ? { removeFolders: folders.map(({ environmentId, path }) => ({ environmentId, path })) }
+            : {},
         );
-        yield* board.deleteWorkspace("ws", removeFolders ? { removeFolders } : {});
         assert.sameMembers([...(yield* Queue.takeN(deleted, 2))], projectIds);
         assert.strictEqual(yield* Queue.size(foldersRemoved), removeFolders ? 2 : 0);
         if (removeFolders)
           assert.sameMembers([...(yield* Queue.takeN(foldersRemoved, 2))], projectIds);
       }).pipe(Effect.provide(layer));
     }
+  }),
+);
+
+it.effect("only the folders the user confirmed are deleted from disk", () =>
+  Effect.gen(function* () {
+    const { foldersRemoved, layer } = yield* makeLayer;
+    yield* Effect.gen(function* () {
+      const board = yield* BoardService.BoardService;
+      yield* board.createWorkspace({ id: "ws", name: "Workspace" });
+      yield* board.createWorkflow({ id: "w", name: "W", workspaceId: "ws" });
+      yield* board.createNode("w", nodeInput("a"));
+      yield* board.createNode("w", nodeInput("b", { environmentId: otherEnvironmentId }));
+      const [first, second] = (yield* board.getWorkspace("ws")).folders;
+      // The second folder changed path after the dialog, so what was confirmed no longer matches.
+      yield* board.deleteWorkspace("ws", {
+        removeFolders: [
+          { environmentId: first!.environmentId, path: first!.path },
+          { environmentId: second!.environmentId, path: "/somewhere/else" },
+        ],
+      });
+      assert.deepStrictEqual([...(yield* Queue.takeN(foldersRemoved, 1))], [first!.projectId]);
+      assert.strictEqual(yield* Queue.size(foldersRemoved), 0);
+    }).pipe(Effect.provide(layer));
   }),
 );
 
@@ -281,20 +308,25 @@ it.effect("a machine that cannot delete its folder keeps the whole workspace for
       yield* board.createNode("w", nodeInput("b", { environmentId: otherEnvironmentId }));
       const [first, second] = (yield* board.getWorkspace("ws")).folders;
       yield* Ref.set(failing, second!.projectId);
-      const failure = yield* board.deleteWorkspace("ws", { removeFolders: true }).pipe(Effect.flip);
+      const confirmed = (yield* board.getWorkspace("ws")).folders.map(
+        ({ environmentId, path }) => ({ environmentId, path }),
+      );
+      const failure = yield* board
+        .deleteWorkspace("ws", { removeFolders: confirmed })
+        .pipe(Effect.flip);
       assert.instanceOf(failure, BoardConflictError);
       assert.include(failure.message, second!.path);
       // The other machine was still cleaned, and the board keeps the workspace.
       assert.deepStrictEqual([...(yield* Queue.takeN(foldersRemoved, 1))], [first!.projectId]);
       assert.strictEqual((yield* board.getWorkspace("ws")).id, "ws");
       yield* Ref.set(failing, null);
-      yield* board.deleteWorkspace("ws", { removeFolders: true });
+      yield* board.deleteWorkspace("ws", { removeFolders: confirmed });
       assert.strictEqual(yield* Queue.size(deleted), 3);
     }).pipe(Effect.provide(layer));
   }),
 );
 
-it.effect("removing one folder in settings never deletes an adopted folder", () =>
+it.effect("removing one folder in settings never deletes files from disk", () =>
   Effect.gen(function* () {
     const { foldersRemoved, deleted, layer } = yield* makeLayer;
     yield* Effect.gen(function* () {
@@ -324,7 +356,8 @@ it.effect("removing one folder in settings never deletes an adopted folder", () 
       yield* board.deleteFolder("ws", environmentId);
       assert.strictEqual(yield* Queue.size(deleted), 0);
       yield* board.deleteFolder("ws", otherEnvironmentId);
-      assert.deepStrictEqual([...(yield* Queue.takeN(foldersRemoved, 1))], ["made"]);
+      assert.deepStrictEqual([...(yield* Queue.takeN(deleted, 1))], ["made"]);
+      assert.strictEqual(yield* Queue.size(foldersRemoved), 0);
     }).pipe(Effect.provide(layer));
   }),
 );
