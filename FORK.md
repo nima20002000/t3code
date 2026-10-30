@@ -60,6 +60,9 @@ a merge (the server route is reserved for the later server phase):
   tabs to another under the same tab ids; `apps/server/src/preview/ServerBrowser.ts` moves the live page with it and drops the
   old agent's claim (`disown` in `apps/server/src/preview/SessionControl.ts`), and `preview_open` without a tabId reuses the
   chat's tab no agent owns (tested in `ServerBrowser.test.ts`). Board drivers and the schedule's `new_thread` use it.
+- `apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts` and its test `apps/server/src/orchestration-v2/Adapters/ClaudeAgentSdkQueryRunner.test.ts`: Claude sessions start
+  with `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` and `CLAUDE_CODE_ENABLE_TASKS=1` (a user's env setting wins), so Claude keeps a live to-do
+  list that t3 shows as the plan and the board mirrors onto the kanban.
 - `apps/web/src/index.css`: one `@import` of `board/styles/board.css`, so Tailwind and the lint rules know the board's classes.
 - `packages/contracts/src/project.ts`, `packages/contracts/src/rpc.ts`, `apps/server/src/ws.ts`,
   `apps/server/src/auth/RpcAuthorization.ts`, `apps/server/src/observability/RpcInstrumentation.ts`,

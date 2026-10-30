@@ -516,7 +516,8 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       const cli = fakeClaudeCli(
         [
           'dir=$(dirname "$0")',
-          `printf '%s' "$${PortScanner.AGENT_THREAD_ENV}" > "$dir/thread"`,
+          // The CLI's to-do tools are on, so t3 can show its plan live.
+          `printf '%s %s %s' "$${PortScanner.AGENT_THREAD_ENV}" "$CLAUDE_CODE_ENABLE_TODO_TOOLS" "$CLAUDE_CODE_ENABLE_TASKS" > "$dir/thread"`,
           "cat > /dev/null",
         ].join("\n"),
       );
@@ -533,7 +534,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       });
 
       const session = yield* openFakeCli(cli);
-      assert.equal(yield* Effect.promise(() => threadRead), "thread-fake-cli");
+      assert.equal(yield* Effect.promise(() => threadRead), "thread-fake-cli 1 1");
       assert.equal(runningAgents, 1);
       yield* session.close;
       yield* Effect.promise(() => agentReleased);

@@ -961,9 +961,13 @@ export const layerQueryRunner: Layer.Layer<
           // Send MCP credentials over stdin to keep them out of SDK argv and inherited command environments.
           const { mcpServers, ...sdkOptions } = input.options;
           // Jobs the agent starts inherit the thread, so port discovery can attribute their servers.
+          // The CLI hides its to-do and task tools from SDK sessions unless asked; t3 shows them
+          // as the live plan. A user's own env setting still wins.
           const queryOptions = {
             ...sdkOptions,
             env: {
+              CLAUDE_CODE_ENABLE_TODO_TOOLS: "1",
+              CLAUDE_CODE_ENABLE_TASKS: "1",
               ...(sdkOptions.env ?? hostEnvironment),
               [PortScanner.AGENT_THREAD_ENV]: input.threadId,
             },
