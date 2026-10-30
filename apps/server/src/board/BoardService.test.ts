@@ -197,11 +197,27 @@ const makeMachines = Effect.gen(function* () {
 
 const makeLayer = Effect.gen(function* () {
   const deleted = yield* Queue.unbounded<ProjectId>();
+  const foldersRemoved = yield* Queue.unbounded<ProjectId>();
+  const failing = yield* Ref.make<ProjectId | null>(null);
   const machines = yield* makeMachines;
   const driver: NodeDriver = {
     ...machines.schedules,
     ensureProject: () => Effect.succeed({ adopted: false }),
-    deleteProject: (input) => Queue.offer(deleted, input.projectId).pipe(Effect.asVoid),
+    deleteProject: (input) =>
+      Ref.get(failing).pipe(
+        Effect.flatMap((id) =>
+          id === input.projectId && input.removeFolderPath !== undefined
+            ? Effect.fail(new NodeDriverError({ operation: "deleteProject", message: "boom" }))
+            : Effect.void,
+        ),
+        Effect.andThen(Queue.offer(deleted, input.projectId)),
+        Effect.andThen(
+          input.removeFolderPath !== undefined
+            ? Queue.offer(foldersRemoved, input.projectId)
+            : Effect.void,
+        ),
+        Effect.asVoid,
+      ),
     launch: (input) =>
       Effect.succeed({
         environmentId: input.environmentId,
@@ -227,7 +243,7 @@ const makeLayer = Effect.gen(function* () {
     Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, registry)),
     Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
   );
-  return { deleted, layer, machines };
+  return { deleted, foldersRemoved, failing, layer, machines };
 });
 
 it.effect("workspaces own workflows, need unique names, and get a folder per machine", () =>
@@ -383,6 +399,121 @@ it.effect(
         assert.sameMembers(kinds, ["schedule.deleted", "workflow.deleted", "workspace.deleted"]);
       }).pipe(Effect.provide(layer));
     }),
+);
+
+it.effect("deleting a workspace removes its folder on every machine only when asked", () =>
+  Effect.gen(function* () {
+    for (const removeFolders of [false, true]) {
+      const { deleted, foldersRemoved, layer } = yield* makeLayer;
+      yield* Effect.gen(function* () {
+        const board = yield* BoardService.BoardService;
+        yield* board.createWorkspace({ id: "ws", name: "Workspace" });
+        yield* board.createWorkflow({ id: "w", name: "W", workspaceId: "ws" });
+        yield* board.createNode("w", nodeInput("a"));
+        yield* board.createNode("w", nodeInput("b", { environmentId: otherEnvironmentId }));
+        const folders = (yield* board.getWorkspace("ws")).folders;
+        const projectIds = folders.map((folder) => folder.projectId);
+        yield* board.deleteWorkspace(
+          "ws",
+          removeFolders
+            ? { removeFolders: folders.map(({ environmentId, path }) => ({ environmentId, path })) }
+            : {},
+        );
+        assert.sameMembers([...(yield* Queue.takeN(deleted, 2))], projectIds);
+        assert.strictEqual(yield* Queue.size(foldersRemoved), removeFolders ? 2 : 0);
+        if (removeFolders)
+          assert.sameMembers([...(yield* Queue.takeN(foldersRemoved, 2))], projectIds);
+      }).pipe(Effect.provide(layer));
+    }
+  }),
+);
+
+it.effect("only the folders the user confirmed are deleted from disk", () =>
+  Effect.gen(function* () {
+    const { foldersRemoved, layer } = yield* makeLayer;
+    yield* Effect.gen(function* () {
+      const board = yield* BoardService.BoardService;
+      yield* board.createWorkspace({ id: "ws", name: "Workspace" });
+      yield* board.createWorkflow({ id: "w", name: "W", workspaceId: "ws" });
+      yield* board.createNode("w", nodeInput("a"));
+      yield* board.createNode("w", nodeInput("b", { environmentId: otherEnvironmentId }));
+      const [first, second] = (yield* board.getWorkspace("ws")).folders;
+      // The second folder changed path after the dialog, so what was confirmed no longer matches.
+      yield* board.deleteWorkspace("ws", {
+        removeFolders: [
+          { environmentId: first!.environmentId, path: first!.path },
+          { environmentId: second!.environmentId, path: "/somewhere/else" },
+        ],
+      });
+      assert.deepStrictEqual([...(yield* Queue.takeN(foldersRemoved, 1))], [first!.projectId]);
+      assert.strictEqual(yield* Queue.size(foldersRemoved), 0);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("a machine that cannot delete its folder keeps the whole workspace for a retry", () =>
+  Effect.gen(function* () {
+    const { deleted, foldersRemoved, failing, layer } = yield* makeLayer;
+    yield* Effect.gen(function* () {
+      const board = yield* BoardService.BoardService;
+      yield* board.createWorkspace({ id: "ws", name: "Workspace" });
+      yield* board.createWorkflow({ id: "w", name: "W", workspaceId: "ws" });
+      yield* board.createNode("w", nodeInput("a"));
+      yield* board.createNode("w", nodeInput("b", { environmentId: otherEnvironmentId }));
+      const [first, second] = (yield* board.getWorkspace("ws")).folders;
+      yield* Ref.set(failing, second!.projectId);
+      const confirmed = (yield* board.getWorkspace("ws")).folders.map(
+        ({ environmentId, path }) => ({ environmentId, path }),
+      );
+      const failure = yield* board
+        .deleteWorkspace("ws", { removeFolders: confirmed })
+        .pipe(Effect.flip);
+      assert.instanceOf(failure, BoardConflictError);
+      assert.include(failure.message, second!.path);
+      // The other machine was still cleaned, and the board keeps the workspace.
+      assert.deepStrictEqual([...(yield* Queue.takeN(foldersRemoved, 1))], [first!.projectId]);
+      assert.strictEqual((yield* board.getWorkspace("ws")).id, "ws");
+      yield* Ref.set(failing, null);
+      yield* board.deleteWorkspace("ws", { removeFolders: confirmed });
+      assert.strictEqual(yield* Queue.size(deleted), 3);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("removing one folder in settings never deletes files from disk", () =>
+  Effect.gen(function* () {
+    const { foldersRemoved, deleted, layer } = yield* makeLayer;
+    yield* Effect.gen(function* () {
+      const board = yield* BoardService.BoardService;
+      const store = yield* BoardStore.BoardStore;
+      yield* board.createWorkspace({ id: "ws", name: "Workspace" });
+      const workspace = yield* board.getWorkspace("ws");
+      yield* store.transaction(
+        store.putWorkspace({
+          ...workspace,
+          folders: [
+            {
+              environmentId,
+              projectId: ProjectId.make("adopted"),
+              path: "/srv/repo",
+              managed: false,
+            },
+            {
+              environmentId: otherEnvironmentId,
+              projectId: ProjectId.make("made"),
+              path: "/srv/made",
+              managed: true,
+            },
+          ],
+        }),
+      );
+      yield* board.deleteFolder("ws", environmentId);
+      assert.strictEqual(yield* Queue.size(deleted), 0);
+      yield* board.deleteFolder("ws", otherEnvironmentId);
+      assert.deepStrictEqual([...(yield* Queue.takeN(deleted, 1))], ["made"]);
+      assert.strictEqual(yield* Queue.size(foldersRemoved), 0);
+    }).pipe(Effect.provide(layer));
+  }),
 );
 
 it.effect("a workspace with an active run cannot be deleted", () =>

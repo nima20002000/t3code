@@ -212,6 +212,7 @@ import { refreshPushedPullRequests } from "./git/refreshPushedPullRequests.ts";
 import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
+import { removeProjectFolder } from "./project/ProjectFolderRemoval.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import { threadWorkspaceRoot } from "./project/threadWorkspaceRoot.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
@@ -2743,6 +2744,12 @@ export const layerWsRpc = (
           }),
         [WS_METHODS.projectsEnsureScratch]: () =>
           managedFolders.ensureScratchProject.pipe(
+            Effect.mapError(
+              (cause) => new OrchestrationDispatchCommandError({ message: cause.message, cause }),
+            ),
+          ),
+        [WS_METHODS.projectsRemoveFolder]: (input) =>
+          removeProjectFolder(input.projectId, input.path).pipe(
             Effect.mapError(
               (cause) => new OrchestrationDispatchCommandError({ message: cause.message, cause }),
             ),

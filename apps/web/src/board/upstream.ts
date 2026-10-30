@@ -12,6 +12,7 @@ export {
   DialogPopup,
   DialogTitle,
 } from "../components/ui/dialog";
+export { Checkbox } from "../components/ui/checkbox";
 export { Input } from "../components/ui/input";
 export {
   Menu,

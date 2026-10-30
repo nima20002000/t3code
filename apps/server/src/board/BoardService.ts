@@ -13,6 +13,7 @@ import {
   type BoardCreateNodeInput,
   type BoardCreateScheduleInput,
   type BoardCreateWorkflowInput,
+  type BoardDeleteWorkspaceInput,
   type BoardCreateWorkspaceInput,
   type BoardEdge,
   type BoardNode,
@@ -27,7 +28,7 @@ import {
   type BoardUpdateWorkspaceInput,
   type GraphProblem,
   type KanbanCard,
-  type NodeDriverError,
+  NodeDriverError,
   type RunRecord,
   type Workflow,
   type Workspace,
@@ -37,6 +38,8 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import type { SqlError } from "effect/sql/SqlError";
 import * as AgentSchedules from "./AgentSchedules.ts";
 import * as BoardStore from "./BoardStore.ts";
@@ -54,6 +57,8 @@ type BoardError =
 type Op<A> = Effect.Effect<A, BoardError>;
 type EngineError = BoardError;
 
+const isDriverError = Schema.is(NodeDriverError);
+
 export class BoardService extends Context.Service<
   BoardService,
   {
@@ -61,7 +66,7 @@ export class BoardService extends Context.Service<
     readonly getWorkspace: (id: string) => Op<Workspace>;
     readonly createWorkspace: (input: BoardCreateWorkspaceInput) => Op<Workspace>;
     readonly updateWorkspace: (id: string, input: BoardUpdateWorkspaceInput) => Op<Workspace>;
-    readonly deleteWorkspace: (id: string) => Op<void>;
+    readonly deleteWorkspace: (id: string, input?: BoardDeleteWorkspaceInput) => Op<void>;
     readonly addFolder: (id: string, input: BoardAddFolderInput) => Op<Workspace>;
     readonly deleteFolder: (id: string, environmentId: EnvironmentId) => Op<Workspace>;
     readonly getKanban: (workflowId: string) => Op<ReadonlyArray<KanbanCard>>;
@@ -166,33 +171,60 @@ const make = Effect.gen(function* () {
     if (workspaceNameTaken(yield* store.listWorkspaces(), name, ownId))
       return yield* new BoardConflictError({ message: "A workspace with that name exists." });
   });
+  /**
+   * Removes the projects (and the confirmed folders) of a workspace's machines.
+   * Only folders listed in `confirmed` (machine and path as shown to the user) are deleted from disk. A folder is deleted before its project; a failing
+   * machine is skipped, the others still run, and the failures come back as one error.
+   */
   const removeProjects = Effect.fn("BoardService.removeProjects")(function* (
     workspace: Workspace,
-    environmentId?: EnvironmentId,
+    options: {
+      readonly environmentId?: EnvironmentId;
+      readonly confirmed: ReadonlyArray<{
+        readonly environmentId: EnvironmentId;
+        readonly path: string;
+      }>;
+    },
   ) {
+    const failed: Array<string> = [];
     for (const folder of workspace.folders) {
+      // Only a folder whose machine and path the user confirmed is ever deleted from disk.
+      const removeFolderPath =
+        folder.path !== "" &&
+        options.confirmed.some(
+          (entry) => entry.environmentId === folder.environmentId && entry.path === folder.path,
+        )
+          ? folder.path
+          : undefined;
       if (
-        !folder.managed ||
-        (environmentId !== undefined && folder.environmentId !== environmentId)
+        !(folder.managed || removeFolderPath !== undefined) ||
+        (options.environmentId !== undefined && folder.environmentId !== options.environmentId)
       )
         continue;
-      yield* drivers.get(folder.environmentId).pipe(
+      const outcome = yield* drivers.get(folder.environmentId).pipe(
         Effect.flatMap((driver) =>
           driver.deleteProject({
             environmentId: folder.environmentId,
             projectId: folder.projectId,
-            removeFolder: true,
+            ...(removeFolderPath === undefined ? {} : { removeFolderPath }),
           }),
         ),
-        Effect.catch((cause) =>
-          Effect.logWarning("Could not remove a workspace project from its machine", {
-            workspaceId: workspace.id,
-            environmentId: folder.environmentId,
-            cause,
-          }),
-        ),
+        Effect.result,
       );
+      if (Result.isFailure(outcome)) {
+        yield* Effect.logWarning("Could not remove a workspace project from its machine", {
+          workspaceId: workspace.id,
+          environmentId: folder.environmentId,
+          cause: outcome.failure,
+        });
+        const reason = isDriverError(outcome.failure) ? outcome.failure.message : "failed";
+        failed.push(`${folder.path || folder.environmentId} (${reason})`);
+      }
     }
+    if (failed.length > 0 && options.confirmed.length > 0)
+      return yield* new BoardConflictError({
+        message: `Could not delete the folder on: ${failed.join("; ")}. Nothing on the board was deleted; try again.`,
+      });
   });
   const deleteSchedulesFor = Effect.fn("BoardService.deleteSchedulesFor")(function* (
     workflowId: string,
@@ -255,39 +287,49 @@ const make = Effect.gen(function* () {
     id: string,
     environmentId: EnvironmentId,
   ) {
-    const removed = yield* store.transaction(
+    const check = Effect.gen(function* () {
+      const workspace = yield* getWorkspace(id);
+      if (!workspace.folders.some((folder) => folder.environmentId === environmentId))
+        return yield* new BoardNotFoundError({ message: "Folder not found." });
+      const inUse = (yield* store.listWorkflows()).some(
+        (workflow) =>
+          workflow.workspaceId === id &&
+          workflow.nodes.some((node) => node.environmentId === environmentId),
+      );
+      if (inUse)
+        return yield* new BoardConflictError({
+          message: "Agents of this workspace still run on that machine.",
+        });
+      return workspace;
+    });
+    // Settings never deletes files: only the confirmed workspace delete does.
+    yield* removeProjects(yield* store.transaction(check), { environmentId, confirmed: [] });
+    return yield* store.transaction(
       Effect.gen(function* () {
-        const workspace = yield* getWorkspace(id);
-        if (!workspace.folders.some((folder) => folder.environmentId === environmentId))
-          return yield* new BoardNotFoundError({ message: "Folder not found." });
-        const inUse = (yield* store.listWorkflows()).some(
-          (workflow) =>
-            workflow.workspaceId === id &&
-            workflow.nodes.some((node) => node.environmentId === environmentId),
-        );
-        if (inUse)
-          return yield* new BoardConflictError({
-            message: "Agents of this workspace still run on that machine.",
-          });
-        const next = yield* saveWorkspace({
+        const workspace = yield* check;
+        return yield* saveWorkspace({
           ...workspace,
           folders: workspace.folders.filter((folder) => folder.environmentId !== environmentId),
         });
-        return { workspace, next };
       }),
     );
-    yield* removeProjects(removed.workspace, environmentId);
-    return removed.next;
   });
-  const deleteWorkspace = Effect.fn("BoardService.deleteWorkspace")(function* (id: string) {
+  const deleteWorkspace = Effect.fn("BoardService.deleteWorkspace")(function* (
+    id: string,
+    input: BoardDeleteWorkspaceInput = {},
+  ) {
+    const removeFolders = input.removeFolders ?? [];
     const workspace = yield* getWorkspace(id);
     const workflows = (yield* store.listWorkflows()).filter(
       (workflow) => workflow.workspaceId === id,
     );
     for (const workflow of workflows) yield* checkEditable(workflow);
+    // Folders go first: if any machine fails, the workspace and its scheduled tasks stay so the
+    // delete can be retried.
+    if (removeFolders.length > 0) yield* removeProjects(workspace, { confirmed: removeFolders });
     yield* schedules.release(workflows.flatMap((workflow) => workflow.nodes));
-    // Rows go first, in one transaction with the editable check, so no run can start while the
-    // slow machine cleanup below runs.
+    // Rows go in one transaction with the editable check, so no run can start while the slow
+    // machine cleanup below runs.
     yield* store.transaction(
       Effect.gen(function* () {
         const current = (yield* store.listWorkflows()).filter(
@@ -303,7 +345,7 @@ const make = Effect.gen(function* () {
         yield* store.appendEvent({ kind: "workspace.deleted", workspaceId: id });
       }),
     );
-    yield* removeProjects(workspace);
+    if (removeFolders.length === 0) yield* removeProjects(workspace, { confirmed: [] });
   }, schedules.exclusive);
 
   const create = Effect.fn("BoardService.createWorkflow")(function* (

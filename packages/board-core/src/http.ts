@@ -299,6 +299,13 @@ const PeerParams = Schema.Struct({ peerId: Id });
 const ScheduleParams = Schema.Struct({ scheduleId: Id });
 
 export const BoardCreateWorkspaceInput = Schema.Struct({ id: Id, name: TrimmedNonEmptyString });
+/** `removeFolders` lists the exact folders the user confirmed; only those are deleted from disk. */
+export const BoardDeleteWorkspaceInput = Schema.Struct({
+  removeFolders: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ environmentId: EnvironmentId, path: Schema.String })),
+  ),
+});
+export type BoardDeleteWorkspaceInput = typeof BoardDeleteWorkspaceInput.Type;
 export const BoardUpdateWorkspaceInput = Schema.Struct({ name: TrimmedNonEmptyString });
 /** Without `path` the folder is `~/t3-workspaces/<workspace name>` on that machine. */
 export const BoardAddFolderInput = Schema.Struct({
@@ -438,6 +445,7 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
     HttpApiEndpoint.post("deleteWorkspace", "/workspaces/:workspaceId/delete", {
       headers: OptionalAuthHeaders,
       params: WorkspaceParams,
+      payload: BoardDeleteWorkspaceInput,
       success: HttpApiSchema.NoContent,
       error: Errors,
     }),

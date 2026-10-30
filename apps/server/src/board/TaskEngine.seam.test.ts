@@ -537,7 +537,13 @@ it.live("runs a board request and interrupts through the real server and orchest
       assert.strictEqual(
         (yield* request("/api/board/workspaces/workspace/delete", {
           method: "POST",
-          headers: authorization,
+          headers: { ...authorization, "content-type": "application/json" },
+          body: JSON.stringify({
+            removeFolders: [
+              { environmentId: descriptor.environmentId, path: hubFolder },
+              { environmentId: remoteDescriptor.environmentId, path: remoteFolder },
+            ],
+          }),
         })).status,
         204,
       );

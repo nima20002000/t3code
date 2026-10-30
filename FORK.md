@@ -39,6 +39,11 @@ a merge (the server route is reserved for the later server phase):
   `schedule_json` so no core migration is needed. Board schedules use them (workflow schedules through the same
   `nextScheduledRunAtFrom`); a published t3 ignores all three.
 - `apps/web/src/index.css`: one `@import` of `board/styles/board.css`, so Tailwind and the lint rules know the board's classes.
+- `packages/contracts/src/project.ts`, `packages/contracts/src/rpc.ts`, `apps/server/src/ws.ts`,
+  `apps/server/src/auth/RpcAuthorization.ts`, `apps/server/src/observability/RpcInstrumentation.ts`,
+  and the new `apps/server/src/project/ProjectFolderRemoval.ts`:
+  the `projects.removeFolder` RPC and `removeProjectFolder`, which deletes a project's own folder
+  (never a root, home, a parent of home or a folder holding another project) when a workspace is deleted.
 - `AGENTS.md`: one paragraph pointing agents at this file and the board folders.
 - `pnpm-lock.yaml`: workspace and board dependency lock entries.
 

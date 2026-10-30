@@ -10,7 +10,14 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import { latestContinuation } from "./restartContinuation.ts";
-import { ProjectService, ScheduledTasks, ThreadLaunch, ThreadManagement } from "./upstream.ts";
+import {
+  ProjectFolderRemoval,
+  ProjectService,
+  ProjectStore,
+  ScheduledTasks,
+  ThreadLaunch,
+  ThreadManagement,
+} from "./upstream.ts";
 
 export class LocalDriver extends Context.Service<LocalDriver, NodeDriver>()(
   "t3/board/LocalDriver",
@@ -23,6 +30,11 @@ const make = Effect.gen(function* () {
   const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const projectStore = yield* ProjectStore.ProjectStoreV2;
+  const removalServices = Context.make(ProjectStore.ProjectStoreV2, projectStore).pipe(
+    Context.add(FileSystem.FileSystem, fileSystem),
+    Context.add(Path.Path, path),
+  );
   const error = (operation: NodeDriverError["operation"]) => (cause: unknown) =>
     new NodeDriverError({ operation, message: `Local board driver ${operation} failed.`, cause });
 
@@ -221,7 +233,11 @@ const make = Effect.gen(function* () {
   );
   const deleteProject: NodeDriver["deleteProject"] = Effect.fn("LocalDriver.deleteProject")(
     function* (input) {
-      const project = input.removeFolder ? yield* projects.getById(input.projectId) : Option.none();
+      if (input.removeFolderPath !== undefined)
+        yield* ProjectFolderRemoval.removeProjectFolder(
+          input.projectId,
+          input.removeFolderPath,
+        ).pipe(Effect.provideContext(removalServices));
       yield* projects
         .delete({
           commandId: CommandId.make(`board:project-delete:${input.projectId}`),
@@ -229,12 +245,6 @@ const make = Effect.gen(function* () {
           force: true,
         })
         .pipe(Effect.catchTags({ ProjectNotFoundError: () => Effect.void }));
-      if (Option.isNone(project)) return;
-      // Only folders the board created under ~/t3-workspaces are ever deleted.
-      const root = path.resolve(project.value.workspaceRoot);
-      const boardRoot = path.join(NodeOS.homedir(), "t3-workspaces");
-      if (root.startsWith(`${boardRoot}${path.sep}`))
-        yield* fileSystem.remove(root, { recursive: true });
     },
     Effect.mapError(error("deleteProject")),
   );

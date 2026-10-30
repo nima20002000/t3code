@@ -91,11 +91,12 @@ export interface NodeDriver {
     input: BoardDriverProject & { readonly title: string; readonly path: string },
   ) => Effect.Effect<{ readonly adopted: boolean }, NodeDriverError>;
   /**
-   * Removes the t3 project and its threads. With `removeFolder`, also deletes a board-created folder
-   * under ~/t3-workspaces where the driver can (stock t3 has no remote folder delete).
+   * Removes the t3 project and its threads. With `removeFolderPath`, first deletes that folder (the
+   * path the user confirmed) through t3's `projects.removeFolder`, which refuses anything but the
+   * project's own root; if that fails the project is left untouched.
    */
   readonly deleteProject: (
-    input: BoardDriverProject & { readonly removeFolder?: boolean },
+    input: BoardDriverProject & { readonly removeFolderPath?: string },
   ) => Effect.Effect<void, NodeDriverError>;
   readonly launch: (input: BoardDriverLaunch) => Effect.Effect<BoardDriverThread, NodeDriverError>;
   readonly send: (input: BoardDriverSend) => Effect.Effect<BoardDriverSendResult, NodeDriverError>;

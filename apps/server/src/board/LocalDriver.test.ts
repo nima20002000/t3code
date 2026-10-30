@@ -4,13 +4,17 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
-import * as NodeOS from "node:os";
 import * as Stream from "effect/Stream";
 import * as LocalDriver from "./LocalDriver.ts";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import { ProjectService, ScheduledTasks, ThreadLaunch, ThreadManagement } from "./upstream.ts";
+import {
+  ProjectService,
+  ProjectStore,
+  ScheduledTasks,
+  ThreadLaunch,
+  ThreadManagement,
+} from "./upstream.ts";
 
 const thread = {
   environmentId: EnvironmentId.make("env"),
@@ -50,6 +54,9 @@ it.effect("matches a run finished by a restart continuation to the message that 
       Layer.provide(
         Layer.succeed(ProjectService.ProjectService, ProjectService.ProjectService.of({} as never)),
       ),
+      Layer.provide(
+        Layer.succeed(ProjectStore.ProjectStoreV2, ProjectStore.ProjectStoreV2.of({} as never)),
+      ),
       Layer.provide(Layer.mock(ScheduledTasks.ScheduledTaskService)({})),
     );
     const settled = yield* Effect.gen(function* () {
@@ -73,7 +80,10 @@ it.effect("matches a run finished by a restart continuation to the message that 
   }),
 );
 
-const projectDriver = (projects: Partial<ProjectService.ProjectService["Service"]>) =>
+const projectDriver = (
+  projects: Partial<ProjectService.ProjectService["Service"]>,
+  rows: ReadonlyArray<{ projectId: ProjectId; workspaceRoot: string }> = [],
+) =>
   LocalDriver.layer.pipe(
     Layer.provide(NodeServices.layer),
     Layer.provide(
@@ -92,6 +102,16 @@ const projectDriver = (projects: Partial<ProjectService.ProjectService["Service"
       Layer.succeed(
         ProjectService.ProjectService,
         ProjectService.ProjectService.of(projects as never),
+      ),
+    ),
+    Layer.provide(
+      Layer.succeed(
+        ProjectStore.ProjectStoreV2,
+        ProjectStore.ProjectStoreV2.of({
+          get: (id: ProjectId) =>
+            Effect.succeed(Option.fromUndefinedOr(rows.find((row) => row.projectId === id))),
+          list: () => Effect.succeed(rows),
+        } as never),
       ),
     ),
     Layer.provide(Layer.mock(ScheduledTasks.ScheduledTaskService)({})),
@@ -157,33 +177,39 @@ it.effect("removes a workspace project with its threads and tolerates one alread
   }),
 );
 
-it.effect("deletes a board-created folder under ~/t3-workspaces, never one elsewhere", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const inside = path.join(NodeOS.homedir(), "t3-workspaces", `board-test-${process.pid}`);
-    const outside = yield* fileSystem.makeTempDirectory({ prefix: "board-outside-" });
-    yield* fileSystem.makeDirectory(inside, { recursive: true });
-    for (const [root, kept] of [
-      [inside, false],
-      [outside, true],
-    ] as const) {
-      const layer = projectDriver({
-        getById: () => Effect.succeedSome({ workspaceRoot: root } as never),
-        delete: () => Effect.succeed({} as never),
-      });
+it.effect(
+  "removes the confirmed folder before the project, and keeps the project if that fails",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const parent = yield* fileSystem.makeTempDirectory({ prefix: "board-driver-" });
+      const root = `${parent}/own`;
+      yield* fileSystem.makeDirectory(root);
+      yield* fileSystem.makeDirectory(`${parent}/elsewhere`);
+      const deleted = yield* Ref.make(0);
+      const layer = projectDriver(
+        {
+          delete: () => Ref.update(deleted, (n) => n + 1).pipe(Effect.as({} as never)),
+        },
+        [{ projectId: thread.projectId, workspaceRoot: root }],
+      );
       yield* Effect.gen(function* () {
         const driver = yield* LocalDriver.LocalDriver;
-        yield* driver.deleteProject({
-          environmentId: thread.environmentId,
-          projectId: thread.projectId,
-          removeFolder: true,
-        });
+        const input = { environmentId: thread.environmentId, projectId: thread.projectId };
+        yield* driver.deleteProject(input);
+        assert.isTrue(yield* fileSystem.exists(root));
+        const refused = yield* driver
+          .deleteProject({ ...input, removeFolderPath: `${parent}/elsewhere` })
+          .pipe(Effect.flip);
+        assert.strictEqual(refused._tag, "NodeDriverError");
+        assert.isTrue(yield* fileSystem.exists(root));
+        assert.strictEqual(yield* Ref.get(deleted), 1);
+        yield* driver.deleteProject({ ...input, removeFolderPath: root });
+        assert.isFalse(yield* fileSystem.exists(root));
+        assert.strictEqual(yield* Ref.get(deleted), 2);
       }).pipe(Effect.provide(layer));
-      assert.strictEqual(yield* fileSystem.exists(root), kept);
-    }
-    yield* fileSystem.remove(outside, { recursive: true });
-  }).pipe(Effect.provide(NodeServices.layer)),
+      yield* fileSystem.remove(parent, { recursive: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("adopts a folder that already exists so the board never deletes it", () =>
@@ -251,6 +277,9 @@ it.effect("Stop leaves nothing running after a restart cut the run, continued or
       Layer.provide(Layer.mock(ScheduledTasks.ScheduledTaskService)({})),
       Layer.provide(
         Layer.succeed(ProjectService.ProjectService, ProjectService.ProjectService.of({} as never)),
+      ),
+      Layer.provide(
+        Layer.succeed(ProjectStore.ProjectStoreV2, ProjectStore.ProjectStoreV2.of({} as never)),
       ),
     );
     const cut = { ...run("run-1", "board-message", "cancelled"), startedAt: "started" };

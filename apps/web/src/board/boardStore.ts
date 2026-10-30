@@ -337,10 +337,17 @@ export function renameWorkspace(id: string, name: string) {
     ),
   );
 }
-export function removeWorkspace(id: string) {
+export function removeWorkspace(
+  id: string,
+  removeFolders: ReadonlyArray<{ environmentId: EnvironmentId; path: string }> = [],
+) {
   perform("Could not delete workspace", () =>
     runBoardMutation((client) =>
-      client.deleteWorkspace({ headers: {}, params: { workspaceId: id } }),
+      client.deleteWorkspace({
+        headers: {},
+        params: { workspaceId: id },
+        payload: removeFolders.length > 0 ? { removeFolders } : {},
+      }),
     ),
   );
 }

@@ -379,7 +379,13 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
-import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
+import {
+  Project,
+  ProjectMutation,
+  ProjectMutationError,
+  ProjectRemoveFolderInput,
+  ProjectRemoveFolderResult,
+} from "./project.ts";
 
 export const WS_METHODS = {
   projectsList: "projects.list",
@@ -394,6 +400,7 @@ export const WS_METHODS = {
   projectsMutate: "projects.mutate",
   projectsEnsureScratch: "projects.ensureScratch",
   projectsCreateNew: "projects.createNew",
+  projectsRemoveFolder: "projects.removeFolder",
 
   shellOpenInEditor: "shell.openInEditor",
 
@@ -1268,6 +1275,12 @@ const WsProjectsCreateNewRpc = Rpc.make(WS_METHODS.projectsCreateNew, {
   error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
 });
 
+const WsProjectsRemoveFolderRpc = Rpc.make(WS_METHODS.projectsRemoveFolder, {
+  payload: ProjectRemoveFolderInput,
+  success: ProjectRemoveFolderResult,
+  error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
+});
+
 const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   payload: LaunchEditorInput,
   error: Schema.Union([ExternalLauncherError, EnvironmentAuthorizationError]),
@@ -2030,6 +2043,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchEntriesRpc,
   WsProjectsEnsureScratchRpc,
   WsProjectsCreateNewRpc,
+  WsProjectsRemoveFolderRpc,
   WsProjectsWriteFileRpc,
   WsProjectsMutateRpc,
   WsShellOpenInEditorRpc,
