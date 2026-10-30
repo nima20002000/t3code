@@ -11,7 +11,8 @@
     "./http": "./src/http.ts",
     "./NodeDriver": "./src/NodeDriver.ts",
     "./runView": "./src/runView.ts",
-    "./timing": "./src/timing.ts"
+    "./timing": "./src/timing.ts",
+    "./sharedFiles": "./src/sharedFiles.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -66,6 +66,8 @@ import type { SqlError } from "effect/sql/SqlError";
 import * as BoardStore from "./BoardStore.ts";
 import * as DriverRegistry from "./DriverRegistry.ts";
 import { forkParked } from "./upstream.ts";
+import type { WorkspaceFolder } from "@t3tools/board-core/boardModel";
+import { sharedFilesPath } from "@t3tools/board-core/sharedFiles";
 
 type EngineError =
   | BoardNotFoundError
@@ -113,6 +115,14 @@ export class TaskEngine extends Context.Service<
       nodeId: string,
       fresh?: BoardNewNodeChatInput,
     ) => Effect.Effect<BoardNode, EngineError>;
+    /** The workspace's folder on a machine, created and registered there when it has none yet. */
+    readonly workspaceFolder: (
+      workspaceId: string,
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<
+      { readonly folder: WorkspaceFolder },
+      BoardNotFoundError | NodeDriverError | SqlError
+    >;
   }
 >()("t3/board/TaskEngine") {}
 
@@ -728,10 +738,19 @@ const make = Effect.gen(function* () {
     node: BoardNode,
   ) {
     const peer = yield* store.getPeer(node.environmentId);
+    const sharedFolder = (yield* store.getWorkspace(workflow.workspaceId))?.folders.find(
+      (folder) => folder.environmentId === node.environmentId,
+    );
+    const sharedNames = (yield* store.listWorkspaceFiles(workflow.workspaceId)).map(
+      (file) => file.name,
+    );
     return buildAgentInstructions({
       name: node.name,
       profile: node.profile,
       machine: peer?.name ?? NodeOS.hostname(),
+      ...(sharedFolder
+        ? { sharedFiles: { folder: sharedFilesPath(sharedFolder.path), names: sharedNames } }
+        : {}),
       prompt: node.prompt,
       outgoing: connectedNodeNames(workflow.nodes, workflow.edges, node.id),
       incoming: incomingNodeNames(workflow.nodes, workflow.edges, node.id),
@@ -1472,7 +1491,7 @@ const make = Effect.gen(function* () {
     (workflowId, input, claim, options) =>
       startWith(workflowId, input, claim, options?.continueRunsOf),
   );
-  return TaskEngine.of({ start, startClaimed, stop, openNodeChat });
+  return TaskEngine.of({ start, startClaimed, stop, openNodeChat, workspaceFolder });
 });
 
 export const layer = Layer.effect(TaskEngine, make);

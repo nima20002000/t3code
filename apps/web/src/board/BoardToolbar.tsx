@@ -180,7 +180,7 @@ export function BoardToolbar(props: {
             <MachinesButton />
             {/* t3-backed buttons: approvals, files, schedule */}
             <ApprovalsButton nodes={workflow.nodes} />
-            <FilesButton nodes={workflow.nodes} />
+            <FilesButton workspaceId={workflow.workspaceId} />
             <ScheduleButton nodes={workflow.nodes} />
             <ActivitiesButton
               log={workflow.log}

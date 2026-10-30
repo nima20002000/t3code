@@ -6,7 +6,9 @@ import {
 } from "@t3tools/board-core";
 import { AuthOrchestrationOperateScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import type { SqlError } from "effect/sql/SqlError";
@@ -17,12 +19,14 @@ import * as BoardService from "./BoardService.ts";
 import * as BoardStore from "./BoardStore.ts";
 import * as DriverRegistry from "./DriverRegistry.ts";
 import * as TaskEngine from "./TaskEngine.ts";
+import * as SharedFileStore from "./SharedFileStore.ts";
+import * as WorkspaceFiles from "./WorkspaceFiles.ts";
 import type {
   BoardConflictError,
   BoardInvalidRequestError,
   BoardMachineUnavailableError,
 } from "@t3tools/board-core";
-import { AuthHttp } from "./upstream.ts";
+import { AuthHttp, ProjectService } from "./upstream.ts";
 
 type ServiceError =
   | SqlError
@@ -54,6 +58,11 @@ const handlers = HttpApiBuilder.group(
     const board = yield* BoardService.BoardService;
     const peers = yield* BoardPeers.BoardPeers;
     const store = yield* BoardStore.BoardStore;
+    const files = yield* WorkspaceFiles.WorkspaceFiles;
+    const local = yield* Effect.context<
+      FileSystem.FileSystem | Path.Path | ProjectService.ProjectService
+    >();
+    const onMachine = SharedFileStore.keepBoardErrors("Could not store the shared file.");
     return handler
       .handle("getSnapshot", () => read(store.snapshot()))
       .handle("listWorkspaces", () => read(board.listWorkspaces()))
@@ -140,6 +149,38 @@ const handlers = HttpApiBuilder.group(
         operate(board.updateSchedule(params.scheduleId, payload)),
       )
       .handle("deleteSchedule", ({ params }) => operate(board.deleteSchedule(params.scheduleId)))
+      .handleRaw("addWorkspaceFile", ({ params, request }) =>
+        AuthHttp.requireEnvironmentScope(AuthOrchestrationOperateScope).pipe(
+          Effect.andThen(files.add(params.workspaceId, params.name, request.stream)),
+        ),
+      )
+      .handle("deleteWorkspaceFile", ({ params }) =>
+        AuthHttp.requireEnvironmentScope(AuthOrchestrationOperateScope).pipe(
+          Effect.andThen(files.remove(params.workspaceId, params.name)),
+        ),
+      )
+      .handleRaw("putProjectFile", ({ params, request }) =>
+        AuthHttp.requireEnvironmentScope(AuthOrchestrationOperateScope).pipe(
+          Effect.andThen(
+            onMachine(
+              SharedFileStore.writeProjectFile(params.projectId, params.name, request.stream).pipe(
+                Effect.provideContext(local),
+              ),
+            ),
+          ),
+        ),
+      )
+      .handle("deleteProjectFile", ({ params }) =>
+        AuthHttp.requireEnvironmentScope(AuthOrchestrationOperateScope).pipe(
+          Effect.andThen(
+            onMachine(
+              SharedFileStore.removeProjectFile(params.projectId, params.name).pipe(
+                Effect.provideContext(local),
+              ),
+            ),
+          ),
+        ),
+      )
       .handle("events", ({ query }) =>
         Effect.gen(function* () {
           yield* AuthHttp.requireEnvironmentScope(AuthOrchestrationReadScope);
@@ -161,6 +202,7 @@ const services = Layer.mergeAll(
   BoardService.layer.pipe(Layer.provide(AgentSchedules.layer)),
   BoardScheduler.layer,
   BoardPeers.layer,
+  WorkspaceFiles.layer,
 ).pipe(
   Layer.provideMerge(TaskEngine.layer),
   Layer.provideMerge(DriverRegistry.layer),

@@ -74,6 +74,7 @@ it.effect("keeps core and board migration histories and board data across reopen
             { migration_id: 3, name: "BoardWorkspaces" },
             { migration_id: 4, name: "BoardTaskCards" },
             { migration_id: 5, name: "BoardScheduleTiming" },
+            { migration_id: 6, name: "BoardWorkspaceFiles" },
           ]);
           const snapshot = yield* store.snapshot();
           assert.strictEqual(snapshot.sequence, 2);

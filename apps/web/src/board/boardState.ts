@@ -47,7 +47,19 @@ export function applyBoardEvent(snapshot: BoardSnapshot, event: BoardEvent): Boa
         ...snapshot,
         sequence: event.sequence,
         workspaces: snapshot.workspaces.filter((w) => w.id !== event.workspaceId),
+        files: (snapshot.files ?? []).filter((entry) => entry.workspaceId !== event.workspaceId),
       };
+    case "workspace.files": {
+      const { kind: _kind, sequence, ...entry } = event;
+      return {
+        ...snapshot,
+        sequence,
+        files: [
+          ...(snapshot.files ?? []).filter((old) => old.workspaceId !== entry.workspaceId),
+          entry,
+        ],
+      };
+    }
     case "kanban.upserted": {
       const known = snapshot.kanban.some((entry) => entry.workflowId === event.workflowId);
       const entries = known

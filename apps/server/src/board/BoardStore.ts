@@ -1,6 +1,9 @@
 import type {
   BoardEvent,
+  BoardFileMachine,
   BoardPeer,
+  BoardWorkspaceFile,
+  BoardWorkspaceFiles,
   BoardSchedule,
   KanbanCard,
   Workflow,
@@ -88,6 +91,39 @@ export class BoardStore extends Context.Service<
     readonly listSchedules: () => StoreEffect<ReadonlyArray<BoardSchedule>>;
     readonly putSchedule: (schedule: BoardSchedule) => StoreEffect<void>;
     readonly deleteSchedule: (id: string) => StoreEffect<void>;
+    readonly listWorkspaceFiles: (
+      workspaceId: string,
+    ) => StoreEffect<ReadonlyArray<BoardWorkspaceFile>>;
+    readonly putWorkspaceFile: (workspaceId: string, file: BoardWorkspaceFile) => StoreEffect<void>;
+    readonly deleteWorkspaceFile: (workspaceId: string, name: string) => StoreEffect<void>;
+    /**
+     * The version (sha256) of each shared file a machine's workspace folder was last sent; ""
+     * while a copy is under way, so a file deleted meanwhile is still deleted there.
+     */
+    readonly listFileCopies: (
+      workspaceId: string,
+      environmentId: EnvironmentId,
+      projectId: ProjectId,
+    ) => StoreEffect<ReadonlyMap<string, string>>;
+    readonly putFileCopy: (
+      workspaceId: string,
+      environmentId: EnvironmentId,
+      projectId: ProjectId,
+      name: string,
+      sha256: string,
+    ) => StoreEffect<void>;
+    readonly deleteFileCopy: (
+      workspaceId: string,
+      environmentId: EnvironmentId,
+      name: string,
+    ) => StoreEffect<void>;
+    readonly listFileMachines: (
+      workspaceId: string,
+    ) => StoreEffect<ReadonlyArray<BoardFileMachine>>;
+    readonly putFileMachines: (
+      workspaceId: string,
+      machines: ReadonlyArray<BoardFileMachine>,
+    ) => StoreEffect<void>;
     readonly appendEvent: (event: EventInput) => StoreEffect<number>;
     readonly snapshot: () => StoreEffect<{
       readonly sequence: number;
@@ -99,6 +135,7 @@ export class BoardStore extends Context.Service<
       }>;
       readonly peers: ReadonlyArray<BoardPeer>;
       readonly schedules: ReadonlyArray<BoardSchedule>;
+      readonly files: ReadonlyArray<BoardWorkspaceFiles>;
     }>;
     readonly events: (afterSequence: number) => Stream.Stream<BoardEvent, SqlError>;
   }
@@ -193,12 +230,21 @@ const scheduleTimingMigration = Effect.gen(function* () {
   }
 });
 
+/** Shared files live on the hub; copies record which version each machine was sent. */
+const workspaceFilesMigration = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`CREATE TABLE board_workspace_files (workspace_id TEXT NOT NULL, name TEXT NOT NULL, sha256 TEXT NOT NULL, size INTEGER NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (workspace_id, name), FOREIGN KEY (workspace_id) REFERENCES board_workspaces(id) ON DELETE CASCADE)`;
+  yield* sql`CREATE TABLE board_workspace_file_copies (workspace_id TEXT NOT NULL, environment_id TEXT NOT NULL, project_id TEXT NOT NULL, name TEXT NOT NULL, sha256 TEXT NOT NULL, PRIMARY KEY (workspace_id, environment_id, name), FOREIGN KEY (workspace_id) REFERENCES board_workspaces(id) ON DELETE CASCADE)`;
+  yield* sql`CREATE TABLE board_workspace_file_machines (workspace_id TEXT NOT NULL, environment_id TEXT NOT NULL, status TEXT NOT NULL, error TEXT, PRIMARY KEY (workspace_id, environment_id), FOREIGN KEY (workspace_id) REFERENCES board_workspaces(id) ON DELETE CASCADE)`;
+});
+
 export const migrations = {
   "1_Board": migration,
   "2_BoardIntents": intentsMigration,
   "3_BoardWorkspaces": workspacesMigration,
   "4_BoardTaskCards": taskCardMigration,
   "5_BoardScheduleTiming": scheduleTimingMigration,
+  "6_BoardWorkspaceFiles": workspaceFilesMigration,
 };
 
 export const migrate = Migrator.make({})({
@@ -417,6 +463,105 @@ const make = Effect.gen(function* () {
   const deleteSchedule = Effect.fn("BoardStore.deleteSchedule")(function* (id: string) {
     yield* sql`DELETE FROM board_schedules WHERE id = ${id}`;
   });
+  type FileRow = {
+    readonly workspace_id: string;
+    readonly name: string;
+    readonly sha256: string;
+    readonly size: number;
+    readonly updated_at: string;
+  };
+  type MachineRow = {
+    readonly workspace_id: string;
+    readonly environment_id: string;
+    readonly status: BoardFileMachine["status"];
+    readonly error: string | null;
+  };
+  const fileFromRow = (row: FileRow): BoardWorkspaceFile => ({
+    name: row.name,
+    sha256: row.sha256,
+    size: row.size,
+    updatedAt: row.updated_at,
+  });
+  const machineFromRow = (row: MachineRow): BoardFileMachine => ({
+    environmentId: row.environment_id as EnvironmentId,
+    status: row.status,
+    ...(row.error === null ? {} : { error: row.error }),
+  });
+  const listWorkspaceFiles = Effect.fn("BoardStore.listWorkspaceFiles")(function* (
+    workspaceId: string,
+  ) {
+    const rows =
+      yield* sql<FileRow>`SELECT * FROM board_workspace_files WHERE workspace_id = ${workspaceId} ORDER BY name`;
+    return rows.map(fileFromRow);
+  });
+  const putWorkspaceFile = Effect.fn("BoardStore.putWorkspaceFile")(function* (
+    workspaceId: string,
+    file: BoardWorkspaceFile,
+  ) {
+    yield* sql`INSERT INTO board_workspace_files (workspace_id, name, sha256, size, updated_at) VALUES (${workspaceId}, ${file.name}, ${file.sha256}, ${file.size}, ${file.updatedAt}) ON CONFLICT(workspace_id, name) DO UPDATE SET sha256 = excluded.sha256, size = excluded.size, updated_at = excluded.updated_at`;
+  });
+  const deleteWorkspaceFile = Effect.fn("BoardStore.deleteWorkspaceFile")(function* (
+    workspaceId: string,
+    name: string,
+  ) {
+    yield* sql`DELETE FROM board_workspace_files WHERE workspace_id = ${workspaceId} AND name = ${name}`;
+  });
+  const listFileCopies = Effect.fn("BoardStore.listFileCopies")(function* (
+    workspaceId: string,
+    environmentId: EnvironmentId,
+    projectId: ProjectId,
+  ) {
+    const rows = yield* sql<{
+      readonly name: string;
+      readonly sha256: string;
+    }>`SELECT name, sha256 FROM board_workspace_file_copies WHERE workspace_id = ${workspaceId} AND environment_id = ${environmentId} AND project_id = ${projectId}`;
+    return new Map(rows.map((row) => [row.name, row.sha256]));
+  });
+  const putFileCopy = Effect.fn("BoardStore.putFileCopy")(function* (
+    workspaceId: string,
+    environmentId: EnvironmentId,
+    projectId: ProjectId,
+    name: string,
+    sha256: string,
+  ) {
+    yield* sql`INSERT INTO board_workspace_file_copies (workspace_id, environment_id, project_id, name, sha256) VALUES (${workspaceId}, ${environmentId}, ${projectId}, ${name}, ${sha256}) ON CONFLICT(workspace_id, environment_id, name) DO UPDATE SET project_id = excluded.project_id, sha256 = excluded.sha256`;
+  });
+  const deleteFileCopy = Effect.fn("BoardStore.deleteFileCopy")(function* (
+    workspaceId: string,
+    environmentId: EnvironmentId,
+    name: string,
+  ) {
+    yield* sql`DELETE FROM board_workspace_file_copies WHERE workspace_id = ${workspaceId} AND environment_id = ${environmentId} AND name = ${name}`;
+  });
+  const listFileMachines = Effect.fn("BoardStore.listFileMachines")(function* (
+    workspaceId: string,
+  ) {
+    const rows =
+      yield* sql<MachineRow>`SELECT * FROM board_workspace_file_machines WHERE workspace_id = ${workspaceId} ORDER BY rowid`;
+    return rows.map(machineFromRow);
+  });
+  const putFileMachines = Effect.fn("BoardStore.putFileMachines")(function* (
+    workspaceId: string,
+    machines: ReadonlyArray<BoardFileMachine>,
+  ) {
+    yield* sql`DELETE FROM board_workspace_file_machines WHERE workspace_id = ${workspaceId}`;
+    for (const machine of machines)
+      yield* sql`INSERT INTO board_workspace_file_machines (workspace_id, environment_id, status, error) VALUES (${workspaceId}, ${machine.environmentId}, ${machine.status}, ${machine.error ?? null})`;
+  });
+  const listAllFiles = Effect.fn("BoardStore.listAllFiles")(function* (
+    workspaces: ReadonlyArray<Workspace>,
+  ) {
+    const files = yield* sql<FileRow>`SELECT * FROM board_workspace_files ORDER BY name`;
+    const machines =
+      yield* sql<MachineRow>`SELECT * FROM board_workspace_file_machines ORDER BY rowid`;
+    return workspaces
+      .map((workspace) => ({
+        workspaceId: workspace.id,
+        files: files.filter((row) => row.workspace_id === workspace.id).map(fileFromRow),
+        machines: machines.filter((row) => row.workspace_id === workspace.id).map(machineFromRow),
+      }))
+      .filter((entry) => entry.files.length > 0 || entry.machines.length > 0);
+  });
   const appendEvent = Effect.fn("BoardStore.appendEvent")(function* (event: EventInput) {
     const rows = yield* sql<{
       readonly sequence: number;
@@ -435,13 +580,15 @@ const make = Effect.gen(function* () {
         const kanban = [];
         for (const workflow of workflows)
           kanban.push({ workflowId: workflow.id, cards: yield* listKanban(workflow.id) });
+        const workspaces = yield* listWorkspaces();
         return {
           sequence: rows[0]?.sequence ?? 0,
-          workspaces: yield* listWorkspaces(),
+          workspaces,
           workflows,
           kanban,
           peers: yield* listPeers(),
           schedules: yield* listSchedules(),
+          files: yield* listAllFiles(workspaces),
         };
       }),
     );
@@ -508,6 +655,14 @@ const make = Effect.gen(function* () {
     listSchedules,
     putSchedule,
     deleteSchedule,
+    listWorkspaceFiles,
+    putWorkspaceFile,
+    deleteWorkspaceFile,
+    listFileCopies,
+    putFileCopy,
+    deleteFileCopy,
+    listFileMachines,
+    putFileMachines,
     appendEvent,
     snapshot,
     events,

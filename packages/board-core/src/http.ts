@@ -191,6 +191,31 @@ export const BoardScheduleSchema = Schema.Struct({
 });
 export type BoardSchedule = typeof BoardScheduleSchema.Type;
 
+export const BoardWorkspaceFileSchema = Schema.Struct({
+  name: Schema.String,
+  size: NonNegativeInt,
+  sha256: Schema.String,
+  updatedAt: Schema.String,
+});
+export type BoardWorkspaceFile = typeof BoardWorkspaceFileSchema.Type;
+/** A machine that receives the workspace's files: one with an agent in it, and the hub. */
+export const BoardFileMachineSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  status: Schema.Literals(["synced", "pending", "failed"]),
+  error: Schema.optionalKey(Schema.String),
+});
+export type BoardFileMachine = typeof BoardFileMachineSchema.Type;
+const workspaceFilesFields = {
+  workspaceId: Id,
+  files: Schema.Array(BoardWorkspaceFileSchema),
+  machines: Schema.Array(BoardFileMachineSchema),
+};
+/** A workspace's shared files, kept on the hub, and how far each machine's copy is. */
+export const BoardWorkspaceFilesSchema = Schema.Struct(workspaceFilesFields);
+export type BoardWorkspaceFiles = typeof BoardWorkspaceFilesSchema.Type;
+/** What a machine stored for a shared file. */
+export const BoardStoredFileSchema = Schema.Struct({ sha256: Schema.String, size: NonNegativeInt });
+
 // The sequence and snapshot must be read atomically so clients can resume events without a gap.
 export const BoardSnapshotSchema = Schema.Struct({
   sequence: NonNegativeInt,
@@ -201,6 +226,7 @@ export const BoardSnapshotSchema = Schema.Struct({
   ),
   peers: Schema.Array(BoardPeerSchema),
   schedules: Schema.Array(BoardScheduleSchema),
+  files: Schema.optionalKey(Schema.Array(BoardWorkspaceFilesSchema)),
 });
 export type BoardSnapshot = typeof BoardSnapshotSchema.Type;
 
@@ -254,6 +280,11 @@ export const BoardEvent = Schema.Union([
     kind: Schema.Literal("schedule.upserted"),
     sequence: NonNegativeInt,
     schedule: BoardScheduleSchema,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("workspace.files"),
+    sequence: NonNegativeInt,
+    ...workspaceFilesFields,
   }),
   Schema.Struct({
     kind: Schema.Literal("schedule.deleted"),
@@ -311,6 +342,8 @@ const WorkspaceParams = Schema.Struct({ workspaceId: Id });
 const FolderParams = Schema.Struct({ workspaceId: Id, environmentId: EnvironmentId });
 const PeerParams = Schema.Struct({ peerId: Id });
 const ScheduleParams = Schema.Struct({ scheduleId: Id });
+const WorkspaceFileParams = Schema.Struct({ workspaceId: Id, name: Schema.String });
+const ProjectFileParams = Schema.Struct({ projectId: ProjectId, name: Schema.String });
 
 export const BoardCreateWorkspaceInput = Schema.Struct({ id: Id, name: TrimmedNonEmptyString });
 /** `removeFolders` lists the exact folders the user confirmed; only those are deleted from disk. */
@@ -718,6 +751,40 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
       headers: OptionalAuthHeaders,
       params: WorkflowParams,
       success: Schema.Array(BoardKanbanCardSchema),
+      error: Errors,
+    }),
+  )
+  // The body is the file's bytes, streamed to disk as it arrives (see BoardHttp).
+  .add(
+    HttpApiEndpoint.post("addWorkspaceFile", "/workspaces/:workspaceId/files/:name", {
+      headers: OptionalAuthHeaders,
+      params: WorkspaceFileParams,
+      success: BoardWorkspaceFileSchema,
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("deleteWorkspaceFile", "/workspaces/:workspaceId/files/:name/delete", {
+      headers: OptionalAuthHeaders,
+      params: WorkspaceFileParams,
+      success: HttpApiSchema.NoContent,
+      error: Errors,
+    }),
+  )
+  // The hub copies a workspace's files into that workspace's project folder on each machine.
+  .add(
+    HttpApiEndpoint.post("putProjectFile", "/project-files/:projectId/:name", {
+      headers: OptionalAuthHeaders,
+      params: ProjectFileParams,
+      success: BoardStoredFileSchema,
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("deleteProjectFile", "/project-files/:projectId/:name/delete", {
+      headers: OptionalAuthHeaders,
+      params: ProjectFileParams,
+      success: HttpApiSchema.NoContent,
       error: Errors,
     }),
   )

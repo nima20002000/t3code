@@ -12,8 +12,11 @@ import {
   renameNode,
   useCurrentWorkflow,
   useBoardPeers,
+  useBoardWorkspaces,
+  useWorkspaceFiles,
   type BoardNode,
 } from "./boardStore";
+import { sharedFilesPath } from "@t3tools/board-core/sharedFiles";
 import {
   buildAgentInstructions,
   connectedNodeNames,
@@ -35,11 +38,14 @@ import {
 
 /** The agent's settings window: the agent form in edit mode, with remove and send-instructions. */
 export function AgentSettingsWindow({ id, data, selected }: BoardWindowProps) {
-  const { nodes, edges } = useCurrentWorkflow();
+  const { nodes, edges, workspaceId } = useCurrentWorkflow();
   const send = useSendBoardInstructions();
   const windows = useBoardWindows();
+  const folders = useBoardWorkspaces().find((entry) => entry.id === workspaceId)?.folders;
+  const { files } = useWorkspaceFiles(workspaceId);
   const node = nodes.find((candidate) => candidate.id === data.nodeId);
   if (!node) return null;
+  const folder = folders?.find((entry) => entry.environmentId === node.environmentId);
   return (
     <BoardWindowFrame
       id={id}
@@ -61,6 +67,14 @@ export function AgentSettingsWindow({ id, data, selected }: BoardWindowProps) {
               name: node.name,
               profile: node.profile,
               prompt: node.prompt,
+              ...(folder
+                ? {
+                    sharedFiles: {
+                      folder: sharedFilesPath(folder.path),
+                      names: files.map((file) => file.name),
+                    },
+                  }
+                : {}),
               outgoing: connectedNodeNames(nodes, edges, node.id),
               incoming: incomingNodeNames(nodes, edges, node.id),
             }),
