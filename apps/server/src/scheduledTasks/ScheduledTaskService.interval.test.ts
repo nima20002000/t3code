@@ -12,6 +12,7 @@ import { afterEach, vi } from "vite-plus/test";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as PreviewManager from "../preview/Manager.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -213,24 +214,42 @@ it.effect("stops scheduled runs once a task reaches its run limit", () =>
 it.effect("compacts after a bound run, or moves it to a fresh thread first", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse("2026-09-09T12:00:00.000Z"));
-    const sent = yield* Ref.make<ReadonlyArray<string>>([]);
-    const launched = yield* Ref.make<ReadonlyArray<string>>([]);
+    // One ordered record of what reaches each chat and its browser.
+    const log = yield* Ref.make<ReadonlyArray<string>>([]);
+    const record = (entry: string) => Ref.update(log, (all) => [...all, entry]);
+    const launches = yield* Ref.make(0);
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           dependencies,
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             sendToThread: (request) =>
-              Ref.update(sent, (all) => [...all, `${request.threadId}:${request.text}`]).pipe(
-                Effect.as({} as never),
-              ),
+              record(`${request.threadId}:${request.text}`).pipe(Effect.as({} as never)),
           }),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-            launch: (request) =>
-              Ref.updateAndGet(launched, (all) => [
-                ...all,
-                request.initialMessage?.text ?? "",
-              ]).pipe(Effect.map((all) => ({ threadId: `fresh-${all.length}` }) as never)),
+            launch: () =>
+              Ref.updateAndGet(launches, (count) => count + 1).pipe(
+                Effect.tap((count) => record(`launch fresh-${count}`)),
+                Effect.map((count) => ({ threadId: `fresh-${count}` }) as never),
+              ),
+          }),
+          // Each chat has one page open in the machine's browser.
+          Layer.mock(PreviewManager.PreviewManager)({
+            list: ({ threadId }) =>
+              Effect.succeed({
+                sessions: [
+                  {
+                    threadId,
+                    tabId: `tab-of-${threadId}`,
+                    runtime: "server",
+                    profileId: "profile",
+                    navStatus: { _tag: "Success", url: `https://site.test/${threadId}`, title: "" },
+                  },
+                ],
+              } as never),
+            open: (request) =>
+              record(`open ${request.url} in ${request.threadId}`).pipe(Effect.as({} as never)),
+            close: (request) => record(`close ${request.tabId}`),
           }),
         ),
       ),
@@ -248,7 +267,7 @@ it.effect("compacts after a bound run, or moves it to a fresh thread first", () 
       );
       expect(compacting.task.beforeRun).toBe("compact");
       yield* service.runNow({ id: compacting.task.id });
-      expect(yield* Ref.get(sent)).toEqual([`chat:${input.prompt}`, "chat:/compact"]);
+      expect(yield* Ref.getAndSet(log, [])).toEqual([`chat:${input.prompt}`, "chat:/compact"]);
 
       const fresh = yield* service.upsert(
         yield* decodeInput({
@@ -263,8 +282,17 @@ it.effect("compacts after a bound run, or moves it to a fresh thread first", () 
       expect(first.task.threadId).toBe("fresh-1");
       const second = yield* service.runNow({ id: fresh.task.id });
       expect(second.task.threadId).toBe("fresh-2");
-      expect(yield* Ref.get(launched)).toEqual([input.prompt, input.prompt]);
-      expect(yield* Ref.get(sent)).toHaveLength(2);
+      // The new chat gets the old chat's page before the prompt reaches it.
+      expect(yield* Ref.get(log)).toEqual([
+        "launch fresh-1",
+        "open https://site.test/chat in fresh-1",
+        "close tab-of-chat",
+        `fresh-1:${input.prompt}`,
+        "launch fresh-2",
+        "open https://site.test/fresh-1 in fresh-2",
+        "close tab-of-fresh-1",
+        `fresh-2:${input.prompt}`,
+      ]);
     }).pipe(Effect.provide(layer));
   }).pipe(
     Effect.provideService(ServerActivation, Effect.never),

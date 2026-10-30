@@ -330,6 +330,23 @@ export function make(store: PeerStore): NodeDriver {
         threadId: result.threadId,
       };
     }),
+    carryBrowserTabs: Effect.fn("RemoteDriver.carryBrowserTabs")(function* (input) {
+      yield* useClient(store, input, (client) =>
+        Effect.gen(function* () {
+          const { sessions } = yield* client[WS_METHODS.previewList]({ threadId: input.from });
+          for (const session of sessions) {
+            if (session.runtime !== "server" || session.navStatus._tag === "Idle") continue;
+            yield* client[WS_METHODS.previewOpen]({
+              threadId: input.to,
+              url: session.navStatus.url,
+              runtime: "server",
+              ...(session.profileId === undefined ? {} : { profileId: session.profileId }),
+            });
+            yield* client[WS_METHODS.previewClose]({ threadId: input.from, tabId: session.tabId });
+          }
+        }),
+      ).pipe(Effect.mapError((cause) => error("browser", cause)));
+    }),
     projectBusy: Effect.fn("RemoteDriver.projectBusy")(function* (input) {
       const first = yield* useClient(store, input, (client) =>
         client[ORCHESTRATION_V2_WS_METHODS.subscribeShell]({}).pipe(

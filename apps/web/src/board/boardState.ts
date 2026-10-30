@@ -1,14 +1,12 @@
-import type {
-  BoardNode as CoreNode,
-  Workflow as CoreWorkflow,
+import {
+  currentNodeThread,
+  type BoardNode as CoreNode,
+  type Workflow as CoreWorkflow,
 } from "@t3tools/board-core/boardModel";
 import type { BoardEvent, BoardSnapshot } from "@t3tools/board-core/http";
 import type { ThreadId } from "@t3tools/contracts";
 
-/**
- * A node's thread is the one its newest run launched for it, else its own chat thread. A node with
- * neither has none (an empty id matches no thread).
- */
+/** A node's thread is `currentNodeThread`'s; a node with none has an empty id, which matches no thread. */
 export type BoardNode = CoreNode & { readonly threadId: ThreadId };
 export type Workflow = Omit<CoreWorkflow, "nodes"> & { readonly nodes: ReadonlyArray<BoardNode> };
 
@@ -17,19 +15,11 @@ const views = new WeakMap<object, Workflow>();
 export function workflowView(workflow: CoreWorkflow): Workflow {
   const cached = views.get(workflow);
   if (cached) return cached;
-  const newestFirst = workflow.runs.toSorted((a, b) => b.startedAt.localeCompare(a.startedAt));
   const view: Workflow = {
     ...workflow,
     nodes: workflow.nodes.map((node) => ({
       ...node,
-      threadId:
-        newestFirst.find(
-          (run) =>
-            run.threads[node.id] !== undefined &&
-            (node.chat?.startedAt === undefined || run.startedAt >= node.chat.startedAt),
-        )?.threads[node.id]?.threadId ??
-        node.chat?.threadId ??
-        NO_THREAD,
+      threadId: currentNodeThread(workflow, node.id)?.threadId ?? NO_THREAD,
     })),
   };
   views.set(workflow, view);

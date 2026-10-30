@@ -73,9 +73,11 @@ const makeHarness = Effect.gen(function* () {
   const messages = yield* Ref.make(new Map<RunId, string>());
   // Whether an agent's own chat in the workspace folder is working on the machine.
   const projectBusy = yield* Ref.make(false);
+  const carries = yield* Queue.unbounded<Parameters<NodeDriver["carryBrowserTabs"]>[0]>();
   const driver: NodeDriver = {
     ensureProject: (input) => Queue.offer(projects, input).pipe(Effect.as({ adopted: false })),
     projectBusy: () => Ref.get(projectBusy),
+    carryBrowserTabs: (input) => Queue.offer(carries, input).pipe(Effect.asVoid),
     deleteProject: () => Effect.void,
     launch: (input) =>
       Effect.gen(function* () {
@@ -134,6 +136,7 @@ const makeHarness = Effect.gen(function* () {
     launches,
     projects,
     projectBusy,
+    carries,
     reply,
     registry,
     driver,
@@ -206,6 +209,50 @@ it.effect("schedules outlive a deleted node and go with their workflow", () =>
         ["schedule:a", "schedule:b"],
       );
     }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("/new hands the agent's browser tabs from its old chat to the new one", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const layer = TaskEngine.layer.pipe(
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(seed(store, setupWorkflow()));
+      const first = yield* engine.openNodeChat("workflow", "one");
+      assert.strictEqual(yield* Queue.size(harness.carries), 0);
+      const fresh = yield* engine.openNodeChat("workflow", "one", {});
+      assert.deepStrictEqual(yield* Queue.takeAll(harness.carries), [
+        { environmentId, from: first.chat?.threadId, to: fresh.chat?.threadId },
+      ]);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("an agent's new run thread takes over the tabs of the chat it showed before", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(seed(store, setupWorkflow()));
+      const chat = yield* engine.openNodeChat("workflow", "one");
+      yield* engine.start("workflow", { id: "run:tabs", task: "Delegate" });
+      yield* harness.reply(yield* Queue.take(harness.sends), request);
+      const toOne = yield* Queue.take(harness.sends);
+      const toTwo = yield* Queue.take(harness.sends);
+      const runThreadOfOne = [toOne, toTwo].find(
+        (sent) => sent.thread.threadId !== chat.chat?.threadId && sent.text.includes("first"),
+      )?.thread.threadId;
+      // "two" had no thread before, so only "one" moves its tabs.
+      assert.deepStrictEqual(yield* Queue.takeAll(harness.carries), [
+        { environmentId, from: chat.chat?.threadId, to: runThreadOfOne },
+      ]);
+    }).pipe(Effect.provide(engineWith(harness.driver)));
   }),
 );
 
@@ -865,6 +912,8 @@ it.effect("a schedule that continues its chats compacts them after each run and 
       assert.include(second.text, "Continue task");
       assert.strictEqual(second.thread.threadId, first.thread.threadId);
       assert.lengthOf(yield* Queue.takeAll(harness.launches), 1);
+      // The same chat keeps its own tabs; nothing moves.
+      assert.strictEqual(yield* Queue.size(harness.carries), 0);
       yield* harness.reply(second, finish);
     }).pipe(Effect.provide(schedulerLayer(harness)));
   }),
@@ -896,6 +945,10 @@ it.effect("a schedule with new chats starts each run in a fresh chat and compact
       const second = yield* Queue.take(harness.sends);
       assert.include(second.text, "Fresh task");
       assert.notStrictEqual(second.thread.threadId, first.thread.threadId);
+      // The agent keeps the browser its last run's chat used.
+      assert.deepStrictEqual(yield* Queue.takeAll(harness.carries), [
+        { environmentId, from: first.thread.threadId, to: second.thread.threadId },
+      ]);
       yield* harness.reply(second, finish);
     }).pipe(Effect.provide(schedulerLayer(harness)));
   }),

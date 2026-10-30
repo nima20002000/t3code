@@ -46,6 +46,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as PreviewManager from "../preview/Manager.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -887,43 +888,64 @@ export const layer = Layer.effect(
               }),
             );
 
+        // A fresh chat replacing a bound one takes over its browser tabs before the prompt runs.
+        const freshChatWithTabs = (previous: ThreadId) =>
+          threadLaunch
+            .launch({
+              commandId: CommandId.make(`${commandId}:launch`),
+              projectId: active.projectId,
+              title: active.title,
+              modelSelection: active.modelSelection,
+              runtimeMode: active.runtimeMode,
+              interactionMode: active.interactionMode,
+              workspaceStrategy: active.workspaceStrategy,
+              createdBy: active.createdBy,
+              creationSource: active.creationSource,
+            })
+            .pipe(
+              Effect.tap((launched) => carryBrowserTabs(previous, launched.threadId)),
+              Effect.tap((launched) => sendBound(launched.threadId, active.projectId, 2)),
+              Effect.map((launched) => launched.threadId),
+            );
         // Capture defects and interrupts too so dispatch failures still reach markCompleted.
         const result =
-          active.threadId === null || active.beforeRun === "new_thread"
-            ? yield* Effect.exit(
-                threadLaunch
-                  .launch({
-                    commandId,
-                    projectId: active.projectId,
-                    title: active.title,
-                    modelSelection: active.modelSelection,
-                    runtimeMode: active.runtimeMode,
-                    interactionMode: active.interactionMode,
-                    workspaceStrategy: active.workspaceStrategy,
-                    initialMessage: {
-                      messageId,
-                      scheduledTaskId: active.id,
-                      text: prompt,
-                      attachments: [],
-                    },
-                    createdBy: active.createdBy,
-                    creationSource: active.creationSource,
-                  })
-                  .pipe(Effect.map((launched) => launched.threadId)),
-              )
-            : yield* Effect.exit(
-                // The stored selection only seeds fresh threads. A bound run
-                // follows the thread's current provider, so it passes none.
-                // "compact" queues /compact behind the prompt's run, so it compacts once the agent is done.
-                sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
-                  Effect.andThen(
-                    active.beforeRun === "compact"
-                      ? sendBound(ThreadId.make(active.threadId), active.projectId, 2, true)
-                      : Effect.void,
+          active.threadId !== null && active.beforeRun === "new_thread"
+            ? yield* Effect.exit(freshChatWithTabs(ThreadId.make(active.threadId)))
+            : active.threadId === null
+              ? yield* Effect.exit(
+                  threadLaunch
+                    .launch({
+                      commandId,
+                      projectId: active.projectId,
+                      title: active.title,
+                      modelSelection: active.modelSelection,
+                      runtimeMode: active.runtimeMode,
+                      interactionMode: active.interactionMode,
+                      workspaceStrategy: active.workspaceStrategy,
+                      initialMessage: {
+                        messageId,
+                        scheduledTaskId: active.id,
+                        text: prompt,
+                        attachments: [],
+                      },
+                      createdBy: active.createdBy,
+                      creationSource: active.creationSource,
+                    })
+                    .pipe(Effect.map((launched) => launched.threadId)),
+                )
+              : yield* Effect.exit(
+                  // The stored selection only seeds fresh threads. A bound run
+                  // follows the thread's current provider, so it passes none.
+                  // "compact" queues /compact behind the prompt's run, so it compacts once the agent is done.
+                  sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
+                    Effect.andThen(
+                      active.beforeRun === "compact"
+                        ? sendBound(ThreadId.make(active.threadId), active.projectId, 2, true)
+                        : Effect.void,
+                    ),
+                    Effect.as(ThreadId.make(active.threadId)),
                   ),
-                  Effect.as(ThreadId.make(active.threadId)),
-                ),
-              );
+                );
 
         const runSucceeded = result._tag === "Success";
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
@@ -1029,6 +1051,38 @@ export const layer = Layer.effect(
       yield* notifyChanged;
     });
 
+    // Optional so tests and servers without a browser still run schedules.
+    const previews = yield* Effect.serviceOption(PreviewManager.PreviewManager);
+    /** Moves the server browser tabs of `from` to `to`: same pages, same profile, so logins stay. */
+    const carryBrowserTabs = (from: ThreadId, to: ThreadId) =>
+      Option.match(previews, {
+        onNone: () => Effect.void,
+        onSome: (manager) =>
+          manager.list({ threadId: from }).pipe(
+            Effect.flatMap(({ sessions }) =>
+              Effect.forEach(
+                sessions.filter(
+                  (session) => session.runtime === "server" && session.navStatus._tag !== "Idle",
+                ),
+                (session) =>
+                  manager
+                    .open({
+                      threadId: to,
+                      ...(session.navStatus._tag === "Idle" ? {} : { url: session.navStatus.url }),
+                      runtime: "server",
+                      ...(session.profileId === undefined ? {} : { profileId: session.profileId }),
+                    })
+                    .pipe(Effect.andThen(manager.close({ threadId: from, tabId: session.tabId }))),
+                { discard: true },
+              ),
+            ),
+            Effect.catch((cause) =>
+              Effect.logWarning("Scheduled task could not move browser tabs to the new chat", {
+                cause,
+              }),
+            ),
+          ),
+      });
     const held = new Set<string>();
     const projectBusy = (projectId: ProjectId) =>
       threadManagement.getShellSnapshot().pipe(

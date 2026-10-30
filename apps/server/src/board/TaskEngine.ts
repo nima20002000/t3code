@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 import {
   BoardConflictError,
+  currentNodeThread,
   BoardInternalError,
   BoardInvalidRequestError,
   BoardNotFoundError,
@@ -32,7 +33,9 @@ import {
   type KanbanCard,
   type KanbanChange,
   type KanbanStatus,
+  type NodeDriver,
   type NodeDriverError,
+  type NodeThread,
   type RunRecord,
   type RunRequestRecord,
   type RunThread,
@@ -580,7 +583,8 @@ const make = Effect.gen(function* () {
         threadId,
         ...(fresh ? { startedAt: yield* now } : {}),
       };
-      return yield* store.transaction(
+      const before = currentNodeThread(workflow, nodeId);
+      const opened = yield* store.transaction(
         Effect.gen(function* () {
           const current = yield* store.getWorkflow(workflowId);
           const currentNode = current?.nodes.find((entry) => entry.id === nodeId);
@@ -603,6 +607,8 @@ const make = Effect.gen(function* () {
           return next;
         }),
       );
+      if (opened.chat?.threadId === threadId) yield* carryTabs(driver, before, chat);
+      return opened;
     },
     Effect.catchTags({
       SqlError: (cause) =>
@@ -617,6 +623,28 @@ const make = Effect.gen(function* () {
         ),
     }),
   );
+
+  /** The agent's new thread takes over the browser tabs of the one it showed before, on the same machine. */
+  const carryTabs = (
+    driver: NodeDriver,
+    from: NodeThread | undefined,
+    to: Pick<NodeThread, "environmentId" | "threadId">,
+  ) =>
+    from && from.environmentId === to.environmentId && from.threadId !== to.threadId
+      ? driver
+          .carryBrowserTabs({
+            environmentId: to.environmentId,
+            from: from.threadId,
+            to: to.threadId,
+          })
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not move the agent's browser tabs to its new chat", {
+                cause,
+              }),
+            ),
+          )
+      : Effect.void;
 
   /** Launches the node's fresh thread in the workspace folder on its machine, once per run. */
   const prepareThread = Effect.fn("TaskEngine.prepareThread")(function* (
@@ -652,6 +680,7 @@ const make = Effect.gen(function* () {
       threadId,
       seeded: false,
     };
+    const before = currentNodeThread(workflow, node.id);
     yield* store.transaction(
       Effect.gen(function* () {
         const current = yield* store.getWorkflow(workflowId);
@@ -663,6 +692,7 @@ const make = Effect.gen(function* () {
           });
       }),
     );
+    yield* carryTabs(driver, before, thread);
     return thread;
   });
   const seedInstructions = Effect.fn("TaskEngine.seedInstructions")(function* (

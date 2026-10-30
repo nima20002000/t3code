@@ -11,6 +11,7 @@ import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import { latestContinuation } from "./restartContinuation.ts";
 import {
+  PreviewManager,
   ProjectFolderRemoval,
   ProjectService,
   ProjectStore,
@@ -28,6 +29,8 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+  // Optional so the board's tests need no browser; the server always provides it.
+  const previews = yield* Effect.serviceOption(PreviewManager.PreviewManager);
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
@@ -67,6 +70,26 @@ const make = Effect.gen(function* () {
       threadId: result.threadId,
     };
   });
+  const carryBrowserTabs: NodeDriver["carryBrowserTabs"] = Effect.fn(
+    "LocalDriver.carryBrowserTabs",
+  )(
+    function* (input) {
+      if (Option.isNone(previews)) return;
+      const manager = previews.value;
+      const { sessions } = yield* manager.list({ threadId: input.from });
+      for (const session of sessions) {
+        if (session.runtime !== "server" || session.navStatus._tag === "Idle") continue;
+        yield* manager.open({
+          threadId: input.to,
+          url: session.navStatus.url,
+          runtime: "server",
+          ...(session.profileId === undefined ? {} : { profileId: session.profileId }),
+        });
+        yield* manager.close({ threadId: input.from, tabId: session.tabId });
+      }
+    },
+    Effect.mapError(error("browser")),
+  );
   const projectBusy: NodeDriver["projectBusy"] = Effect.fn("LocalDriver.projectBusy")(
     function* (input) {
       const snapshot = yield* threads
@@ -282,6 +305,7 @@ const make = Effect.gen(function* () {
     setScheduledTaskEnabled,
     deleteScheduledTask,
     launch,
+    carryBrowserTabs,
     projectBusy,
     send,
     subscribeSettled,

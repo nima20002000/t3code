@@ -220,6 +220,7 @@ const makeLayer = Effect.gen(function* () {
     ...machines.schedules,
     ensureProject: () => Effect.succeed({ adopted: false }),
     projectBusy: () => Effect.succeed(false),
+    carryBrowserTabs: () => Effect.void,
     deleteProject: (input) =>
       Ref.get(failing).pipe(
         Effect.flatMap((id) =>

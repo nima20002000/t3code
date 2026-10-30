@@ -66,6 +66,7 @@ export class NodeDriverError extends Schema.TaggedError<NodeDriverError>()("Node
     "deleteProject",
     "schedule",
     "projectBusy",
+    "browser",
   ]),
   message: Schema.String,
   /** The outcome is unknown, so repeating the call with the same ids is safe. */
@@ -100,6 +101,15 @@ export interface NodeDriver {
     input: BoardDriverProject & { readonly removeFolderPath?: string },
   ) => Effect.Effect<void, NodeDriverError>;
   readonly launch: (input: BoardDriverLaunch) => Effect.Effect<BoardDriverThread, NodeDriverError>;
+  /**
+   * Reopens the machine's browser tabs of `from` in `to`, same pages and browser profile (so logins
+   * stay), and closes them in `from`: an agent's new chat keeps the browser its last one used.
+   */
+  readonly carryBrowserTabs: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly from: ThreadId;
+    readonly to: ThreadId;
+  }) => Effect.Effect<void, NodeDriverError>;
   /** Whether any thread in the project is running on that machine, such as an agent's own chat. */
   readonly projectBusy: (input: BoardDriverProject) => Effect.Effect<boolean, NodeDriverError>;
   readonly send: (input: BoardDriverSend) => Effect.Effect<BoardDriverSendResult, NodeDriverError>;

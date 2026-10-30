@@ -50,7 +50,7 @@ a merge (the server route is reserved for the later server phase):
   a scheduled task's optional `maxRuns` (scheduled runs stop and the task pauses once `runCount` reaches it),
   `startAt` (no run before it; with `maxRuns` 1 a one-off, via `nextScheduledRunAtFrom`) and `beforeRun`
   (`compact` queues `/compact` behind the prompt, so the chat compacts once the agent finishes; `new_thread` launches
-  a fresh thread and binds the task to it) and `waitForIdle` (a due run waits while any thread in the task's
+  a fresh thread, moves the old chat's server browser tabs into it, then sends the prompt, and binds the task to it) and `waitForIdle` (a due run waits while any thread in the task's
   project is running, and a run held that way is never counted as missed), stored in
   `schedule_json` so no core migration is needed. Board schedules use them (workflow schedules through the same
   `nextScheduledRunAtFrom`); a published t3 ignores all four.

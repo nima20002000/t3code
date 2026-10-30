@@ -178,6 +178,40 @@ export const DEFAULT_WORKFLOW_SETTINGS: WorkflowSettings = {
   maxHandoffsPerEdge: null,
 };
 
+/** Where a node's thread lives; the board shows it and its browser tabs follow it. */
+export interface NodeThread {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly threadId: ThreadId;
+}
+
+/**
+ * The thread a node shows: the one its newest run launched for it, unless its own chat was started
+ * anew after that run, else its own chat.
+ */
+export function currentNodeThread(
+  workflow: Pick<Workflow, "runs" | "nodes">,
+  nodeId: string,
+): NodeThread | undefined {
+  const node = workflow.nodes.find((entry) => entry.id === nodeId);
+  if (!node) return undefined;
+  const run = workflow.runs
+    .toSorted((a, b) => b.startedAt.localeCompare(a.startedAt))
+    .find(
+      (entry) =>
+        entry.threads[nodeId] !== undefined &&
+        (node.chat?.startedAt === undefined || entry.startedAt >= node.chat.startedAt),
+    );
+  const thread = run?.threads[nodeId] ?? node.chat;
+  return (
+    thread && {
+      environmentId: thread.environmentId,
+      projectId: thread.projectId,
+      threadId: thread.threadId,
+    }
+  );
+}
+
 export const MAX_LOG = 200;
 export const MAX_RUNS = 50;
 
