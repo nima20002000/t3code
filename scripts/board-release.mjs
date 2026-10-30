@@ -213,6 +213,8 @@ async function main() {
   }
   for (const name of NodeFS.readdirSync(out))
     if (name === "builder-debug.yml") NodeFS.rmSync(NodePath.join(out, name));
+  // The one-command installer is served as releases/latest/download/install.sh.
+  NodeFS.copyFileSync("scripts/board-install.sh", NodePath.join(out, "install.sh"));
   const files = NodeFS.readdirSync(out)
     .filter((name) => name !== "SHA256SUMS")
     .sort();

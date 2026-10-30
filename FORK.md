@@ -71,6 +71,9 @@ a merge (the server route is reserved for the later server phase):
   (never a root, home, a parent of home or a folder holding another project) when a workspace is deleted.
 - `packages/shared/src/cliRelease.ts`: `CLI_RELEASE_REPOSITORY` is the fork (`nima20002000/t3code`), so `t3 update`,
   pinned runtimes and remote installs download the fork's releases (guarded by `apps/server/src/board/forkRelease.test.ts`).
+- `apps/desktop/scripts/dev-electron.mjs`: on Linux the dev app runs with `--disable-gpu` (`T3CODE_DESKTOP_GPU=1` turns
+  the GPU back on) after an amdgpu fault during a relaunch took down the desktop. Each launch, restart reason, exit and
+  a GPU snapshot go to `.t3/logs/dev-electron.log`, and Chromium's own log to `.t3/logs/electron-<time>.log`.
 - `AGENTS.md`: one paragraph pointing agents at this file and the board folders.
 - `pnpm-lock.yaml`: workspace and board dependency lock entries.
 
@@ -81,14 +84,17 @@ no upstream app code. `scripts/fork-boundary.mjs` enforces both rules and that n
 outside this list changes; Board CI runs it. Tests are exempt from the gateway rule.
 
 Fork tooling is `FORK.md`, `scripts/fork-sync.sh`, `scripts/fork-boundary.mjs`, `scripts/board-test.mjs`,
-`scripts/board-release.mjs`, and the fork-only `.github/workflows/board-*.yml` workflows.
+`scripts/board-release.mjs`, `scripts/board-install.sh`, and the fork-only `.github/workflows/board-*.yml` workflows.
 
 ## Releases
 
 `node scripts/board-release.mjs` builds a Linux x64 release (AppImage, `latest-linux.yml`, the `t3` server
 archive, SHA256SUMS) into `release/board-<version>` and restores the package versions it bumped. Versions are
 `<upstream base>-board.<n>` and must rise; the script picks the next one. Publish it as a full GitHub release,
-not a pre-release: the desktop updater reads only the fork's latest full release. Keep new board code in the owned
+not a pre-release: the desktop updater reads only the fork's latest full release. The release also carries `install.sh`
+(`scripts/board-install.sh`), so a Linux server installs with
+`curl -fsSL https://github.com/nima20002000/t3code/releases/latest/download/install.sh | sh` and gets a link for
+Machines → Add a computer. Keep new board code in the owned
 folders; do not patch upstream internals to make the board work.
 
 ## Sync and test policy
