@@ -351,12 +351,11 @@
     color 140ms ease,
     border-color 140ms ease,
     background 140ms ease;
-  .n-agent:hover &,
+  /* Lights up only under the pointer itself, not whenever the node is hovered. */
+  &:hover,
   &:focus-visible {
     border-color: var(--agent-hue);
     color: var(--agent-hue);
-  }
-  &:hover {
     background: color-mix(in srgb, var(--agent-hue) 12%, transparent);
   }
   @media (prefers-reduced-motion: reduce) {
