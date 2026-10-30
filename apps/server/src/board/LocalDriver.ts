@@ -1,4 +1,4 @@
-import { NodeDriverError, type NodeDriver } from "@t3tools/board-core";
+import { latestTodoList, NodeDriverError, type NodeDriver } from "@t3tools/board-core";
 import { CommandId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -156,6 +156,32 @@ const make = Effect.gen(function* () {
         Stream.filter((value) => value !== null),
         Stream.mapError(error("subscribeSettled")),
       );
+  const subscribePlans: NodeDriver["subscribePlans"] = (input) =>
+    threads
+      .streamStoredEventsFrom({
+        threadId: input.thread.threadId,
+        afterSequence: input.afterSequence,
+        eventType: "plan.updated",
+      })
+      .pipe(
+        Stream.map((stored) =>
+          stored.event.type === "plan.updated" && stored.event.payload.kind === "todo_list"
+            ? stored.event.payload.steps
+            : null,
+        ),
+        Stream.filter((steps) => steps !== null),
+        Stream.mapError(error("plans")),
+      );
+  const readPlan: NodeDriver["readPlan"] = Effect.fn("LocalDriver.readPlan")(
+    function* (input) {
+      const records = yield* threads.getProjectThreadRecords(input.thread, ["plans", "turnItems"], {
+        turnItemRunId: input.runId,
+        turnItemTypes: ["todo_list"],
+      });
+      return latestTodoList(records, input.runId);
+    },
+    Effect.mapError(error("plans")),
+  );
   const readLatestAssistant: NodeDriver["readLatestAssistant"] = Effect.fn(
     "LocalDriver.readLatestAssistant",
   )(function* (input) {
@@ -298,6 +324,8 @@ const make = Effect.gen(function* () {
     projectBusy,
     send,
     subscribeSettled,
+    subscribePlans,
+    readPlan,
     readLatestAssistant,
     interrupt,
     ensureProject,

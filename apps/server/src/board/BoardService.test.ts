@@ -246,6 +246,8 @@ const makeLayer = Effect.gen(function* () {
       ),
     send: (input) => Effect.succeed({ runId: RunId.make(input.messageId), sequence: 0 }),
     subscribeSettled: () => Stream.empty,
+    subscribePlans: () => Stream.empty,
+    readPlan: () => Effect.succeed(null),
     readLatestAssistant: () => Effect.succeed(null),
     interrupt: () => Effect.void,
   };

@@ -1,4 +1,7 @@
-/** Per-workflow kanban. Only the orchestrator edits it (reply operations); the engine moves assigned cards. */
+/**
+ * Per-workflow kanban. Only the orchestrator edits it: through reply operations, and through its
+ * to-do list, which the engine mirrors onto cards. The engine also moves cards assigned to workers.
+ */
 
 export type KanbanStatus = "todo" | "doing" | "waiting_for_human" | "blocked" | "done";
 export const KANBAN_STATUSES: ReadonlyArray<KanbanStatus> = [
@@ -75,6 +78,8 @@ export type KanbanOp =
   | { readonly op: "delete"; readonly id: string };
 
 export const MAX_KANBAN_OPS = 32;
+/** Card ids the to-do list mirror owns; a reply may update such a card but never create one. */
+const PLAN_CARD_PREFIX = "plan:";
 export const MAX_CARD_TITLE = 240;
 export const MAX_CARD_BODY = 8000;
 export const MAX_CARD_REASON = 1000;
@@ -232,6 +237,11 @@ export function applyKanban(input: {
     if (op.op === "create") {
       const id = op.id ?? input.newId();
       if (cards.has(id)) return { ok: false, reason: `${where}: card "${id}" already exists` };
+      if (id.startsWith(PLAN_CARD_PREFIX))
+        return {
+          ok: false,
+          reason: `${where}: ids starting with "${PLAN_CARD_PREFIX}" belong to your to-do list`,
+        };
       const card = finish(
         {
           id,
@@ -317,6 +327,8 @@ export function kanbanDuty(input: {
   readonly cards: ReadonlyArray<KanbanCard>;
   readonly requested: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   readonly finishingRun: boolean;
+  /** The current run: finishing it needs at least one card from it. */
+  readonly runId?: string | undefined;
 }): string | undefined {
   const open = (card: KanbanCard) => card.status !== "done";
   const missing = input.requested.filter(
@@ -325,10 +337,94 @@ export function kanbanDuty(input: {
   if (missing.length > 0)
     return `kanban: every worker you give work to needs an open card (todo, doing or blocked) assigned to it; missing for ${missing.map((worker) => worker.name).join(", ")}. Add {"op":"create","title":"...","assignee":"<name>"} to "kanban".`;
   if (!input.finishingRun) return undefined;
+  if (input.runId !== undefined && !input.cards.some((card) => card.runId === input.runId))
+    return 'kanban: this run has no cards. Keep your to-do list for the work of every run, even work you do yourself, or add the cards to "kanban" ({"op":"create","title":"...","status":"done"}).';
   const unfinished = input.cards.filter(
     (card) => card.status === "todo" || card.status === "doing",
   );
   if (unfinished.length > 0)
     return `kanban: before you finish the run, move every card out of todo and doing (to done, or to blocked or waiting_for_human with a "reason"): ${unfinished.map((card) => `${card.id} "${card.title}"`).join(", ")}.`;
   return undefined;
+}
+
+export interface PlanStep {
+  readonly text: string;
+  readonly status: "pending" | "running" | "completed";
+}
+const PLAN_STATUS = { pending: "todo", running: "doing", completed: "done" } as const;
+/** FNV-1a of the step text, so a step keeps its card while the list around it changes. */
+const textKey = (text: string) => {
+  let hash = 0x811c9dc5;
+  for (const char of text.toLowerCase())
+    hash = Math.imul(hash ^ (char.codePointAt(0) ?? 0), 0x01000193);
+  return (hash >>> 0).toString(16).padStart(8, "0");
+};
+/** Whether the to-do mirror of that run owns the card; it never touches any other card. */
+const isPlanCard = (cardId: string, runId: string) =>
+  cardId.startsWith(`${PLAN_CARD_PREFIX}${runId}:`);
+
+/**
+ * Mirrors the orchestrator's to-do list onto cards of the run: one card per step (pending is todo,
+ * running doing, completed done), assigned to the orchestrator. It leaves alone cards it does not
+ * own, a card handed to another node, and a blocked or waiting card until its step is completed.
+ * A step that leaves the list drops its card unless that card is done.
+ */
+export function mirrorPlan(input: {
+  readonly cards: ReadonlyArray<KanbanCard>;
+  readonly steps: ReadonlyArray<PlanStep>;
+  readonly runId: string;
+  readonly actor: string;
+  readonly at: string;
+}): Pick<KanbanChange, "upserted" | "deleted"> {
+  const cards = new Map(input.cards.map((card) => [card.id, card]));
+  const wanted = new Map<string, { readonly title: string; readonly status: KanbanStatus }>();
+  for (const step of input.steps) {
+    const title = step.text.trim().slice(0, MAX_CARD_TITLE);
+    if (title === "") continue;
+    const base = `${PLAN_CARD_PREFIX}${input.runId}:${textKey(title)}`;
+    let id = base;
+    for (let copy = 2; wanted.has(id); copy += 1) id = `${base}-${copy}`;
+    wanted.set(id, { title, status: PLAN_STATUS[step.status] });
+  }
+  const upserted: KanbanCard[] = [];
+  for (const [id, step] of wanted) {
+    const current = cards.get(id);
+    if (!current) {
+      upserted.push(
+        withMove(
+          {
+            id,
+            title: step.title,
+            body: "",
+            status: step.status,
+            assigneeNodeId: input.actor,
+            updatedBy: input.actor,
+            updatedAt: input.at,
+            runId: input.runId,
+          },
+          undefined,
+        ),
+      );
+      continue;
+    }
+    if (current.assigneeNodeId !== input.actor || current.status === step.status) continue;
+    if (needsReason(current.status) && step.status !== "done") continue;
+    const { reason: _reason, ...rest } = current;
+    upserted.push(
+      withMove(
+        { ...rest, status: step.status, updatedBy: input.actor, updatedAt: input.at },
+        current,
+      ),
+    );
+  }
+  const deleted = input.cards
+    .filter(
+      (card) =>
+        isPlanCard(card.id, input.runId) &&
+        !wanted.has(card.id) &&
+        card.assigneeNodeId === input.actor &&
+        card.status !== "done",
+    )
+    .map((card) => card.id);
+  return { upserted, deleted };
 }

@@ -20,8 +20,10 @@ import {
   connectedNodeNames,
   decideRouting,
   incomingNodeNames,
+  mirrorPlan,
   moveCard,
   parseResult,
+  type PlanStep,
   entryNodeOf,
   validateRunnable,
   withFolder,
@@ -254,7 +256,31 @@ const make = Effect.gen(function* () {
       cards: applied.value.cards,
       requested,
       finishingRun: finishingRun && result.routing.kind === "finish",
+      runId: workflow.runs[0]?.id,
     });
+  });
+  /** Shows the orchestrator's to-do list on the kanban while its task is still running. */
+  const mirrorTodoList = Effect.fn("TaskEngine.mirrorTodoList")(function* (
+    task: BoardStore.BoardTask,
+    node: BoardNode,
+    steps: ReadonlyArray<PlanStep>,
+  ) {
+    yield* store.transaction(
+      Effect.gen(function* () {
+        const current = yield* store.getTask(task.id);
+        if (!current || terminal(current.status)) return;
+        yield* writeCards(
+          task.workflowId,
+          mirrorPlan({
+            cards: yield* store.listKanban(task.workflowId),
+            steps,
+            runId: task.runId,
+            actor: node.id,
+            at: yield* now,
+          }),
+        );
+      }),
+    );
   });
   const commitKanban = Effect.fn("TaskEngine.commitKanban")(function* (
     workflow: Workflow,
@@ -829,6 +855,20 @@ const make = Effect.gen(function* () {
         const sequence = (yield* store.snapshot()).sequence;
         const current = yield* store.getTask(task.id);
         if (!current || terminal(current.status)) return;
+        // Best effort while the turn runs; the list as the turn left it is mirrored after it settles.
+        const liveTodoList =
+          node.profile === "orchestrator"
+            ? driver.subscribePlans({ thread, afterSequence: checkpoint.sequence }).pipe(
+                Stream.runForEach((steps) => mirrorTodoList(task, node, steps)),
+                Effect.catch((cause) =>
+                  Effect.logWarning("Board could not follow the orchestrator's to-do list.", {
+                    taskId: task.id,
+                    cause,
+                  }),
+                ),
+                Effect.andThen(Effect.never),
+              )
+            : Effect.never;
         const settled = yield* Effect.raceFirst(
           driver.subscribeSettled({ thread, afterSequence: checkpoint.sequence }).pipe(
             Stream.filter((event) => event.messageId === checkpoint.messageId),
@@ -841,7 +881,7 @@ const make = Effect.gen(function* () {
             Stream.runHead,
             Effect.as(Option.none()),
           ),
-        );
+        ).pipe(Effect.raceFirst(liveTodoList));
         if (Option.isNone(settled)) {
           const latest = yield* store.getTask(task.id);
           if (latest?.status === "completing") continue;
@@ -852,6 +892,17 @@ const make = Effect.gen(function* () {
         if (settled.value.status !== "completed") {
           yield* failTask(task.id, `The thread ${settled.value.status}.`);
           return;
+        }
+        if (node.profile === "orchestrator") {
+          const steps = yield* driver.readPlan({ thread, runId: settled.value.runId }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Board could not read the orchestrator's to-do list.", {
+                taskId: task.id,
+                cause,
+              }).pipe(Effect.as(null)),
+            ),
+          );
+          if (steps) yield* mirrorTodoList(task, node, steps);
         }
         const message = yield* driver.readLatestAssistant({ thread, runId: settled.value.runId });
         const parsed = parseResult(message?.text ?? "");

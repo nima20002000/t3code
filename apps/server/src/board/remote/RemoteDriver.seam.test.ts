@@ -195,6 +195,10 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
         },
       });
       assert.equal(thread.threadId, threadId);
+      FakeCodex.fakeTurns.firstPlan = [
+        { step: "Read the code", status: "completed" },
+        { step: "Fix it", status: "inProgress" },
+      ];
       const sent = yield* driver.send({
         thread,
         commandId: CommandId.make("board-test-send"),
@@ -228,6 +232,26 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
       assert.equal(
         (yield* driver.readLatestAssistant({ thread, runId: sent.runId }))?.text,
         "fake result",
+      );
+      // The agent's to-do list reaches the hub live and as the turn left it.
+      FakeCodex.fakeTurns.firstPlan = [];
+      const todo = [
+        ["Read the code", "completed"],
+        ["Fix it", "running"],
+      ];
+      const [live] = yield* driver
+        .subscribePlans({ thread, afterSequence: sent.sequence })
+        .pipe(Stream.take(1), Stream.runCollect);
+      assert.deepStrictEqual(
+        live?.map((step) => [step.text, step.status]),
+        todo,
+      );
+      assert.deepStrictEqual(
+        (yield* driver.readPlan({ thread, runId: sent.runId }))?.map((step) => [
+          step.text,
+          step.status,
+        ]),
+        todo,
       );
       const subscribed = yield* Deferred.make<WebSocket>();
       const reconnected = yield* Deferred.make<number | undefined>();

@@ -14,6 +14,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  type OrchestrationV2PlanStep,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -56,7 +57,10 @@ const definitionOf = () => {
   const { nodes, edges, settings } = setupWorkflow();
   return { nodes, edges, settings };
 };
-const finish = '```json\n{"summary":"finished","data":42,"routing":{"kind":"finish"}}\n```';
+const finish =
+  '```json\n{"summary":"finished","data":42,"kanban":[{"op":"create","title":"Wrap up","status":"done"}],"routing":{"kind":"finish"}}\n```';
+const finishWithoutCards =
+  '```json\n{"summary":"finished","data":42,"routing":{"kind":"finish"}}\n```';
 const request =
   '```json\n{"summary":"delegate","data":null,"kanban":[{"op":"create","title":"first","assignee":"one"},{"op":"create","title":"second","assignee":"two"}],"routing":{"kind":"request","requests":[{"to":"one","task":"first"},{"to":"two","task":"second"}]}}\n```';
 const returned = (summary: string) =>
@@ -74,6 +78,8 @@ const makeHarness = Effect.gen(function* () {
   // Whether an agent's own chat in the workspace folder is working on the machine.
   const projectBusy = yield* Ref.make(false);
   const carries = yield* Queue.unbounded<Parameters<NodeDriver["carryBrowserTabs"]>[0]>();
+  const liveTodoLists = new Map<ThreadId, Queue.Queue<ReadonlyArray<OrchestrationV2PlanStep>>>();
+  const todoLists = yield* Ref.make(new Map<RunId, ReadonlyArray<OrchestrationV2PlanStep>>());
   const driver: NodeDriver = {
     ensureProject: (input) => Queue.offer(projects, input).pipe(Effect.as({ adopted: false })),
     projectBusy: () => Ref.get(projectBusy),
@@ -81,8 +87,13 @@ const makeHarness = Effect.gen(function* () {
     deleteProject: () => Effect.void,
     launch: (input) =>
       Effect.gen(function* () {
-        if (!replies.has(input.launch.threadId))
+        if (!replies.has(input.launch.threadId)) {
           replies.set(input.launch.threadId, yield* Queue.unbounded<BoardDriverSettled>());
+          liveTodoLists.set(
+            input.launch.threadId,
+            yield* Queue.unbounded<ReadonlyArray<OrchestrationV2PlanStep>>(),
+          );
+        }
         yield* Queue.offer(launches, input);
       }).pipe(
         Effect.as({
@@ -96,6 +107,8 @@ const makeHarness = Effect.gen(function* () {
         Effect.as({ runId: RunId.make(input.messageId), sequence: 0 }),
       ),
     subscribeSettled: ({ thread: target }) => Stream.fromQueue(queueFor(target.threadId)),
+    subscribePlans: ({ thread: target }) => Stream.fromQueue(liveTodoLists.get(target.threadId)!),
+    readPlan: ({ runId }) => Ref.get(todoLists).pipe(Effect.map((all) => all.get(runId) ?? null)),
     readLatestAssistant: ({ runId }) =>
       Ref.get(messages).pipe(
         Effect.map((all) => {
@@ -130,7 +143,20 @@ const makeHarness = Effect.gen(function* () {
         status,
       });
     });
+  /** The agent writes its to-do list while the turn of `sent` runs. */
+  const writeTodoList = (
+    sent: Pick<BoardDriverSend, "thread" | "messageId">,
+    steps: ReadonlyArray<readonly [string, OrchestrationV2PlanStep["status"]]>,
+  ) =>
+    Effect.gen(function* () {
+      const list = steps.map(([text, status], index) => ({ id: `todo-${index}`, text, status }));
+      yield* Ref.update(todoLists, (current) =>
+        new Map(current).set(RunId.make(sent.messageId), list),
+      );
+      yield* Queue.offer(liveTodoLists.get(sent.thread.threadId)!, list);
+    });
   return {
+    writeTodoList,
     sends,
     interrupts,
     launches,
@@ -1356,6 +1382,81 @@ it.effect("a worker's return completes the card chosen for its own request", () 
       );
       assert.deepStrictEqual(yield* status(), ["card-a:doing", "card-b:done"]);
       assert.isDefined(forA);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+const waitForCards = (
+  store: BoardStore.BoardStore["Service"],
+  predicate: (cards: ReadonlyArray<import("@t3tools/board-core").KanbanCard>) => boolean,
+) =>
+  store.events(0).pipe(
+    Stream.mapEffect(() => store.listKanban("workflow")),
+    Stream.filter(predicate),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+  );
+
+it.effect("an orchestrator working alone fills the kanban live from its to-do list", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const layer = TaskEngine.layer.pipe(
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(seed(store, setupWorkflow()));
+      yield* store.putCard("workflow", { ...card("by-hand", "root"), status: "done" });
+      yield* engine.start("workflow", { id: "run:alone", task: "Fix the bug" });
+      const root = yield* Queue.take(harness.sends);
+      yield* harness.writeTodoList(root, [
+        ["Read the code", "running"],
+        ["Fix the bug", "pending"],
+      ]);
+      const shown = (cards: ReadonlyArray<import("@t3tools/board-core").KanbanCard>) =>
+        cards
+          .map((entry) => [entry.title, entry.status, entry.assigneeNodeId, entry.runId])
+          .toSorted();
+      // The cards appear while the orchestrator is still working, before it replies.
+      assert.deepStrictEqual(shown(yield* waitForCards(store, (cards) => cards.length === 3)), [
+        ["Fix the bug", "todo", "root", "run:alone"],
+        ["Read the code", "doing", "root", "run:alone"],
+        ["by-hand", "done", "root", undefined],
+      ]);
+      yield* harness.writeTodoList(root, [
+        ["Read the code", "completed"],
+        ["Fix the bug", "completed"],
+      ]);
+      yield* harness.reply(root, finishWithoutCards);
+      yield* waitForRun(store, (run) => run.id === "run:alone" && run.status === "finished");
+      assert.deepStrictEqual(shown(yield* store.listKanban("workflow")), [
+        ["Fix the bug", "done", "root", "run:alone"],
+        ["Read the code", "done", "root", "run:alone"],
+        ["by-hand", "done", "root", undefined],
+      ]);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("a run that would finish with no card of its own is sent back to add one", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const layer = TaskEngine.layer.pipe(
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(seed(store, setupWorkflow()));
+      yield* engine.start("workflow", { id: "run:bare", task: "Answer" });
+      yield* harness.reply(yield* Queue.take(harness.sends), finishWithoutCards);
+      const correction = yield* Queue.take(harness.sends);
+      assert.include(correction.text, "this run has no cards");
+      yield* harness.reply(correction, finish);
+      yield* waitForRun(store, (entry) => entry.id === "run:bare" && entry.status === "finished");
     }).pipe(Effect.provide(layer));
   }),
 );

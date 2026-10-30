@@ -224,7 +224,8 @@ const PROFILE_RULES: Record<AgentProfile, ReadonlyArray<string>> = {
     '- Give work with routing "request": one request per worker, with the complete task (the worker sees only what you send). Several requests run in parallel.',
     '- Each worker\'s result comes back as a "[Board] Work return" message. Check it. If it is not good enough, request that worker again saying what to fix; otherwise move on.',
     '- Finish with routing {"kind":"finish"} only when the whole task is done. Put the final deliverable in "data"; anything still open belongs in the summary.',
-    "- You keep the workflow kanban (see below), and the board checks it on every reply: each worker you request must have an open card assigned to it, and before you finish the run every card must be done, or waiting_for_human or blocked with a reason. A reply that breaks this is sent back to you.",
+    "- You keep the workflow kanban (see below), and the board checks it on every reply: each worker you request must have an open card assigned to it, before you finish the run every card must be done, or waiting_for_human or blocked with a reason, and every run needs at least one card of its own. A reply that breaks this is sent back to you.",
+    "- Start every run by writing your to-do list with your to-do tool (TodoWrite, TaskCreate/TaskUpdate or update_plan; if it is not loaded, look it up with your tool search first), also when you do all the work yourself, and update it as each step starts and ends: the board shows each item live as a card assigned to you (pending is todo, in progress is doing, completed is done). Only if you have no to-do tool, add the cards in your result instead.",
   ],
 };
 

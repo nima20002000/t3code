@@ -2,7 +2,10 @@ import type {
   CommandId,
   EnvironmentId,
   MessageId,
+  OrchestrationV2PlanArtifact,
+  OrchestrationV2PlanStep,
   OrchestrationV2ThreadLaunchInput,
+  OrchestrationV2TurnItem,
   ProjectId,
   RunId,
   ScheduledTask,
@@ -67,12 +70,40 @@ export class NodeDriverError extends Schema.TaggedError<NodeDriverError>()("Node
     "schedule",
     "projectBusy",
     "browser",
+    "plans",
   ]),
   message: Schema.String,
   /** The outcome is unknown, so repeating the call with the same ids is safe. */
   retryable: Schema.optionalKey(Schema.Boolean),
   cause: Schema.optionalKey(Schema.Defect()),
 }) {}
+
+/**
+ * The steps of the run's latest to-do list, for `NodeDriver.readPlan`: the newest to-do item of the
+ * run's timeline. Plan ids cannot order lists (a run may hold several), so plans are the fallback
+ * only when the timeline no longer holds the run's items.
+ */
+export function latestTodoList(
+  records: {
+    readonly plans: ReadonlyArray<OrchestrationV2PlanArtifact>;
+    readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
+  },
+  runId: RunId,
+): ReadonlyArray<OrchestrationV2PlanStep> | null {
+  let latest: Extract<OrchestrationV2TurnItem, { readonly type: "todo_list" }> | undefined;
+  for (const item of records.turnItems)
+    if (
+      item.type === "todo_list" &&
+      item.runId === runId &&
+      (latest === undefined || item.ordinal > latest.ordinal)
+    )
+      latest = item;
+  if (latest) return latest.steps;
+  const plan = records.plans.findLast(
+    (entry) => entry.kind === "todo_list" && entry.runId === runId && entry.status !== "superseded",
+  );
+  return plan?.kind === "todo_list" ? plan.steps : null;
+}
 
 export interface BoardDriverProject {
   readonly environmentId: EnvironmentId;
@@ -117,6 +148,19 @@ export interface NodeDriver {
     readonly thread: BoardDriverThread;
     readonly afterSequence?: number;
   }) => Stream.Stream<BoardDriverSettled, NodeDriverError>;
+  /**
+   * The steps of each to-do list the thread's agent writes after `afterSequence` (Claude's TodoWrite,
+   * Codex's update_plan), live while it works. Providers that keep no to-do list emit nothing.
+   */
+  readonly subscribePlans: (input: {
+    readonly thread: BoardDriverThread;
+    readonly afterSequence: number;
+  }) => Stream.Stream<ReadonlyArray<OrchestrationV2PlanStep>, NodeDriverError>;
+  /** The steps of the latest to-do list the agent wrote in that run, or null when it wrote none. */
+  readonly readPlan: (input: {
+    readonly thread: BoardDriverThread;
+    readonly runId: RunId;
+  }) => Effect.Effect<ReadonlyArray<OrchestrationV2PlanStep> | null, NodeDriverError>;
   readonly readLatestAssistant: (input: {
     readonly thread: BoardDriverThread;
     readonly runId?: RunId;

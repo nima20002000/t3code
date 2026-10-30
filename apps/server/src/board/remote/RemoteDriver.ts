@@ -13,6 +13,7 @@ import {
 import {
   type BoardDriverSettled,
   type BoardDriverThread,
+  latestTodoList,
   NodeDriverError,
   type NodeDriver,
 } from "@t3tools/board-core/NodeDriver";
@@ -496,6 +497,48 @@ export function make(store: PeerStore): NodeDriver {
           Stream.mapError((cause) => error("subscribeSettled", cause)),
         );
       }),
+    subscribePlans: (input) =>
+      Stream.suspend(() => {
+        // A reconnect resumes after the last item, so a short drop replays no snapshot instead.
+        let afterSequence = input.afterSequence;
+        return Stream.unwrap(
+          Effect.gen(function* () {
+            const client = yield* connect(yield* peerFor(store, input.thread));
+            yield* projectionFor(client, input.thread);
+            return client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
+              threadId: input.thread.threadId,
+              afterSequence,
+            });
+          }),
+        ).pipe(
+          Stream.map((item) => {
+            if (item.kind === "event" || item.kind === "unknown-event")
+              afterSequence = Math.max(afterSequence, item.sequence);
+            else if (item.kind === "snapshot")
+              afterSequence = Math.max(afterSequence, item.snapshotSequence);
+            return item.kind === "event" &&
+              item.event.type === "plan.updated" &&
+              item.event.payload.kind === "todo_list"
+              ? item.event.payload.steps
+              : null;
+          }),
+          Stream.filter((steps) => steps !== null),
+          // A snapshot after a long drop carries no list here; the list is read again once the turn settles.
+          Stream.retry(
+            Schedule.spaced("1 second").pipe(
+              Schedule.while(({ input: cause }: { readonly input: unknown }) => retryable(cause)),
+            ),
+          ),
+          Stream.mapError((cause) => error("plans", cause)),
+        );
+      }),
+    readPlan: Effect.fn("RemoteDriver.readPlan")(function* (input) {
+      return yield* useClient(store, input.thread, (client) =>
+        projectionFor(client, input.thread).pipe(
+          Effect.map((projection) => latestTodoList(projection, input.runId)),
+        ),
+      ).pipe(Effect.mapError((cause) => error("plans", cause)));
+    }),
     readLatestAssistant: Effect.fn("RemoteDriver.readLatestAssistant")(function* (input) {
       return yield* useClient(store, input.thread, (client) =>
         Effect.gen(function* () {

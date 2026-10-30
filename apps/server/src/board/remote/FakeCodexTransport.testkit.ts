@@ -37,7 +37,11 @@ const recorded = (label: string) => {
 };
 
 /** Tests turn this off to keep a session's first turn running, as a long agent turn would. */
-export const fakeTurns = { completeFirst: true };
+export const fakeTurns: {
+  completeFirst: boolean;
+  /** The to-do list (Codex's update_plan) the first turn writes before it answers. */
+  firstPlan: ReadonlyArray<{ step: string; status: "pending" | "inProgress" | "completed" }>;
+} = { completeFirst: true, firstPlan: [] };
 
 export function layer(tag: typeof CodexAdapter.CodexAppServerClientFactory) {
   return Layer.succeed(tag, {
@@ -87,6 +91,11 @@ export function layer(tag: typeof CodexAdapter.CodexAppServerClientFactory) {
                   method: started.method,
                   params: { threadId, turn: { ...started.params.turn, id: turnId } },
                 });
+                if (turnNumber === 1 && fakeTurns.firstPlan.length > 0)
+                  yield* emit({
+                    method: "turn/plan/updated",
+                    params: { threadId, turnId, explanation: null, plan: fakeTurns.firstPlan },
+                  });
                 if (turnNumber === 1 && fakeTurns.completeFirst) {
                   const item = {
                     type: "agentMessage",

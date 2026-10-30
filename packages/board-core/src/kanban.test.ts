@@ -3,10 +3,12 @@ import {
   applyKanban,
   cardOfNode,
   kanbanDuty,
+  mirrorPlan,
   moveCard,
   parseKanbanOps,
   type KanbanCard,
   type KanbanOp,
+  type PlanStep,
 } from "./kanban.ts";
 import { parseResult } from "./resultProtocol.ts";
 
@@ -194,6 +196,99 @@ describe("kanbanDuty", () => {
         finishingRun: true,
       }),
     ).toBeUndefined();
+  });
+
+  it("lets a run finish only once it has a card of its own", () => {
+    const old = card("old", "done");
+    expect(
+      kanbanDuty({ cards: [old], requested: [], finishingRun: true, runId: "run-2" }),
+    ).toContain("this run has no cards");
+    expect(
+      kanbanDuty({
+        cards: [old, { ...card("new", "done"), runId: "run-2" }],
+        requested: [],
+        finishingRun: true,
+        runId: "run-2",
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("mirrorPlan", () => {
+  const mirror = (cards: ReadonlyArray<KanbanCard>, steps: ReadonlyArray<PlanStep>) => {
+    const change = mirrorPlan({ cards, steps, runId: "run-1", actor: "boss", at: "t2" });
+    const byId = new Map(cards.map((entry) => [entry.id, entry]));
+    for (const entry of change.upserted) byId.set(entry.id, entry);
+    for (const id of change.deleted) byId.delete(id);
+    return [...byId.values()];
+  };
+  const shown = (cards: ReadonlyArray<KanbanCard>) =>
+    cards.map((entry) => [entry.title, entry.status, entry.assigneeNodeId ?? null]).toSorted();
+
+  it("shows each step as a card of the orchestrator for the run", () => {
+    const cards = mirror(
+      [],
+      [
+        { text: "Read", status: "completed" },
+        { text: "Write", status: "running" },
+        { text: "Test", status: "pending" },
+      ],
+    );
+    expect(shown(cards)).toEqual([
+      ["Read", "done", "boss"],
+      ["Test", "todo", "boss"],
+      ["Write", "doing", "boss"],
+    ]);
+    expect(cards.every((entry) => entry.runId === "run-1" && entry.updatedBy === "boss")).toBe(
+      true,
+    );
+  });
+
+  it("keeps a step's card when the list around it changes, and drops unfinished steps that left it", () => {
+    const first = mirror(
+      [],
+      [
+        { text: "Read", status: "completed" },
+        { text: "Write", status: "pending" },
+        { text: "Test", status: "pending" },
+      ],
+    );
+    const next = mirror(first, [
+      { text: "Write", status: "running" },
+      { text: "Ship", status: "pending" },
+    ]);
+    expect(shown(next)).toEqual([
+      ["Read", "done", "boss"],
+      ["Ship", "todo", "boss"],
+      ["Write", "doing", "boss"],
+    ]);
+    const write = next.find((entry) => entry.title === "Write")!;
+    expect(write.id).toBe(first.find((entry) => entry.title === "Write")!.id);
+    expect(write.moves?.map((move) => move.status)).toEqual(["todo", "doing"]);
+  });
+
+  it("never touches hand-written cards, cards handed to a worker, or a blocked card before its step completes", () => {
+    const [step] = mirror([], [{ text: "Write", status: "pending" }]);
+    const handWritten = card("by-hand", { status: "doing", updatedBy: "boss" });
+    const blocked = { ...step!, status: "blocked" as const, reason: "no access" };
+    expect(
+      mirror([handWritten, blocked], [{ text: "Write", status: "running" }]).map(
+        (entry) => entry.status,
+      ),
+    ).toEqual(["doing", "blocked"]);
+    expect(
+      mirror([blocked], [{ text: "Write", status: "completed" }]).map((entry) => [
+        entry.status,
+        entry.reason,
+      ]),
+    ).toEqual([["done", undefined]]);
+    const handedOff = { ...step!, assigneeNodeId: "n1" };
+    expect(mirror([handWritten, handedOff], [])).toEqual([handWritten, handedOff]);
+  });
+
+  it("keeps hand-written cards out of the to-do list's ids, so it can never remove them", () => {
+    const created = apply([], [{ op: "create", id: "plan:run-1:mine", title: "Mine" }]);
+    expect(created.ok).toBe(false);
   });
 });
 
