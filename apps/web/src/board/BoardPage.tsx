@@ -212,7 +212,7 @@ function useFlights(
     });
 
   const deadlines = useRef(new Map<string, number>());
-  // oxlint-disable-next-line t3code/react-effect-budget -- arrival is a timer that outlives the render: pulse start and travel time cannot be read in render
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- arrival is a timer that outlives the render: pulse start and travel time cannot be read in render
   useEffect(() => {
     const timers: number[] = [];
     for (const { pulse } of state.flights) {
@@ -598,7 +598,7 @@ function BoardCanvasPage() {
   const flow = useRef<ReactFlowInstance<BoardFlowNode, Edge> | null>(null);
   const canvas = useRef<HTMLDivElement>(null);
   const [fullScreenLayer, setFullScreenLayer] = useState<HTMLDivElement | null>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Keep native browser views and the composer menu on their board windows.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep native browser views and the composer menu on their board windows.
   useEffect(() => {
     if (!canvas.current || !fullScreenLayer) return;
     const stopViews = syncNativeViews(canvas.current, fullScreenLayer);
@@ -615,7 +615,7 @@ function BoardCanvasPage() {
     setSeenRunId(runningId);
     if (runningId) setKanban(true);
   }
-  // oxlint-disable-next-line t3code/react-effect-budget -- Frame React Flow's viewport when a run starts.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Frame React Flow's viewport when a run starts.
   useEffect(() => {
     if (!runningId) return;
     const frame = requestAnimationFrame(() => {
@@ -879,7 +879,7 @@ function BoardCanvasPage() {
       });
   };
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- Subscribe to the window keyboard event.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe to the window keyboard event.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target;

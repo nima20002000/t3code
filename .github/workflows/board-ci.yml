@@ -65,4 +65,5 @@ jobs:
       - name: Run board tests without a cached pass
         env:
           INPUT_TESTS: ${{ inputs.tests }}
-        run: scripts/fork-sync.sh --ci
+        # Unquoted on purpose: a manual run names test paths separated by spaces.
+        run: node scripts/board-test.mjs $INPUT_TESTS

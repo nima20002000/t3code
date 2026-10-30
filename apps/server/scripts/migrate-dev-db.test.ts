@@ -93,6 +93,9 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
       yield* sql`INSERT INTO scheduled_task_webhook_pending
         (delivery_id, task_id, coalesce_key, due_at, task_json, request_json, delivery_ids_json)
         VALUES ('delivery-1', 'task-1', 'key-1', 1900000000000, '{}', '{}', '[]')`;
+      yield* sql`INSERT INTO peer_environment_links
+        (environment_id, secret_name, label, urls_json, access, linked_at, expires_at)
+        VALUES ('peer-env', 'peer-secret', 'Peer', '[]', 'full', '2026-08-01', '2027-08-01')`;
       yield* sql`INSERT INTO auth_sessions (session_id, subject, scopes, method, issued_at, expires_at)
         VALUES ('session-1', 'user', '[]', 'pairing', '2026-08-01', '2027-08-01')`;
       yield* sql`CREATE TABLE board_peers (id TEXT PRIMARY KEY, data TEXT NOT NULL, bearer TEXT NOT NULL)`;
@@ -135,6 +138,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
             SELECT provider_session_id FROM orchestration_v2_projection_provider_sessions`;
           const [leftovers] = yield* sql<{
             auth: number;
+            links: number;
             tasks: number;
             webhooks: number;
             transfers: number;
@@ -144,6 +148,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
               (SELECT COUNT(*) FROM board_peers) + (SELECT COUNT(*) FROM board_tasks) +
                 (SELECT COUNT(*) FROM board_task_events) + (SELECT COUNT(*) FROM board_schedules) AS board,
               (SELECT COUNT(*) FROM auth_sessions) AS auth,
+              (SELECT COUNT(*) FROM peer_environment_links) AS links,
               (SELECT COUNT(*) FROM scheduled_tasks) AS tasks,
               (SELECT COUNT(*) FROM scheduled_task_webhook_replay_keys) +
                 (SELECT COUNT(*) FROM scheduled_task_webhook_pending) AS webhooks,
@@ -165,6 +170,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       );
       assert.deepStrictEqual(kept.leftovers, {
         auth: 0,
+        links: 0,
         tasks: 0,
         webhooks: 0,
         transfers: 0,

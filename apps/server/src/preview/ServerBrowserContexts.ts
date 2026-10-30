@@ -46,7 +46,7 @@ const PROXY_PROTOCOLS = new Set(["http:", "https:", "socks4:", "socks5:"]);
  * Settings reach every client, so credentials belong in a local forwarding proxy, not here.
  * Errors never repeat the value, which may hold them.
  */
-export const parseBrowserProxy = (raw: string) => {
+const parseBrowserProxy = (raw: string) => {
   const trimmed = raw.trim();
   if (trimmed === "") return undefined;
   let url: URL;
@@ -70,7 +70,7 @@ export const parseBrowserProxy = (raw: string) => {
  * Headless renders at a real 2x so screencasts stay sharp; headed keeps 1x so its window fits a
  * normal display. The proxy reaches only this browser, never agents, git or terminals.
  */
-export const browserLaunchOptions = (
+const browserLaunchOptions = (
   config: BrowserLaunchConfig & { readonly display?: string | undefined },
   env: NodeJS.ProcessEnv,
 ) => {
@@ -93,7 +93,7 @@ export const browserLaunchOptions = (
 };
 
 /** An Xvfb display for headed mode where no display runs; it prints its number once ready. */
-export const startXvfb = () =>
+const startXvfb = () =>
   new Promise<StartedDisplay>((resolve, reject) => {
     const child = NodeChildProcess.spawn(
       "Xvfb",

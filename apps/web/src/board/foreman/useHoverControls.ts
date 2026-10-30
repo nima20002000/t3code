@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 export function useHoverControls() {
   const [hovered, setHovered] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Cancel the pending timer on unmount.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Cancel the pending timer on unmount.
   useEffect(() => () => clearTimeout(timer.current), []);
 
   function onPointerEnter() {

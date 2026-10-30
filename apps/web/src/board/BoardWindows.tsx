@@ -44,7 +44,7 @@ export interface BoardWindows {
   readonly fullScreenLayer: HTMLElement | null;
 }
 
-export const BoardWindowsContext = createContext<BoardWindows>({
+const BoardWindowsContext = createContext<BoardWindows>({
   open: () => {},
   close: () => {},
   isOpen: () => false,
@@ -236,7 +236,7 @@ export function BoardWindowFrame(props: {
     element.className = "size-full";
     return element;
   });
-  // oxlint-disable-next-line t3code/react-effect-budget -- Moves the frame's element between the canvas and the full-screen layer.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Moves the frame's element between the canvas and the full-screen layer.
   useLayoutEffect(() => {
     const target = fullScreen ?? slot.current;
     if (!target) return;
@@ -251,7 +251,7 @@ export function BoardWindowFrame(props: {
     }
     target.append(host);
   }, [fullScreen, host]);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Removes the frame's element with the window.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Removes the frame's element with the window.
   useLayoutEffect(() => () => host.remove(), [host]);
   const toggleFullScreen = () =>
     void requestFullScreen(
@@ -320,7 +320,7 @@ let changing = false;
  * Moves full screen to the window last asked for (null: back to the board), one change at a time,
  * so a quick second request is honoured once the first lands and a closed window is skipped.
  */
-export async function requestFullScreen(
+async function requestFullScreen(
   id: string | null,
   layer: HTMLElement | null,
   apply: (id: string | null) => void,

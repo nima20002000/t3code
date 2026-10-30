@@ -21,7 +21,7 @@ a merge (the server route is reserved for the later server phase):
 - `apps/web/src/components/sidebar/mainAppLocation.ts`: board location.
 - `apps/web/src/routeTree.gen.ts`: generated board route registration.
 - `apps/server/scripts/migrate-dev-db.ts` and `apps/server/scripts/migrate-dev-db.test.ts`: dev seeding
-  also clears the board execution and peer tables.
+  also clears the board execution and peer tables and t3's linked environment links.
 - `apps/web/src/components/chat/composerNewThread.ts`, `apps/web/src/components/chat/useComposerMenuItems.ts`,
   `apps/web/src/components/chat/useComposerSend.ts`, `apps/web/src/components/chat/ChatComposer.tsx` and
   `apps/web/src/composer-logic.ts`: the composer's `/new` command, offered where a `ComposerNewThreadContext`

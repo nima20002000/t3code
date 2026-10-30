@@ -48,14 +48,14 @@ function tabTitle(session: PreviewSessionSnapshot) {
 }
 
 /** The thread's tabs on the agent's machine; a desktop-only tab is out of the agent's reach. */
-export function useAgentTabs(threadRef: ScopedThreadRef | null) {
+function useAgentTabs(threadRef: ScopedThreadRef | null) {
   return Object.values(useThreadPreviewState(threadRef).sessions).filter(
     (session) => session.runtime === "server",
   );
 }
 
 /** Opens a tab on the agent's machine, so the agent can reach it. */
-export function useOpenAgentTab() {
+function useOpenAgentTab() {
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   return (threadRef: ScopedThreadRef) =>
     openPreviewSession({ openPreview, threadRef, runtime: "server" }).then((result) => {
@@ -137,13 +137,13 @@ export function BrowserWindow({ id, data, selected }: BoardWindowProps) {
   const scaledZoom = pageZoom * (windows.fullScreen === id ? 1 : canvasZoom);
   // t3's browser host sets the page's own zoom when its view mounts, possibly after this effect.
   const appliedZoom = shown ? previewState.desktopByTabId[shown.tabId]?.zoomFactor : undefined;
-  // oxlint-disable-next-line t3code/react-effect-budget -- Scale the desktop page with the canvas zoom.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Scale the desktop page with the canvas zoom.
   useEffect(() => {
     const bridge = window.desktopBridge?.preview;
     if (!desktopTab || !bridge || appliedZoom === scaledZoom) return;
     withDesktopTab(desktopTab, () => bridge.setZoomFactor(desktopTab, scaledZoom));
   }, [desktopTab, scaledZoom, appliedZoom]);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Give the page its own zoom back once the board stops showing it.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Give the page its own zoom back once the board stops showing it.
   useEffect(() => {
     const bridge = window.desktopBridge?.preview;
     if (!desktopTab || !bridge) return;

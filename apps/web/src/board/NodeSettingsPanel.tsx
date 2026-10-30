@@ -108,7 +108,7 @@ function ChatWindowBody(props: {
   });
   // The chat is too narrow for t3's right panel and floating browser; a page the agent opens
   // there goes to the agent's browser window on the board instead.
-  // oxlint-disable-next-line t3code/react-effect-budget -- Synchronize the external panel stores with the active thread.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Synchronize the external panel stores with the active thread.
   useEffect(() => {
     const threadRef = scopeThreadRef(node.environmentId, node.threadId);
     const threadKey = scopedThreadKey(threadRef);

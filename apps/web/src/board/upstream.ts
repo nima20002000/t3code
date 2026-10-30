@@ -28,14 +28,6 @@ export {
 export { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
 export {
   Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarHeader,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
-  SidebarRail,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -47,15 +39,14 @@ export { toastManager } from "../components/ui/toast";
 export { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 export { layer as primaryHttpLayer } from "../environments/primary/httpLayer";
 export { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary/target";
-export { newThreadId, randomUUID, newMessageId } from "../lib/utils";
+export { randomUUID, newMessageId } from "../lib/utils";
 export {
   buildPendingUserInputAnswers,
   type PendingUserInputDraftAnswer,
-} from "../pendingUserInput";
+} from "@t3tools/client-runtime/state/pending-user-input";
 export {
   deriveProviderInstanceEntries,
   resolveDefaultProviderModelSelection,
-  sortProviderInstanceEntries,
 } from "../providerInstances";
 export { useRightPanelStore } from "../rightPanelStore";
 export { ComposerHandleContext, type ComposerHandleRef } from "../composerHandleContext";
@@ -65,13 +56,7 @@ export {
 } from "../components/chat/composerNewThread";
 export { appAtomRegistry } from "../rpc/atomRegistry";
 export { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
-export {
-  useProjects,
-  useThreadShells,
-  useProject,
-  readThreadShells,
-  useQuietThreadShells,
-} from "../state/entities";
+export { useThreadShells, readThreadShells, useQuietThreadShells } from "../state/entities";
 export {
   useEnvironmentProviders,
   useConnectedEnvironmentIds,
@@ -83,7 +68,7 @@ export {
 export { environmentSummaries } from "../state/presentation";
 export { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../state/server";
 export { useEnvironmentQuery } from "../state/query";
-export { environmentSession, readPreparedConnection, readEnvironmentScope } from "../state/session";
+export { readPreparedConnection, readEnvironmentScope } from "../state/session";
 export { environmentThreadDetails, threadEnvironment } from "../state/threads";
 export { useOrchestrationCommand } from "../state/use-orchestration-command";
 export { buildThreadRouteParams } from "../threadRoutes";

@@ -37,7 +37,7 @@ const remoteRuntime = ManagedRuntime.make(
 type Client = HttpApiClient.ForApi<typeof BoardHttpApi>;
 
 /** The primary environment when there is one (it keeps its own auth); otherwise the first connected one. */
-export function readBoardHubEnvironmentId() {
+function readBoardHubEnvironmentId() {
   return (
     readPrimaryEnvironmentId() ??
     appAtomRegistry.get(environmentSummaries.connectedEnvironmentIdsAtom)[0] ??
@@ -60,10 +60,6 @@ function boardHub() {
     baseUrl: connection.httpBaseUrl,
     bearer: connection.httpAuthorization?.token ?? null,
   };
-}
-
-export function boardHubOrigin(): string {
-  return new URL(boardHub().baseUrl).origin;
 }
 
 export function runBoardApi<A, E>(

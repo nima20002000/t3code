@@ -211,6 +211,7 @@ const CLEARED_TABLES: ReadonlyArray<string> = [
   "provider_session_runtime",
   "auth_sessions",
   "auth_pairing_links",
+  "peer_environment_links",
   "board_peers",
   "board_tasks",
   "board_task_events",

@@ -52,7 +52,7 @@ interface BoardState {
 
 // Kept across hot reloads so a reloaded module keeps the atom the mounted page reads.
 const hotData: { boardStateAtom?: Atom.Writable<BoardState> } = import.meta.hot?.data ?? {};
-export const boardStateAtom: Atom.Writable<BoardState> =
+const boardStateAtom: Atom.Writable<BoardState> =
   hotData.boardStateAtom ??
   Atom.make<BoardState>({
     snapshot: null,
@@ -77,7 +77,7 @@ function setSnapshot(snapshot: BoardSnapshot) {
 }
 
 export function useBoardConnection() {
-  // oxlint-disable-next-line t3code/react-effect-budget -- Keep the hub stream connected while the board is open.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the hub stream connected while the board is open.
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -122,7 +122,7 @@ export function useBoards() {
   const { snapshot, currentId } = useBoardState();
   return { workflows: (snapshot?.workflows ?? []).map(workflowView), currentId };
 }
-export function getWorkflow(id: string): Workflow | undefined {
+function getWorkflow(id: string): Workflow | undefined {
   const workflow = getSnapshot()?.workflows.find((entry) => entry.id === id);
   return workflow && workflowView(workflow);
 }
@@ -398,18 +398,6 @@ export function renameWorkflow(id: string, name: string) {
     ),
   );
 }
-export function updateWorkflowSettings(patch: Partial<WorkflowSettings>) {
-  const workflow = getCurrentWorkflow();
-  perform("Could not update workflow settings", () =>
-    runBoardMutation((client) =>
-      client.updateWorkflow({
-        headers: {},
-        params: { workflowId: workflow.id },
-        payload: { settings: { ...workflow.settings, ...patch } },
-      }),
-    ),
-  );
-}
 export function nextNodePosition(workflow: Pick<Workflow, "nodes">) {
   for (let index = 0; ; index++) {
     const x = 40 + (index % 4) * 300,
@@ -530,9 +518,6 @@ export function syncNodeSchedule(nodeId: string) {
 }
 export function renameNode(id: string, name: string) {
   if (name.trim()) patchNode(id, { name: name.trim() });
-}
-export function setNodeRole(id: string, role: string) {
-  patchNode(id, { prompt: role });
 }
 export function removeNode(id: string) {
   edit((workflow) =>

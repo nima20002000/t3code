@@ -39,7 +39,7 @@ export function NodeScheduleButton({ node }: { readonly node: BoardNode }) {
   const chatThread = node.chat?.threadId ?? null;
   const pendingRebind = marker?.rebind !== undefined;
   const seenAt = query.dataUpdatedAt;
-  // oxlint-disable-next-line t3code/react-effect-budget -- A "new chat" firing or a failed /new left the task and the chat apart; each task update retries.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A "new chat" firing or a failed /new left the task and the chat apart; each task update retries.
   useEffect(() => {
     if (
       seenAt > 0 &&

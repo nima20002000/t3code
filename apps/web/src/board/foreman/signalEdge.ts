@@ -6,9 +6,9 @@ import { useInternalNode, type InternalNode, type Node } from "@xyflow/react";
  */
 
 /** Default worker diameter. */
-export const AGENT_NODE_SIZE = 212;
+const AGENT_NODE_SIZE = 212;
 /** The orchestrator starts half again as big as a worker. */
-export const ORCHESTRATOR_NODE_SIZE = AGENT_NODE_SIZE * 1.5;
+const ORCHESTRATOR_NODE_SIZE = AGENT_NODE_SIZE * 1.5;
 export const agentNodeSize = (node: { readonly profile: string; readonly size?: number }) =>
   node.size ?? (node.profile === "orchestrator" ? ORCHESTRATOR_NODE_SIZE : AGENT_NODE_SIZE);
 const RIM_GAP = 7;
@@ -45,7 +45,7 @@ const unit = (x: number, y: number) => {
 };
 
 /** A gently bent curve that leaves and enters each agent anywhere on its rim. */
-export function floatingCurve(
+function floatingCurve(
   source: Point,
   target: Point,
   bend: number,
@@ -87,7 +87,7 @@ const BACK_LEAN = 110;
  * The bend a line needs from where its two ends sit: none when they are aligned, otherwise a curve
  * that leans to the side the target is on. A line that runs back up leans further.
  */
-export function lineBend(source: Point, target: Point): number {
+function lineBend(source: Point, target: Point): number {
   const dx = target.x - source.x;
   const dy = target.y - source.y;
   const length = Math.hypot(dx, dy);

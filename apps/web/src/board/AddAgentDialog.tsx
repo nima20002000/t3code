@@ -34,7 +34,6 @@ import {
   deriveProviderInstanceEntries,
   randomUUID,
   resolveDefaultProviderModelSelection,
-  sortProviderInstanceEntries,
   useEnvironmentProviders,
 } from "./upstream";
 
@@ -89,7 +88,7 @@ export function AgentDialog(props: {
   const providers =
     (environmentId === "" ? undefined : providersByEnvironment.get(environmentId)) ??
     EMPTY_SERVER_PROVIDERS;
-  const entries = sortProviderInstanceEntries(deriveProviderInstanceEntries(providers));
+  const entries = deriveProviderInstanceEntries(providers);
   const modelOptionsByInstance = new Map(entries.map((entry) => [entry.instanceId, entry.models]));
   const defaultSelection = createModelSelection(
     ProviderInstanceId.make(settings.defaultInstanceId),

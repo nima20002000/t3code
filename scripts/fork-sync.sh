@@ -3,23 +3,12 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-run_board_tests() {
-  local -a named=()
-  if [[ -n "${INPUT_TESTS:-}" ]]; then read -r -a named <<< "$INPUT_TESTS"; fi
-  node scripts/board-test.mjs "${named[@]}"
-}
-
-if [[ "${1:-}" == --ci && $# == 1 ]]; then
-  run_board_tests
-  exit
-fi
 if [[ "${1:-}" == --tests && $# == 1 ]]; then
-  unset INPUT_TESTS
-  run_board_tests
+  node scripts/board-test.mjs
   exit
 fi
 if (($#)); then
-  printf 'Usage: %s [--ci|--tests]\n' "$0" >&2
+  printf 'Usage: %s [--tests]\n' "$0" >&2
   exit 2
 fi
 if [[ "$(git branch --show-current)" != board/main ]]; then
@@ -44,5 +33,4 @@ if ! git merge --no-edit "refs/tags/$stable"; then
   git diff --name-only --diff-filter=U >&2
   exit 1
 fi
-unset INPUT_TESTS
-run_board_tests
+node scripts/board-test.mjs

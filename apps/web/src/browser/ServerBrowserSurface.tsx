@@ -320,7 +320,7 @@ export function ServerBrowserSurface(props: {
   });
   const controlling = control?.controller === "you";
   const canOperate = control?.canOperate === true;
-  // oxlint-disable-next-line t3code/react-effect-budget -- listens on the document for clicks outside this browser
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens on the document for clicks outside this browser
   useEffect(() => {
     // The page took control from a click, so the keyboard follows it there.
     if (controlling && takingRef.current) {

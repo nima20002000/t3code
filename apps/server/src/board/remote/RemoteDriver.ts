@@ -449,10 +449,12 @@ export function make(store: PeerStore): NodeDriver {
       ).pipe(Effect.mapError((cause) => error("readLatestAssistant", cause)));
     }),
     getScheduledTask: Effect.fn("RemoteDriver.getScheduledTask")(function* (input) {
-      const { tasks } = yield* useClient(store, input, (client) =>
-        client[WS_METHODS.scheduledTasksList]({}),
+      const snapshot = yield* useClient(store, input, (client) =>
+        client[WS_METHODS.scheduledTasksSubscribe]({}).pipe(Stream.runHead),
       ).pipe(Effect.mapError((cause) => error("schedule", cause)));
-      return tasks.find((task) => task.id === input.taskId) ?? null;
+      return Option.isSome(snapshot)
+        ? (snapshot.value.tasks.find((task) => task.id === input.taskId) ?? null)
+        : null;
     }),
     upsertScheduledTask: Effect.fn("RemoteDriver.upsertScheduledTask")(function* (input) {
       const { task } = yield* useClient(store, input, (client) =>
