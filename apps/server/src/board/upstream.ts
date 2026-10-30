@@ -14,3 +14,10 @@ export * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 export * as PreviewManager from "../preview/Manager.ts";
 export * as TaskSchedule from "../scheduledTasks/Schedule.ts";
 export * as ServerConfig from "../config.ts";
+export * as ServerSelfUpdate from "../cloud/selfUpdate.ts";
+export * as ServiceLauncherClient from "../cloud/serviceLauncherClient.ts";
+export * as ServerLifecycleEvents from "../serverLifecycleEvents.ts";
+export * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import packageJson from "../../package.json" with { type: "json" };
+/** The t3 version this server runs. */
+export const serverVersion = packageJson.version;

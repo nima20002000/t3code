@@ -7,3 +7,4 @@ export * from "./NodeDriver.ts";
 export * from "./timing.ts";
 export * from "./sharedFiles.ts";
 export * from "./pairingLink.ts";
+export * from "./forkRelease.ts";

@@ -99,3 +99,4 @@ export {
   desktopNetworkAccessStateAtom,
   refreshDesktopNetworkAccessState,
 } from "../state/desktopNetworkAccess";
+export { SidebarUpdatePill } from "../components/sidebar/SidebarUpdatePill";

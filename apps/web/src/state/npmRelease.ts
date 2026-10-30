@@ -1,7 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import { npmReleaseDatabaseMigration } from "@t3tools/shared/cliRelease";
 import * as Effect from "effect/Effect";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
+import { FetchHttpClient, HttpClient } from "effect/http";
+
+import { lookupForkRelease } from "~/board/forkReleaseLookup";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 export interface NpmRelease {
@@ -14,27 +15,9 @@ export interface NpmRelease {
  * Refreshes only while mounted; the published check below keeps its own versions alive. */
 export const npmReleaseAtom = Atom.family((spec: string) =>
   Atom.make(
-    Effect.gen(function* () {
-      const response = yield* HttpClient.get(
-        `https://registry.npmjs.org/t3/${encodeURIComponent(spec)}`,
-      );
-      if (response.status === 404) return null;
-      const body = yield* HttpClientResponse.filterStatusOk(response).pipe(
-        Effect.flatMap((ok) => ok.json),
-      );
-      if (
-        typeof body !== "object" ||
-        body === null ||
-        !("version" in body) ||
-        typeof body.version !== "string"
-      ) {
-        return null;
-      }
-      return {
-        version: body.version,
-        databaseMigration: npmReleaseDatabaseMigration(body),
-      } satisfies NpmRelease;
-    }).pipe(
+    // Board fork: releases come from the fork's GitHub releases, never from npm's upstream `t3`.
+    lookupForkRelease(spec).pipe(
+      Effect.map((release): NpmRelease | null => release),
       // Tracing headers would make the browser send a CORS preflight, which npm rejects.
       Effect.provideService(HttpClient.TracerPropagationEnabled, false),
       Effect.provide(FetchHttpClient.layer),
