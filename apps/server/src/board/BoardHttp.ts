@@ -17,6 +17,7 @@ import * as Stream from "effect/Stream";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import type { SqlError } from "effect/sql/SqlError";
 import * as AgentSchedules from "./AgentSchedules.ts";
+import * as AutoUpdate from "./AutoUpdate.ts";
 import * as BoardScheduler from "./BoardScheduler.ts";
 import * as BoardPeers from "./BoardPeers.ts";
 import * as BoardService from "./BoardService.ts";
@@ -223,6 +224,7 @@ const services = Layer.mergeAll(
   BoardScheduler.layer,
   BoardPeers.layer,
   WorkspaceFiles.layer,
+  AutoUpdate.layer,
 ).pipe(
   Layer.provideMerge(TaskEngine.layer),
   Layer.provideMerge(DriverRegistry.layer),
