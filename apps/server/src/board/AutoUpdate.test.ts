@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import type { ForkReleaseEntry } from "@t3tools/board-core";
 import {
@@ -13,16 +14,22 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as ServerSelfUpdate from "../cloud/selfUpdate.ts";
+import * as ServiceLauncherClient from "../cloud/serviceLauncherClient.ts";
+import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import {
   AutoUpdateError,
+  layer as autoUpdateLayer,
   listForkReleases,
   runAutoUpdate,
   serverBusyReason,
@@ -306,3 +313,68 @@ it.layer(busyLayer)("what a restart would cut", (it) => {
     }),
   );
 });
+
+/**
+ * Starts the auto-update layer with only what t3 gives the board's routes: a launcher, t3's
+ * self-update, an HTTP client, SQL and the board store. t3 hands its projection store to each of
+ * its own services privately, so it is deliberately absent here. Returns what the layer logged.
+ */
+const startAutoUpdate = Effect.fn(function* (managed: boolean) {
+  const messages: string[] = [];
+  const logger = Logger.make(({ message }) => {
+    messages.push(String(message));
+  });
+  const baseDir = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped();
+  const routesContext = Layer.mergeAll(
+    ServerConfig.layerTest(process.cwd(), baseDir),
+    Layer.succeed(
+      ServiceLauncherClient.ServiceLauncherClient,
+      ServiceLauncherClient.ServiceLauncherClient.of({
+        managed,
+        requestUpdate: () => Effect.succeed("launcher-id"),
+        prepareTrial: Effect.undefined,
+      }),
+    ),
+    Layer.succeed(
+      ServerSelfUpdate.ServerSelfUpdate,
+      ServerSelfUpdate.ServerSelfUpdate.of({
+        update: () => Effect.die("no update in this test"),
+        commitDesktopUpdate: () => Effect.die("no update in this test"),
+      }),
+    ),
+    Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.succeed(HttpClientResponse.fromWeb(request, Response.json([]))),
+      ),
+    ),
+    BoardStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+    Logger.layer([logger], { mergeWithExisting: false }),
+  );
+  yield* Layer.build(autoUpdateLayer.pipe(Layer.provide(routesContext)));
+  return messages;
+});
+
+it.effect("a service-managed server starts following the fork's releases at startup", () =>
+  Effect.gen(function* () {
+    const messages = yield* startAutoUpdate(true);
+    assert.isTrue(
+      messages.some((message) => message.includes("follows the fork's releases")),
+      messages.join("\n"),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("a server that will not update itself says why in its log", () =>
+  Effect.gen(function* () {
+    const messages = yield* startAutoUpdate(false);
+    assert.isTrue(
+      messages.some((message) =>
+        message.includes(
+          "Board auto-update is off: this server is not run by the t3 service launcher",
+        ),
+      ),
+      messages.join("\n"),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
