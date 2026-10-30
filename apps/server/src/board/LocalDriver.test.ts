@@ -248,6 +248,7 @@ it.effect("Stop leaves nothing running after a restart cut the run, continued or
           ThreadLaunch.ThreadLaunchService.of({} as never),
         ),
       ),
+      Layer.provide(Layer.mock(ScheduledTasks.ScheduledTaskService)({})),
       Layer.provide(
         Layer.succeed(ProjectService.ProjectService, ProjectService.ProjectService.of({} as never)),
       ),
