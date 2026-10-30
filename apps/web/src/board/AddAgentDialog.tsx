@@ -16,6 +16,7 @@ import {
   useCurrentWorkflow,
   type BoardNode,
 } from "./boardStore";
+import { pairConnectedMachine } from "./boardApi";
 import { useBoardMachines } from "./useBoardMachines";
 import {
   Button,
@@ -113,6 +114,8 @@ export function AgentDialog(props: {
     setSubmitting(true);
     setError(null);
     try {
+      const machine = connected.find((item) => item.environmentId === environmentId);
+      if (machine && !machine.paired) await pairConnectedMachine(environmentId, machine.label);
       if (node) {
         await configureNode(node.id, {
           name: agentName,
@@ -195,6 +198,7 @@ export function AgentDialog(props: {
                   {connected.map((environment) => (
                     <option key={environment.environmentId} value={environment.environmentId}>
                       {environment.label}
+                      {environment.paired ? "" : " (pairs when added)"}
                     </option>
                   ))}
                 </select>

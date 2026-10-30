@@ -356,6 +356,8 @@ export function BoardPage() {
   if (!workflow)
     return (
       <SidebarInset className="h-dvh">
+        {/* The desktop window only moves where CSS opts in, so keep a titlebar strip. */}
+        {isElectron ? <WorkspacePageHeader electron /> : null}
         <div className="grid content-start gap-3 p-6">
           <p role="status">
             {status === "offline"

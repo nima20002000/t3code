@@ -2,7 +2,7 @@ import { createWorkflow } from "@t3tools/board-core/boardModel";
 import type { BoardSnapshot } from "@t3tools/board-core/http";
 import { expect, it } from "vite-plus/test";
 
-import { applyBoardEvent } from "./boardState";
+import { applyBoardEvent, nextFreeName } from "./boardState";
 
 const snapshot: BoardSnapshot = {
   sequence: 4,
@@ -94,4 +94,10 @@ it("keeps workspaces and a workflow's kanban in step with their events", () => {
     applyBoardEvent(current, { kind: "workspace.deleted", sequence: 9, workspaceId: "ws" })
       .workspaces,
   ).toEqual([]);
+});
+
+it("suggests the first free default name", () => {
+  expect(nextFreeName("Workspace", [])).toBe("Workspace");
+  expect(nextFreeName("Workspace", ["workspace", "Workspace 2", "Other"])).toBe("Workspace 3");
+  expect(nextFreeName("Workspace", ["Workspace 2"])).toBe("Workspace");
 });

@@ -130,3 +130,11 @@ export function applyBoardEvent(snapshot: BoardSnapshot, event: BoardEvent): Boa
       };
   }
 }
+
+/** `base`, or `base 2`, `base 3`… — the first one no existing name uses (case-insensitive). */
+export function nextFreeName(base: string, existing: ReadonlyArray<string>): string {
+  const taken = new Set(existing.map((name) => name.trim().toLowerCase()));
+  let name = base;
+  for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${base} ${n}`;
+  return name;
+}

@@ -12,6 +12,12 @@ import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 
 import type { BoardEvent } from "@t3tools/board-core/http";
 import {
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  EnvironmentHttpApi,
+  type EnvironmentId,
+} from "@t3tools/contracts";
+import {
   appAtomRegistry,
   environmentSummaries,
   primaryHttpLayer,
@@ -82,6 +88,47 @@ export function runBoardApi<A, E>(
   return hub.remote
     ? remoteRuntime.runPromise(authorized, options)
     : primaryRuntime.runPromise(authorized, options);
+}
+
+/** Pairs the hub with a machine this app is connected to, using the app's own login there to mint the code. */
+export async function pairConnectedMachine(environmentId: EnvironmentId, name: string) {
+  const connection = readPreparedConnection(environmentId);
+  const authorization = connection?.httpAuthorization;
+  if (!connection || authorization?._tag !== "Bearer") {
+    throw new Error(`Pair ${name} from Machines: this app has no direct login there.`);
+  }
+  const mint = Effect.flatMap(
+    HttpApiClient.make(EnvironmentHttpApi, {
+      baseUrl: new URL("/", connection.httpBaseUrl).toString(),
+    }),
+    (client) =>
+      client.auth.pairingCredential({
+        headers: {},
+        payload: {
+          label: "Board hub",
+          scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+        },
+      }),
+  );
+  const pairing = await remoteRuntime
+    .runPromise(
+      Effect.updateService(mint, HttpClient.HttpClient, (client) =>
+        HttpClient.mapRequest(client, (request) =>
+          HttpClientRequest.bearerToken(request, authorization.token),
+        ),
+      ),
+    )
+    .catch(() => {
+      throw new Error(
+        `Could not pair ${name} automatically; this app needs admin access there. Pair it from Machines.`,
+      );
+    });
+  await runBoardMutation((client) =>
+    client.pairPeer({
+      headers: {},
+      payload: { name, pairingUrlOrCode: pairing.credential, host: connection.httpBaseUrl },
+    }),
+  );
 }
 
 const boardPendingAtom = Atom.make(0);

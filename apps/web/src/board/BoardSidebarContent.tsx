@@ -14,6 +14,7 @@ import {
   useBoardWorkspaces,
 } from "./boardStore";
 import { markSettingsFromBoard } from "./BoardNavigation";
+import { nextFreeName } from "./boardState";
 import { ConfirmDialog, NameDialog, WorkspaceSettingsDialog } from "./WorkspaceDialogs";
 import { IconButton } from "./toolbar/IconButton";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "./upstream";
@@ -324,7 +325,10 @@ export function BoardSidebarPanel() {
         <NameDialog
           title="New workspace"
           label="Workspace name"
-          initial=""
+          initial={nextFreeName(
+            "Workspace",
+            workspaces.map((workspace) => workspace.name),
+          )}
           action="Create"
           onSubmit={createWorkspace}
           onClose={close}
@@ -344,7 +348,12 @@ export function BoardSidebarPanel() {
         <NameDialog
           title="New workflow"
           label="Workflow name"
-          initial="Workflow"
+          initial={nextFreeName(
+            "Workflow",
+            workflows
+              .filter((workflow) => workflow.workspaceId === dialog.workspaceId)
+              .map((workflow) => workflow.name),
+          )}
           action="Create"
           onSubmit={(name) => createWorkflowIn(dialog.workspaceId, name)}
           onClose={close}
