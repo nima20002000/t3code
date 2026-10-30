@@ -124,6 +124,8 @@ async function main() {
     ...process.env,
     PATH: `${NodePath.join(NodeOS.homedir(), ".cargo/bin")}:${process.env.PATH}`,
     T3CODE_DESKTOP_UPDATE_REPOSITORY: RELEASE_REPOSITORY,
+    // The CLI executable must be built with the exact Node in engines; vp otherwise picks its newest.
+    VP_NODE_VERSION: JSON.parse(NodeFS.readFileSync("package.json", "utf8")).engines.node,
   };
   const saved = PACKAGE_FILES.map((file) => [file, NodeFS.readFileSync(file)]);
   const restore = () => {
