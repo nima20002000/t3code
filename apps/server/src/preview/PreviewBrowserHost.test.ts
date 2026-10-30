@@ -253,7 +253,7 @@ describe("headedDisplay", () => {
     readonly sockets?: Readonly<Record<string, number>>;
   }) =>
     PreviewBrowserHost.headedDisplay.pipe(
-      Effect.provide(
+      Effect.provide([
         FileSystem.layerNoop({
           readDirectory: (path) =>
             path === "/tmp/.X11-unix"
@@ -264,8 +264,8 @@ describe("headedDisplay", () => {
               uid: Option.some(input.sockets?.[path.split("/").at(-1)!] ?? -1),
             } as FileSystem.File.Info),
         }),
-      ),
-      Effect.provide(Path.layer),
+        Path.layer,
+      ]),
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(HostProcess.UserId, 1001),
       // An empty PATH finds no Xvfb.
