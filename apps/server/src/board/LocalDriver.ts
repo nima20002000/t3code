@@ -9,7 +9,15 @@ import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
-import { ProjectService, ThreadLaunch, ThreadManagement } from "./upstream.ts";
+import { latestContinuation } from "./restartContinuation.ts";
+import {
+  ProjectFolderRemoval,
+  ProjectService,
+  ProjectStore,
+  ScheduledTasks,
+  ThreadLaunch,
+  ThreadManagement,
+} from "./upstream.ts";
 
 export class LocalDriver extends Context.Service<LocalDriver, NodeDriver>()(
   "t3/board/LocalDriver",
@@ -19,8 +27,14 @@ const make = Effect.gen(function* () {
   const launchService = yield* ThreadLaunch.ThreadLaunchService;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
+  const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const projectStore = yield* ProjectStore.ProjectStoreV2;
+  const removalServices = Context.make(ProjectStore.ProjectStoreV2, projectStore).pipe(
+    Context.add(FileSystem.FileSystem, fileSystem),
+    Context.add(Path.Path, path),
+  );
   const error = (operation: NodeDriverError["operation"]) => (cause: unknown) =>
     new NodeDriverError({ operation, message: `Local board driver ${operation} failed.`, cause });
 
@@ -137,25 +151,54 @@ const make = Effect.gen(function* () {
     return message === undefined ? null : { id: message.id, text: message.text };
   });
   const interrupt: NodeDriver["interrupt"] = Effect.fn("LocalDriver.interrupt")(function* (input) {
+    if (input.runId === undefined) {
+      // The send's run is unknown: stop whatever the thread runs and any continuation it owes.
+      yield* threads
+        .dispatch({
+          type: "thread.stop",
+          commandId: input.commandId,
+          threadId: input.thread.threadId,
+        })
+        .pipe(Effect.mapError(error("interrupt")));
+      return;
+    }
+    let runId = input.runId;
     if (input.runId !== undefined) {
       const records = yield* threads
         .getProjectThreadRecords(input.thread, ["runs"])
         .pipe(Effect.mapError(error("interrupt")));
-      const run = records.runs.find((candidate) => candidate.id === input.runId);
+      const found = records.runs.find((candidate) => candidate.id === input.runId);
+      // A restart may have cut the run and continued it; Stop reaches the continuation.
+      const run = found && latestContinuation(records.runs, found);
+      runId = run?.id ?? runId;
+      if (
+        run?.status === "cancelled" &&
+        (run.startedAt !== null || run.restartContinuationOfRunId !== undefined)
+      ) {
+        // Its continuation may still be pending; a thread Stop declines it.
+        yield* threads
+          .dispatch({
+            type: "thread.stop",
+            commandId: input.commandId,
+            threadId: input.thread.threadId,
+          })
+          .pipe(Effect.mapError(error("interrupt")));
+        return;
+      }
       if (run?.status === "queued") {
         const cancelled = yield* threads
           .dispatch({
             type: "queued-run.cancel",
             commandId: CommandId.make(`${input.commandId}:cancel-queued`),
             threadId: input.thread.threadId,
-            runId: input.runId,
+            runId: run.id,
           })
           .pipe(Effect.result);
         if (Result.isSuccess(cancelled)) return;
         const refreshed = yield* threads
           .getProjectThreadRecords(input.thread, ["runs"])
           .pipe(Effect.mapError(error("interrupt")));
-        if (refreshed.runs.find((candidate) => candidate.id === input.runId)?.status === "queued")
+        if (refreshed.runs.find((candidate) => candidate.id === run.id)?.status === "queued")
           return yield* error("interrupt")(cancelled.failure);
       }
     }
@@ -164,7 +207,7 @@ const make = Effect.gen(function* () {
         projectId: input.thread.projectId,
         threadId: input.thread.threadId,
         commandId: input.commandId,
-        ...(input.runId === undefined ? {} : { runId: input.runId }),
+        ...(runId === undefined ? {} : { runId }),
       })
       .pipe(Effect.mapError(error("interrupt")));
   });
@@ -190,7 +233,11 @@ const make = Effect.gen(function* () {
   );
   const deleteProject: NodeDriver["deleteProject"] = Effect.fn("LocalDriver.deleteProject")(
     function* (input) {
-      const project = input.removeFolder ? yield* projects.getById(input.projectId) : Option.none();
+      if (input.removeFolderPath !== undefined)
+        yield* ProjectFolderRemoval.removeProjectFolder(
+          input.projectId,
+          input.removeFolderPath,
+        ).pipe(Effect.provideContext(removalServices));
       yield* projects
         .delete({
           commandId: CommandId.make(`board:project-delete:${input.projectId}`),
@@ -198,16 +245,32 @@ const make = Effect.gen(function* () {
           force: true,
         })
         .pipe(Effect.catchTags({ ProjectNotFoundError: () => Effect.void }));
-      if (Option.isNone(project)) return;
-      // Only folders the board created under ~/t3-workspaces are ever deleted.
-      const root = path.resolve(project.value.workspaceRoot);
-      const boardRoot = path.join(NodeOS.homedir(), "t3-workspaces");
-      if (root.startsWith(`${boardRoot}${path.sep}`))
-        yield* fileSystem.remove(root, { recursive: true });
     },
     Effect.mapError(error("deleteProject")),
   );
+  const getScheduledTask: NodeDriver["getScheduledTask"] = (input) =>
+    scheduledTasks.list().pipe(
+      Effect.map(({ tasks }) => tasks.find((task) => task.id === input.taskId) ?? null),
+      Effect.mapError(error("schedule")),
+    );
+  const upsertScheduledTask: NodeDriver["upsertScheduledTask"] = (input) =>
+    scheduledTasks.upsert({ ...input.task, createdBy: "system", creationSource: "server" }).pipe(
+      Effect.map((result) => result.task),
+      Effect.mapError(error("schedule")),
+    );
+  const setScheduledTaskEnabled: NodeDriver["setScheduledTaskEnabled"] = (input) =>
+    scheduledTasks
+      .setEnabled({ id: input.taskId, enabled: input.enabled })
+      .pipe(Effect.asVoid, Effect.mapError(error("schedule")));
+  const deleteScheduledTask: NodeDriver["deleteScheduledTask"] = (input) =>
+    scheduledTasks
+      .delete({ id: input.taskId })
+      .pipe(Effect.asVoid, Effect.mapError(error("schedule")));
   return LocalDriver.of({
+    getScheduledTask,
+    upsertScheduledTask,
+    setScheduledTaskEnabled,
+    deleteScheduledTask,
     launch,
     send,
     subscribeSettled,

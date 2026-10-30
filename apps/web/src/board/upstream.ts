@@ -12,6 +12,7 @@ export {
   DialogPopup,
   DialogTitle,
 } from "../components/ui/dialog";
+export { Checkbox } from "../components/ui/checkbox";
 export { Input } from "../components/ui/input";
 export {
   Menu,
@@ -57,6 +58,11 @@ export {
   sortProviderInstanceEntries,
 } from "../providerInstances";
 export { useRightPanelStore } from "../rightPanelStore";
+export { ComposerHandleContext, type ComposerHandleRef } from "../composerHandleContext";
+export {
+  ComposerNewThreadContext,
+  type ComposerNewThreadSettings,
+} from "../components/chat/composerNewThread";
 export { appAtomRegistry } from "../rpc/atomRegistry";
 export { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
 export {
@@ -75,7 +81,8 @@ export {
   usePrimaryEnvironmentId,
 } from "../state/environments";
 export { environmentSummaries } from "../state/presentation";
-export { EMPTY_SERVER_PROVIDERS } from "../state/server";
+export { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../state/server";
+export { useEnvironmentQuery } from "../state/query";
 export { environmentSession, readPreparedConnection, readEnvironmentScope } from "../state/session";
 export { environmentThreadDetails, threadEnvironment } from "../state/threads";
 export { useOrchestrationCommand } from "../state/use-orchestration-command";
@@ -86,7 +93,14 @@ export { PersistentThreadTerminalPanel } from "../components/PersistentThreadTer
 export { useThreadTerminalActions } from "../components/terminal/useThreadTerminalActions";
 export { PreviewPanel } from "../components/preview/PreviewPanel";
 export { openPreviewSession } from "../components/preview/openPreviewSession";
+export { closePreviewSession } from "../components/preview/closePreviewSession";
 export { previewEnvironment } from "../state/preview";
+export { usePreviewMiniPlayerStore } from "../previewMiniPlayerStore";
+export { useThreadPreviewState } from "../previewStateStore";
+export { rendersServerTabNatively } from "../browser/previewRuntime";
+export { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
+export { withDesktopTab } from "../browser/desktopTabLifetime";
 export { useAtomCommand } from "../state/use-atom-command";
 export { primaryServerKeybindingsAtom } from "../state/server";
 export { readLocalApi } from "../localApi";
+export { useStableCallback } from "../hooks/useStableCallback";

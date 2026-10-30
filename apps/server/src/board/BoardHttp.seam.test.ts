@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { EnvironmentHttpApi } from "@t3tools/contracts";
+import { EnvironmentHttpApi, EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -20,10 +20,13 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as BoardHttp from "./BoardHttp.ts";
 
 const token = "reusable-dev-auth-token-that-is-long-enough";
+const hub = EnvironmentId.make("hub");
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 class AuthTestApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.auth) {}
 
@@ -46,13 +49,35 @@ const authRoutes = HttpApiBuilder.layer(AuthTestApi).pipe(
 );
 const routes = Layer.merge(authRoutes, BoardHttp.layer).pipe(
   Layer.provideMerge(EnvironmentAuth.layer),
-  Layer.provideMerge(ServerEnvironment.layerIdentity),
+  Layer.provideMerge(
+    Layer.succeed(
+      ServerEnvironment.ServerEnvironmentIdentity,
+      ServerEnvironment.ServerEnvironmentIdentity.of({ getEnvironmentId: Effect.succeed(hub) }),
+    ),
+  ),
   Layer.provide(ServerSecretStore.layer),
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(config),
-  Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
+  Layer.provide(
+    Layer.mock(ThreadLaunch.ThreadLaunchService)({
+      launch: (input) => Effect.succeed({ threadId: input.threadId } as never),
+    }),
+  ),
   Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
-  Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+  Layer.provide(
+    Layer.mock(ProjectService.ProjectService)({
+      getById: () => Effect.succeedSome({} as never),
+    }),
+  ),
+  Layer.provide(Layer.mock(ProjectStore.ProjectStoreV2)({})),
+  // A published t3: it saves the task but drops the schedule fields it does not know.
+  Layer.provide(
+    Layer.mock(ScheduledTasks.ScheduledTaskService)({
+      list: () => Effect.succeed({ tasks: [] }),
+      upsert: (input) => Effect.succeed({ task: { id: input.id, runCount: 0 } as never }),
+      delete: (input) => Effect.succeed({ id: input.id }),
+    }),
+  ),
   Layer.provideMerge(
     HttpPlatform.layer.pipe(
       Layer.provideMerge(NodeServices.layer),
@@ -137,6 +162,44 @@ it.live("authenticates paired clients and streams committed board events", () =>
             404,
           );
           await reader.cancel();
+
+          // An agent on a machine whose t3 cannot keep the schedule gets a typed refusal, not a 500.
+          const node = await call(
+            post(
+              "/api/board/workflows/workflow/nodes",
+              encodeJson({
+                id: "agent",
+                name: "Agent",
+                profile: "orchestrator",
+                environmentId: hub,
+                modelSelection: { instanceId: "codex", model: "gpt-6-luna" },
+                x: 0,
+                y: 0,
+              }),
+              cookie,
+            ),
+          );
+          assert.strictEqual(node.status, 200);
+          const refused = await call(
+            post(
+              "/api/board/workflows/workflow/nodes/agent/schedule",
+              encodeJson({
+                prompt: "Check in",
+                timing: { type: "interval", everyMs: 60_000 },
+                runs: 3,
+                beforeRun: "compact",
+              }),
+              cookie,
+            ),
+          );
+          assert.strictEqual(refused.status, 409);
+          const body = (await refused.json()) as { _tag: string; message: string };
+          assert.strictEqual(body._tag, "BoardConflictError");
+          assert.include(body.message, "without run limits");
+          const snapshot = (await (await call(get("/api/board/snapshot", cookie))).json()) as {
+            workflows: Array<{ nodes: Array<{ schedule?: unknown }> }>;
+          };
+          assert.isUndefined(snapshot.workflows[0]?.nodes[0]?.schedule);
         }),
       ({ dispose }) => Effect.promise(dispose),
     );

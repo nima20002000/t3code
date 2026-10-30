@@ -16,6 +16,7 @@ import {
   NodeDriverError,
   type NodeDriver,
 } from "@t3tools/board-core/NodeDriver";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -27,7 +28,9 @@ import * as Stream from "effect/Stream";
 import * as Socket from "effect/socket/Socket";
 import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
+import { latestContinuation } from "../restartContinuation.ts";
 import { PeerHttpError, readDescriptor, request } from "./PeerPairing.ts";
+import { makeRestartChain } from "./restartChain.ts";
 import type { Peer, PeerStore } from "./PeerStore.ts";
 
 const makeClient = RpcClient.make(WsRpcGroup);
@@ -37,16 +40,21 @@ type Client = Effect.Success<typeof makeClient>;
 
 class RemoteStateError extends Schema.TaggedError<RemoteStateError>()("RemoteStateError", {
   reason: Schema.String,
+  defect: Schema.optional(Schema.Defect()),
 }) {}
 
 class PeerExpiredError extends Schema.TaggedError<PeerExpiredError>()("PeerExpiredError", {}) {}
+
+const isRemoteStateError = Schema.is(RemoteStateError);
 
 const error = (operation: NodeDriverError["operation"], cause: unknown) =>
   new NodeDriverError({
     operation,
     message: hasTag(cause, "PeerExpiredError")
       ? "Re-pair needed: access to this machine expired."
-      : `Remote board ${operation} failed.`,
+      : operation === "deleteProject" && isRemoteStateError(cause)
+        ? cause.reason
+        : `Remote board ${operation} failed.`,
     ...(retryable(cause) ? { retryable: true } : {}),
     cause,
   });
@@ -255,16 +263,35 @@ export function make(store: PeerStore): NodeDriver {
       ).pipe(Effect.mapError((cause) => error("ensureProject", cause)));
       return { adopted: false };
     }),
-    deleteProject: Effect.fn("RemoteDriver.deleteProject")(function* (input) {
-      yield* useClient(store, input, (client) =>
-        client[WS_METHODS.projectsMutate]({
-          type: "project.delete",
-          commandId: CommandId.make(`board:project-delete:${input.projectId}`),
-          projectId: input.projectId,
-          force: true,
-        }),
-      ).pipe(Effect.mapError((cause) => error("deleteProject", cause)));
-    }),
+    deleteProject: Effect.fn("RemoteDriver.deleteProject")(
+      function* (input) {
+        if (input.removeFolderPath !== undefined) {
+          const path = input.removeFolderPath;
+          yield* useClient(store, input, (client) =>
+            client[WS_METHODS.projectsRemoveFolder]({ projectId: input.projectId, path }).pipe(
+              // A peer on an older t3 reports the unknown method as a defect.
+              Effect.catchDefect((defect) =>
+                Effect.fail(
+                  new RemoteStateError({
+                    reason: "Update t3 on that machine to delete folders.",
+                    defect,
+                  }),
+                ),
+              ),
+            ),
+          );
+        }
+        yield* useClient(store, input, (client) =>
+          client[WS_METHODS.projectsMutate]({
+            type: "project.delete",
+            commandId: CommandId.make(`board:project-delete:${input.projectId}`),
+            projectId: input.projectId,
+            force: true,
+          }),
+        );
+      },
+      Effect.mapError((cause) => error("deleteProject", cause)),
+    ),
     launch: Effect.fn("RemoteDriver.launch")(function* (input) {
       const result = yield* useClient(store, input, (client) =>
         client[ORCHESTRATION_V2_WS_METHODS.launchThread](input.launch),
@@ -310,9 +337,10 @@ export function make(store: PeerStore): NodeDriver {
         let warned = false;
         let statusReported = false;
         let attemptPeer: Peer | undefined;
-        const delivered = new Map<string, BoardDriverSettled["status"]>();
+        const chain = makeRestartChain(input.thread);
         const convert = (
           item: OrchestrationV2ThreadStreamItem,
+          now: number,
         ): ReadonlyArray<BoardDriverSettled> => {
           let runs: ReadonlyArray<OrchestrationV2Run> = [];
           let sequence: number;
@@ -331,12 +359,7 @@ export function make(store: PeerStore): NodeDriver {
           } else return [];
           afterSequence = Math.max(afterSequence ?? 0, sequence);
           warned = false;
-          return runs.flatMap((run) => {
-            const result = settled(run, input.thread, sequence);
-            if (!result || delivered.get(run.id) === result.status) return [];
-            delivered.set(run.id, result.status);
-            return [result];
-          });
+          return runs.flatMap((run) => chain.observe(run, sequence, now));
         };
         const source = Stream.unwrap(
           Effect.gen(function* () {
@@ -345,16 +368,29 @@ export function make(store: PeerStore): NodeDriver {
             });
             const client = yield* connect(peer);
             yield* projectionFor(client, input.thread);
+            chain.connected(yield* Clock.currentTimeMillis);
+            const expiries = Stream.tick("5 seconds").pipe(
+              Stream.mapEffect(() => Clock.currentTimeMillis.pipe(Effect.map(chain.expire))),
+              Stream.flatMap((items) => Stream.fromIterable(items)),
+              Stream.map((settle) => ({ settle })),
+            );
+            // The grace only runs while this connection is up.
             return client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
               threadId: input.thread.threadId,
               ...(afterSequence === undefined ? {} : { afterSequence }),
-            });
+            }).pipe(
+              Stream.map((item) => ({ item })),
+              Stream.merge(expiries, { haltStrategy: "left" }),
+            );
           }),
         ).pipe(
-          Stream.mapEffect((item) =>
+          Stream.mapEffect((next) =>
             Effect.gen(function* () {
+              if ("settle" in next) return [next.settle];
+              const item = next.item;
+              const now = yield* Clock.currentTimeMillis;
               const result = yield* Effect.try({
-                try: () => convert(item),
+                try: () => convert(item, now),
                 catch: () => new RemoteStateError({ reason: "Invalid remote thread." }),
               });
               if (!statusReported) {
@@ -412,25 +448,63 @@ export function make(store: PeerStore): NodeDriver {
         }),
       ).pipe(Effect.mapError((cause) => error("readLatestAssistant", cause)));
     }),
+    getScheduledTask: Effect.fn("RemoteDriver.getScheduledTask")(function* (input) {
+      const { tasks } = yield* useClient(store, input, (client) =>
+        client[WS_METHODS.scheduledTasksList]({}),
+      ).pipe(Effect.mapError((cause) => error("schedule", cause)));
+      return tasks.find((task) => task.id === input.taskId) ?? null;
+    }),
+    upsertScheduledTask: Effect.fn("RemoteDriver.upsertScheduledTask")(function* (input) {
+      const { task } = yield* useClient(store, input, (client) =>
+        client[WS_METHODS.scheduledTasksUpsert]({
+          ...input.task,
+          createdBy: "system",
+          creationSource: "server",
+        }),
+      ).pipe(Effect.mapError((cause) => error("schedule", cause)));
+      return task;
+    }),
+    setScheduledTaskEnabled: Effect.fn("RemoteDriver.setScheduledTaskEnabled")(function* (input) {
+      yield* useClient(store, input, (client) =>
+        client[WS_METHODS.scheduledTasksSetEnabled]({ id: input.taskId, enabled: input.enabled }),
+      ).pipe(Effect.mapError((cause) => error("schedule", cause)));
+    }),
+    deleteScheduledTask: Effect.fn("RemoteDriver.deleteScheduledTask")(function* (input) {
+      yield* useClient(store, input, (client) =>
+        client[WS_METHODS.scheduledTasksDelete]({ id: input.taskId }),
+      ).pipe(Effect.mapError((cause) => error("schedule", cause)));
+    }),
     interrupt: Effect.fn("RemoteDriver.interrupt")(function* (input) {
       yield* useClient(store, input.thread, (client) =>
         Effect.gen(function* () {
+          if (input.runId === undefined) {
+            // The send's run is unknown: stop whatever the thread runs and any continuation it owes.
+            yield* client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+              type: "thread.stop",
+              commandId: input.commandId,
+              threadId: input.thread.threadId,
+            });
+            return;
+          }
           const projection = yield* projectionFor(client, input.thread);
-          const run =
-            input.runId === undefined
-              ? [...projection.runs]
-                  .reverse()
-                  .find(
-                    (candidate) =>
-                      !settled(candidate, input.thread, 0) && candidate.status !== "queued",
-                  )
-              : (projection.runs.find((candidate) => candidate.id === input.runId) ??
-                (yield* fullProjectionFor(client, input.thread)).runs.find(
-                  (candidate) => candidate.id === input.runId,
-                ));
-          if (!run) {
-            if (input.runId === undefined) return;
-            return yield* new RemoteStateError({ reason: "Remote run was not found." });
+          const runs = projection.runs.some((candidate) => candidate.id === input.runId)
+            ? projection.runs
+            : (yield* fullProjectionFor(client, input.thread)).runs;
+          const found = runs.find((candidate) => candidate.id === input.runId);
+          if (!found) return yield* new RemoteStateError({ reason: "Remote run was not found." });
+          // A restart may have cut the run and continued it; Stop reaches the continuation.
+          const run = latestContinuation(runs, found);
+          if (
+            run.status === "cancelled" &&
+            (run.startedAt !== null || run.restartContinuationOfRunId !== undefined)
+          ) {
+            // Its continuation may still be pending on the machine; a thread Stop declines it.
+            yield* client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+              type: "thread.stop",
+              commandId: input.commandId,
+              threadId: input.thread.threadId,
+            });
+            return;
           }
           if (settled(run, input.thread, 0)) return;
           if (run.status === "queued") {

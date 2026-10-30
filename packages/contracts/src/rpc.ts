@@ -270,6 +270,7 @@ import {
   PreviewListResult,
   PreviewClearProfileError,
   PreviewClearProfileInput,
+  PreviewSetupHostResult,
   PreviewReportProfilesInput,
   PreviewNavigateInput,
   PreviewOpenInput,
@@ -379,7 +380,13 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
-import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
+import {
+  Project,
+  ProjectMutation,
+  ProjectMutationError,
+  ProjectRemoveFolderInput,
+  ProjectRemoveFolderResult,
+} from "./project.ts";
 
 export const WS_METHODS = {
   projectsList: "projects.list",
@@ -394,6 +401,7 @@ export const WS_METHODS = {
   projectsMutate: "projects.mutate",
   projectsEnsureScratch: "projects.ensureScratch",
   projectsCreateNew: "projects.createNew",
+  projectsRemoveFolder: "projects.removeFolder",
 
   shellOpenInEditor: "shell.openInEditor",
 
@@ -461,6 +469,7 @@ export const WS_METHODS = {
   previewClose: "preview.close",
   previewList: "preview.list",
   previewClearProfile: "preview.clearProfile",
+  previewSetupHost: "preview.setupHost",
   previewReportProfiles: "preview.reportProfiles",
   previewReportStatus: "preview.reportStatus",
 
@@ -1268,6 +1277,12 @@ const WsProjectsCreateNewRpc = Rpc.make(WS_METHODS.projectsCreateNew, {
   error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
 });
 
+const WsProjectsRemoveFolderRpc = Rpc.make(WS_METHODS.projectsRemoveFolder, {
+  payload: ProjectRemoveFolderInput,
+  success: ProjectRemoveFolderResult,
+  error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
+});
+
 const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   payload: LaunchEditorInput,
   error: Schema.Union([ExternalLauncherError, EnvironmentAuthorizationError]),
@@ -1544,6 +1559,12 @@ const WsPreviewListRpc = Rpc.make(WS_METHODS.previewList, {
 const WsPreviewClearProfileRpc = Rpc.make(WS_METHODS.previewClearProfile, {
   payload: PreviewClearProfileInput,
   error: Schema.Union([PreviewClearProfileError, EnvironmentAuthorizationError]),
+});
+
+const WsPreviewSetupHostRpc = Rpc.make(WS_METHODS.previewSetupHost, {
+  payload: Schema.Struct({}),
+  success: PreviewSetupHostResult,
+  error: EnvironmentAuthorizationError,
 });
 
 const WsPreviewReportProfilesRpc = Rpc.make(WS_METHODS.previewReportProfiles, {
@@ -2030,6 +2051,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchEntriesRpc,
   WsProjectsEnsureScratchRpc,
   WsProjectsCreateNewRpc,
+  WsProjectsRemoveFolderRpc,
   WsProjectsWriteFileRpc,
   WsProjectsMutateRpc,
   WsShellOpenInEditorRpc,
@@ -2080,6 +2102,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewCloseRpc,
   WsPreviewListRpc,
   WsPreviewClearProfileRpc,
+  WsPreviewSetupHostRpc,
   WsPreviewReportProfilesRpc,
   WsPreviewReportStatusRpc,
   WsSubscribePreviewEventsRpc,

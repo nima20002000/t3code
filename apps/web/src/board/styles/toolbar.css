@@ -25,7 +25,8 @@
 
 @utility board-floating-controls {
   position: absolute;
-  z-index: 5;
+  /* Above the desktop's native browser views (z-index 30). */
+  z-index: 40;
   inset: 0.75rem 0.75rem auto;
   display: flex;
   justify-content: flex-end;
@@ -37,7 +38,7 @@
 
 @utility board-run-details {
   position: absolute;
-  z-index: 4;
+  z-index: 20;
   top: 4.5rem;
   right: 1rem;
   bottom: 1rem;

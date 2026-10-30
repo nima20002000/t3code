@@ -98,7 +98,10 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
               const setup = hostSetup(error.cause);
               return setup === undefined
                 ? Effect.fail(error)
-                : Effect.succeed({ _tag: "hostSetup" as const, reason: encodeHostSetup(setup) });
+                : Effect.succeed({
+                    _tag: "hostSetup" as const,
+                    reason: hostSetupCloseReason(setup),
+                  });
             },
           }),
         );
@@ -216,10 +219,22 @@ const hostSetup = (cause: unknown): PreviewStreamHostSetup | undefined =>
     ? { need: "sandbox", command: cause.setupCommand }
     : isLibrariesError(cause)
       ? { need: "libraries", command: cause.setupCommand }
-      : undefined;
+      : isHeadedError(cause)
+        ? { need: "browser", command: cause.setupCommand }
+        : undefined;
 const isSandboxError = Schema.is(PreviewBrowserHost.PreviewBrowserSandboxError);
+const isHeadedError = Schema.is(PreviewBrowserHost.PreviewBrowserHeadedError);
 const isLibrariesError = Schema.is(PreviewBrowserHost.PreviewBrowserLibrariesError);
 const encodeHostSetup = Schema.encodeSync(Schema.fromJsonString(PreviewStreamHostSetup));
+const CLOSE_REASON_MAX_BYTES = 123;
+
+/** A long launcher path would overflow the close frame; fall back to the plain command. */
+export const hostSetupCloseReason = (setup: PreviewStreamHostSetup) => {
+  const reason = encodeHostSetup(setup);
+  if (Buffer.byteLength(reason) <= CLOSE_REASON_MAX_BYTES) return reason;
+  const mode = setup.command.includes("--mode headed") ? " --mode headed" : "";
+  return encodeHostSetup({ ...setup, command: `sudo t3 browser setup${mode}` });
+};
 
 // The request span already covers this download route.
 const serveDownload = Effect.fnUntraced(function* (

@@ -5,7 +5,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { useRef, useState } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import * as Schema from "effect/Schema";
 
 import {
@@ -147,6 +147,157 @@ export function AgentDialog(props: {
     }
   };
 
+  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void submit();
+  };
+  const fields = (
+    <div className="flex flex-col gap-3 text-sm">
+      <label className="flex flex-col gap-1">
+        Profile
+        <select
+          className={FIELD_CLASS}
+          value={profile}
+          onChange={(event) => setChosenProfile(event.target.value as "worker" | "orchestrator")}
+        >
+          <option value="worker">Worker</option>
+          <option value="orchestrator" disabled={hasOrchestrator}>
+            Orchestrator{hasOrchestrator ? " (this workflow already has one)" : ""}
+          </option>
+        </select>
+      </label>
+      <label className="flex flex-col gap-1">
+        Machine
+        <select
+          className={FIELD_CLASS}
+          value={environmentId}
+          onChange={(event) => {
+            setEnvironmentId(event.target.value as EnvironmentId | "");
+          }}
+        >
+          <option value="">Select...</option>
+          {connected.map((environment) => (
+            <option key={environment.environmentId} value={environment.environmentId}>
+              {environment.label}
+              {environment.paired ? "" : " (pairs when added)"}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="flex flex-col gap-1">
+        Folder
+        <p className="text-muted-foreground">
+          {folder
+            ? folder.path || "The machine's existing t3 project"
+            : `${workspace?.name ?? "The workspace"} gets a folder on this machine when the agent first runs.`}
+        </p>
+      </div>
+      <div className="flex flex-col gap-1">
+        Provider and model
+        <div>
+          {selection !== null && environmentId !== "" && entries.length > 0 ? (
+            <ProviderModelPicker
+              environmentId={environmentId}
+              activeInstanceId={selection.instanceId}
+              model={selection.model}
+              lockedProvider={null}
+              instanceEntries={entries}
+              modelOptionsByInstance={modelOptionsByInstance}
+              onInstanceModelChange={(instanceId, model) =>
+                setModelChoice({
+                  environmentId,
+                  selection: createModelSelection(instanceId, model),
+                })
+              }
+            />
+          ) : (
+            <div className="grid gap-2">
+              <label className="grid gap-1">
+                Provider ID
+                <Input
+                  value={manualProvider}
+                  onChange={(event) => setManualProvider(event.target.value)}
+                />
+              </label>
+              <label className="grid gap-1">
+                Model
+                <Input
+                  value={manualModel}
+                  onChange={(event) => setManualModel(event.target.value)}
+                />
+              </label>
+            </div>
+          )}
+        </div>
+      </div>
+      <label className="flex flex-col gap-1">
+        Access
+        <select
+          className={FIELD_CLASS}
+          value={access}
+          onChange={(event) => setAccess(event.target.value as RuntimeMode)}
+        >
+          {ACCESS_MODES.map((mode) => (
+            <option key={mode.value} value={mode.value}>
+              {mode.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex flex-col gap-1">
+        Node name
+        <Input
+          placeholder={environmentLabel || "Agent"}
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        First prompt / role (optional)
+        <Textarea
+          placeholder="You are the backend engineer..."
+          value={role}
+          onChange={(event) => setRole(event.target.value)}
+        />
+      </label>
+      {error ? <p className="text-destructive-foreground">{error}</p> : null}
+    </div>
+  );
+  const actions = (
+    <>
+      {props.onRemove ? (
+        <Button
+          type="button"
+          variant="destructive-outline"
+          className="sm:mr-auto"
+          onClick={props.onRemove}
+        >
+          Remove
+        </Button>
+      ) : null}
+      {props.onSendInstructions ? (
+        <Button type="button" variant="outline" onClick={props.onSendInstructions}>
+          Send board instructions
+        </Button>
+      ) : null}
+      <Button type="button" variant="outline" onClick={props.onClose}>
+        Cancel
+      </Button>
+      <Button type="submit" disabled={!canSubmit}>
+        {node ? (submitting ? "Saving..." : "Save") : submitting ? "Adding..." : "Add agent"}
+      </Button>
+    </>
+  );
+
+  // Editing fills the agent's settings window on the board; adding stays a modal dialog.
+  if (node)
+    return (
+      <form className="flex min-h-0 flex-1 flex-col" onSubmit={onSubmit}>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">{fields}</div>
+        <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t p-3">{actions}</div>
+      </form>
+    );
+
   return (
     <Dialog
       open
@@ -155,156 +306,15 @@ export function AgentDialog(props: {
       }}
     >
       <DialogPopup className="sm:max-w-lg">
-        <form
-          className="flex min-h-0 flex-col"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void submit();
-          }}
-        >
+        <form className="flex min-h-0 flex-col" onSubmit={onSubmit}>
           <DialogHeader>
-            <DialogTitle>{node ? `${node.name} settings` : "Add agent"}</DialogTitle>
+            <DialogTitle>Add agent</DialogTitle>
             <DialogDescription>
               Each run starts a fresh thread for this agent in the workspace folder.
             </DialogDescription>
           </DialogHeader>
-          <DialogPanel>
-            <div className="flex flex-col gap-3 text-sm">
-              <label className="flex flex-col gap-1">
-                Profile
-                <select
-                  className={FIELD_CLASS}
-                  value={profile}
-                  onChange={(event) =>
-                    setChosenProfile(event.target.value as "worker" | "orchestrator")
-                  }
-                >
-                  <option value="worker">Worker</option>
-                  <option value="orchestrator" disabled={hasOrchestrator}>
-                    Orchestrator{hasOrchestrator ? " (this workflow already has one)" : ""}
-                  </option>
-                </select>
-              </label>
-              <label className="flex flex-col gap-1">
-                Machine
-                <select
-                  className={FIELD_CLASS}
-                  value={environmentId}
-                  onChange={(event) => {
-                    setEnvironmentId(event.target.value as EnvironmentId | "");
-                  }}
-                >
-                  <option value="">Select...</option>
-                  {connected.map((environment) => (
-                    <option key={environment.environmentId} value={environment.environmentId}>
-                      {environment.label}
-                      {environment.paired ? "" : " (pairs when added)"}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="flex flex-col gap-1">
-                Folder
-                <p className="text-muted-foreground">
-                  {folder
-                    ? folder.path || "The machine's existing t3 project"
-                    : `${workspace?.name ?? "The workspace"} gets a folder on this machine when the agent first runs.`}
-                </p>
-              </div>
-              <div className="flex flex-col gap-1">
-                Provider and model
-                <div>
-                  {selection !== null && environmentId !== "" && entries.length > 0 ? (
-                    <ProviderModelPicker
-                      environmentId={environmentId}
-                      activeInstanceId={selection.instanceId}
-                      model={selection.model}
-                      lockedProvider={null}
-                      instanceEntries={entries}
-                      modelOptionsByInstance={modelOptionsByInstance}
-                      onInstanceModelChange={(instanceId, model) =>
-                        setModelChoice({
-                          environmentId,
-                          selection: createModelSelection(instanceId, model),
-                        })
-                      }
-                    />
-                  ) : (
-                    <div className="grid gap-2">
-                      <label className="grid gap-1">
-                        Provider ID
-                        <Input
-                          value={manualProvider}
-                          onChange={(event) => setManualProvider(event.target.value)}
-                        />
-                      </label>
-                      <label className="grid gap-1">
-                        Model
-                        <Input
-                          value={manualModel}
-                          onChange={(event) => setManualModel(event.target.value)}
-                        />
-                      </label>
-                    </div>
-                  )}
-                </div>
-              </div>
-              <label className="flex flex-col gap-1">
-                Access
-                <select
-                  className={FIELD_CLASS}
-                  value={access}
-                  onChange={(event) => setAccess(event.target.value as RuntimeMode)}
-                >
-                  {ACCESS_MODES.map((mode) => (
-                    <option key={mode.value} value={mode.value}>
-                      {mode.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1">
-                Node name
-                <Input
-                  placeholder={environmentLabel || "Agent"}
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                First prompt / role (optional)
-                <Textarea
-                  placeholder="You are the backend engineer..."
-                  value={role}
-                  onChange={(event) => setRole(event.target.value)}
-                />
-              </label>
-              {error ? <p className="text-destructive-foreground">{error}</p> : null}
-            </div>
-          </DialogPanel>
-          <DialogFooter>
-            {props.onRemove ? (
-              <Button
-                type="button"
-                variant="destructive-outline"
-                className="sm:mr-auto"
-                onClick={props.onRemove}
-              >
-                Remove
-              </Button>
-            ) : null}
-            {props.onSendInstructions ? (
-              <Button type="button" variant="outline" onClick={props.onSendInstructions}>
-                Send board instructions
-              </Button>
-            ) : null}
-            <Button type="button" variant="outline" onClick={props.onClose}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!canSubmit}>
-              {node ? (submitting ? "Saving..." : "Save") : submitting ? "Adding..." : "Add agent"}
-            </Button>
-          </DialogFooter>
+          <DialogPanel>{fields}</DialogPanel>
+          <DialogFooter>{actions}</DialogFooter>
         </form>
       </DialogPopup>
     </Dialog>

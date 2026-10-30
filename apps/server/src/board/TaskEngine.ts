@@ -26,6 +26,7 @@ import {
   withFolder,
   type BoardNode,
   type BoardResult,
+  type BoardNewNodeChatInput,
   type BoardStartRunInput,
   type BoardDriverThread,
   type KanbanCard,
@@ -96,6 +97,7 @@ export class TaskEngine extends Context.Service<
     readonly openNodeChat: (
       workflowId: string,
       nodeId: string,
+      fresh?: BoardNewNodeChatInput,
     ) => Effect.Effect<BoardNode, EngineError>;
   }
 >()("t3/board/TaskEngine") {}
@@ -325,6 +327,33 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const retrying = new Set<string>();
+  /** Retries an interrupt every second while the machine is away; it may be continuing the turn. */
+  const keepInterrupting = (task: BoardStore.BoardTask) =>
+    lockFor(task.runId)
+      .withPermits(1)(interruptTask(task.id))
+      .pipe(
+        Effect.retry({
+          while: (error) => error._tag === "NodeDriverError" && error.retryable === true,
+          schedule: Schedule.spaced("1 second"),
+        }),
+      );
+  const retryInBackground = (task: BoardStore.BoardTask) =>
+    Effect.suspend(() => {
+      if (retrying.has(task.id)) return Effect.void;
+      retrying.add(task.id);
+      return keepInterrupting(task).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.void
+            : Effect.logError("Could not interrupt board task", { taskId: task.id, cause }),
+        ),
+        Effect.ensuring(Effect.sync(() => retrying.delete(task.id))),
+        Effect.forkIn(scope),
+        Effect.asVoid,
+      );
+    });
+
   const stopTasks = Effect.fn("TaskEngine.stopTasks")(function* (
     runId: string,
     ids: ReadonlySet<string>,
@@ -374,6 +403,24 @@ const make = Effect.gen(function* () {
               } else {
                 yield* store.putTask({ ...task, status: "stopped" });
               }
+              const node = run?.definition.nodes.find((entry) => entry.id === task.nodeId);
+              const card =
+                task.cardId === undefined
+                  ? undefined
+                  : (yield* store.listKanban(task.workflowId)).find(
+                      (entry) => entry.id === task.cardId,
+                    );
+              if (node && card?.status === "doing" && card.assigneeNodeId === task.nodeId)
+                yield* moveWorkerCard(
+                  task.workflowId,
+                  node,
+                  [["doing"]],
+                  "blocked",
+                  workflowId === undefined
+                    ? "Stopped because a sibling request failed."
+                    : "Stopped by user.",
+                  task.cardId,
+                );
             }
             if (!workflow || !run || run.status !== "running") return { targets: selected, run };
             const at = yield* now;
@@ -405,6 +452,10 @@ const make = Effect.gen(function* () {
           const result = yield* interruptTask(task.id).pipe(Effect.result);
           if (Result.isFailure(result)) {
             if (result.failure._tag === "SqlError") return yield* result.failure;
+            if (result.failure.retryable) {
+              yield* retryInBackground(task);
+              continue;
+            }
             failure ??= result.failure;
             yield* Effect.logWarning("Could not interrupt board task", {
               taskId: task.id,
@@ -458,15 +509,18 @@ const make = Effect.gen(function* () {
     return { folder, driver };
   });
 
-  /** The node's own chat outside runs: one thread per node and machine, launched on first open. */
+  /**
+   * The node's own chat outside runs: one thread per node and machine, launched on first open.
+   * A fresh one ("/new") replaces it with a new thread, launched with the settings it brings.
+   */
   const openNodeChat = Effect.fn("TaskEngine.openNodeChat")(
-    function* (workflowId: string, nodeId: string) {
+    function* (workflowId: string, nodeId: string, fresh?: BoardNewNodeChatInput) {
       const workflow = yield* store.getWorkflow(workflowId);
       const node = workflow?.nodes.find((entry) => entry.id === nodeId);
       if (!workflow || !node) return yield* new BoardNotFoundError({ message: "Node not found." });
-      if (node.chat?.environmentId === node.environmentId) return node;
+      if (!fresh && node.chat?.environmentId === node.environmentId) return node;
       const { folder, driver } = yield* workspaceFolder(workflow.workspaceId, node.environmentId);
-      const key = `chat\0${workflowId}\0${node.id}\0${node.environmentId}`;
+      const key = `chat\0${workflowId}\0${node.id}\0${node.environmentId}${fresh ? `\0${NodeCrypto.randomUUID()}` : ""}`;
       const threadId = ThreadId.make(stableId(key, "thread"));
       yield* driver.launch({
         environmentId: node.environmentId,
@@ -475,19 +529,31 @@ const make = Effect.gen(function* () {
           threadId,
           projectId: folder.projectId,
           title: `${node.name} · ${workflow.name}`,
-          modelSelection: node.modelSelection,
-          runtimeMode: node.runtimeMode ?? workflow.settings.runtimeMode,
-          interactionMode: "default",
+          modelSelection: fresh?.modelSelection ?? node.modelSelection,
+          runtimeMode: fresh?.runtimeMode ?? node.runtimeMode ?? workflow.settings.runtimeMode,
+          interactionMode: fresh?.interactionMode ?? "default",
           workspaceStrategy: { type: "root" },
         },
       });
-      const chat = { environmentId: node.environmentId, projectId: folder.projectId, threadId };
+      const chat = {
+        environmentId: node.environmentId,
+        projectId: folder.projectId,
+        threadId,
+        ...(fresh ? { startedAt: yield* now } : {}),
+      };
       return yield* store.transaction(
         Effect.gen(function* () {
           const current = yield* store.getWorkflow(workflowId);
           const currentNode = current?.nodes.find((entry) => entry.id === nodeId);
           if (!current || !currentNode)
             return yield* new BoardNotFoundError({ message: "Node not found." });
+          // A first open that finishes after another viewer's open or "/new" keeps their chat.
+          if (!fresh && currentNode.chat?.environmentId === currentNode.environmentId)
+            return currentNode;
+          if (currentNode.environmentId !== node.environmentId)
+            return yield* new BoardInvalidRequestError({
+              message: "The agent moved to another machine while its chat started. Try again.",
+            });
           const next = { ...currentNode, chat };
           const saved = {
             ...current,
@@ -587,7 +653,7 @@ const make = Effect.gen(function* () {
       const task = yield* store.getTask(taskId);
       if (!task) return;
       if (task.status === "completing") {
-        yield* lockFor(task.runId).withPermits(1)(interruptTask(task.id));
+        yield* keepInterrupting(task);
         return;
       }
       if (terminal(task.status)) return;
@@ -707,6 +773,7 @@ const make = Effect.gen(function* () {
         );
         if (Option.isNone(settled)) {
           const latest = yield* store.getTask(task.id);
+          if (latest?.status === "completing") continue;
           if (latest && !terminal(latest.status))
             yield* failTask(task.id, "The thread's settlement stream ended unexpectedly.");
           return;
@@ -1161,7 +1228,13 @@ const make = Effect.gen(function* () {
         lockFor(id).withPermits(1)(
           Effect.gen(function* () {
             for (const task of yield* store.listTasks(id))
-              if (task.status === "completing") yield* interruptTask(task.id);
+              if (task.status === "completing")
+                yield* interruptTask(task.id).pipe(
+                  Effect.catchIf(
+                    (error) => error._tag === "NodeDriverError" && error.retryable === true,
+                    () => retryInBackground(task),
+                  ),
+                );
             return yield* reload(id);
           }),
         );

@@ -36,6 +36,9 @@ const recorded = (label: string) => {
   return structuredClone(frame);
 };
 
+/** Tests turn this off to keep a session's first turn running, as a long agent turn would. */
+export const fakeTurns = { completeFirst: true };
+
 export function layer(tag: typeof CodexAdapter.CodexAppServerClientFactory) {
   return Layer.succeed(tag, {
     open: () =>
@@ -57,7 +60,11 @@ export function layer(tag: typeof CodexAdapter.CodexAppServerClientFactory) {
             for (const line of lines) {
               const message = yield* decodeFrame(line).pipe(Effect.orDie);
               if (message.method === "initialized") continue;
-              if (message.method === "initialize" || message.method === "thread/start") {
+              if (
+                message.method === "initialize" ||
+                message.method === "thread/start" ||
+                message.method === "thread/resume"
+              ) {
                 const response = recorded(message.method);
                 yield* emit({ ...response, id: message.id });
                 continue;
@@ -80,7 +87,7 @@ export function layer(tag: typeof CodexAdapter.CodexAppServerClientFactory) {
                   method: started.method,
                   params: { threadId, turn: { ...started.params.turn, id: turnId } },
                 });
-                if (turnNumber === 1) {
+                if (turnNumber === 1 && fakeTurns.completeFirst) {
                   const item = {
                     type: "agentMessage",
                     id: "fake-answer",

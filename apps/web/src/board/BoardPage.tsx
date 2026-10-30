@@ -2,8 +2,8 @@ import { Link } from "@tanstack/react-router";
 import {
   applyNodeChanges,
   Background,
-  NodeResizer,
   ReactFlow,
+  useStoreApi,
   type Connection,
   type Edge,
   type EdgeChange,
@@ -14,13 +14,44 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { MessageSquareIcon, XIcon } from "lucide-react";
-import { createContext, useContext, useEffect, useRef, useState, type MouseEvent } from "react";
+import {
+  GlobeIcon,
+  MessageSquareIcon,
+  SettingsIcon,
+  SquareTerminalIcon,
+  XIcon,
+} from "lucide-react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
 import type { EdgeRunView, NodeRunView } from "@t3tools/board-core/runView";
 
-import { AgentSettingsDialog, NodeSettingsPanel } from "./NodeSettingsPanel";
+import { AgentSettingsWindow, ChatWindow } from "./NodeSettingsPanel";
+import { BrowserWindow, TerminalWindow, useAgentTools } from "./ChatTools";
+import {
+  BoardWindowsProvider,
+  syncNativeViews,
+  loadWindows,
+  followComposerMenus,
+  newWindowNode,
+  saveWindows,
+  useBoardWindows,
+  windowId,
+  type BoardWindowKind,
+  type BoardWindowProps,
+  type WindowFlowNode,
+  type WindowOptions,
+} from "./BoardWindows";
 import { copyNodes, deleteNodes, duplicateNodes, hasCopiedNodes, pasteNodes } from "./nodeActions";
 import { AgentDialog } from "./AddAgentDialog";
+import { NodeScheduleButton } from "./NodeSchedule";
 import {
   addEdge,
   redo,
@@ -28,7 +59,6 @@ import {
   useBoardConnection,
   useBoardState,
   getCurrentWorkflow,
-  getWorkflow,
   recordHistoryStep,
   removeEdge,
   openNodeChat,
@@ -63,12 +93,12 @@ import {
   isElectron,
   readLocalApi,
   useEnvironmentIdentities,
+  useStableCallback,
   useThreadShells,
 } from "./upstream";
 
 const ACTIVE_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 
-const OpenSettingsContext = createContext<(nodeId: string) => void>(() => {});
 const RunViewsContext = createContext<{
   nodes: ReadonlyMap<string, NodeRunView>;
   edges: ReadonlyMap<string, EdgeRunView>;
@@ -120,6 +150,31 @@ interface Flight {
  * do not fly. A node's arrival is its incoming pulse landing, so the card can hold its previous
  * status until then.
  */
+/**
+ * Every agent and edge reads the run views, which are rebuilt on every board render, including each
+ * frame of a drag; the value is kept while its content is the same.
+ */
+function RunViewsProvider(props: {
+  readonly views: ReturnType<typeof useNodeRunViews>;
+  readonly flights: ReturnType<typeof useFlights>;
+  readonly children: ReactNode;
+}) {
+  const next = { ...props.views, ...props.flights };
+  const key = JSON.stringify([
+    [...next.nodes],
+    [...next.edges],
+    [...next.pulses],
+    [...next.arriving],
+  ]);
+  const [held, setHeld] = useState({ key, value: next });
+  if (held.key !== key) setHeld({ key, value: next });
+  return (
+    <RunViewsContext.Provider value={held.key === key ? held.value : next}>
+      {props.children}
+    </RunViewsContext.Provider>
+  );
+}
+
 function useFlights(
   edgeViews: ReadonlyMap<string, EdgeRunView>,
   edges: ReadonlyArray<{ readonly a: string; readonly b: string }>,
@@ -196,6 +251,7 @@ function useHeldView(view: NodeRunView, held: boolean) {
 }
 
 type AgentFlowNode = Node<{ readonly node: BoardNode }, "agent">;
+type BoardFlowNode = AgentFlowNode | WindowFlowNode;
 
 function harnessOf(instanceId: string): "codex" | "claude" | "neutral" {
   const id = instanceId.toLowerCase();
@@ -211,7 +267,7 @@ function AgentCard({ data, selected, width }: NodeProps<AgentFlowNode>) {
   const environments = useEnvironmentIdentities();
   const peers = useBoardPeers();
   const threads = useThreadShells();
-  const openSettings = useContext(OpenSettingsContext);
+  const windows = useBoardWindows();
   const { nodes: runViews, arriving } = useContext(RunViewsContext);
   const runView = runViews.get(node.id);
 
@@ -240,10 +296,33 @@ function AgentCard({ data, selected, width }: NodeProps<AgentFlowNode>) {
     label: `Open ${node.name} thread`,
     icon: <MessageSquareIcon size={14} />,
     onClick: () => {
-      openSettings(node.id);
+      windows.open("chat", node.id);
       if (node.threadId === "") void openNodeChat(node.id);
     },
   };
+
+  const settings = {
+    label: `${node.name} settings`,
+    icon: <SettingsIcon size={14} />,
+    onClick: () => windows.open("settings", node.id),
+  };
+  const tools = useAgentTools(node);
+  const actions = tools
+    ? [
+        chat,
+        {
+          label: `${node.name} terminal`,
+          icon: <SquareTerminalIcon size={14} />,
+          onClick: tools.openTerminal,
+        },
+        {
+          label: `${node.name} browser`,
+          icon: <GlobeIcon size={14} />,
+          onClick: tools.openBrowser,
+        },
+        settings,
+      ]
+    : [chat, settings];
 
   return (
     <AgentNodeView
@@ -257,23 +336,111 @@ function AgentCard({ data, selected, width }: NodeProps<AgentFlowNode>) {
       {...(cue.transition ? { transition: cue.transition, transitionKey: cue.key } : {})}
       selected={selected}
       size={width ?? agentNodeSize(node)}
-      chat={chat}
+      actions={actions}
+      accessory={<NodeScheduleButton node={node} />}
       role={node.profile === "orchestrator" ? "Orchestrator" : "Worker"}
     >
-      <NodeResizer
-        isVisible={Boolean(selected)}
-        keepAspectRatio
-        minWidth={MIN_NODE_SIZE}
-        minHeight={MIN_NODE_SIZE}
-        maxWidth={MAX_NODE_SIZE}
-        maxHeight={MAX_NODE_SIZE}
-        onResizeStart={() => recordHistoryStep()}
-        onResizeEnd={(_, params) =>
-          void updateNode(node.id, { x: params.x, y: params.y, size: Math.round(params.width) })
-        }
+      <ResizeRing
+        nodeId={node.id}
+        onResizeEnd={(x, y, size) => updateNode(node.id, { x, y, size })}
       />
       <AgentHandles name={node.name} />
     </AgentNodeView>
+  );
+}
+
+const RING_CURSORS = ["ew-resize", "nwse-resize", "ns-resize", "nesw-resize"] as const;
+
+/** The pointer's direction from the center, as the resize cursor pointing that way. */
+function ringCursor(dx: number, dy: number) {
+  const octant = Math.round((Math.atan2(dy, dx) / Math.PI) * 4);
+  return RING_CURSORS[((octant % 4) + 4) % 4] ?? "ew-resize";
+}
+
+/** Resizes the circle from its rim, keeping its center in place. */
+function ResizeRing({
+  nodeId,
+  onResizeEnd,
+}: {
+  nodeId: string;
+  onResizeEnd: (x: number, y: number, size: number) => Promise<unknown>;
+}) {
+  const store = useStoreApi<AgentFlowNode>();
+  const centerOf = (ring: Element) => {
+    const box = ring.getBoundingClientRect();
+    return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+  };
+  const onPointerMove = (event: PointerEvent<SVGSVGElement>) => {
+    const center = centerOf(event.currentTarget);
+    event.currentTarget.style.cursor = ringCursor(
+      event.clientX - center.x,
+      event.clientY - center.y,
+    );
+  };
+  const onPointerDown = (event: PointerEvent<SVGSVGElement>) => {
+    const node = store.getState().nodeLookup.get(nodeId);
+    if (event.button !== 0 || !node) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const ring = event.currentTarget;
+    ring.setPointerCapture(event.pointerId);
+    recordHistoryStep();
+    const screenCenter = centerOf(ring);
+    const startSize = node.width ?? node.measured.width ?? 0;
+    const center = { x: node.position.x + startSize / 2, y: node.position.y + startSize / 2 };
+    let last = { x: node.position.x, y: node.position.y, size: startSize };
+    const move = (moveEvent: globalThis.PointerEvent) => {
+      const { transform, triggerNodeChanges } = store.getState();
+      const radius = Math.hypot(
+        moveEvent.clientX - screenCenter.x,
+        moveEvent.clientY - screenCenter.y,
+      );
+      const size = Math.round(
+        Math.min(MAX_NODE_SIZE, Math.max(MIN_NODE_SIZE, (2 * radius) / transform[2])),
+      );
+      last = { x: center.x - size / 2, y: center.y - size / 2, size };
+      triggerNodeChanges([
+        { id: nodeId, type: "position", position: { x: last.x, y: last.y } },
+        {
+          id: nodeId,
+          type: "dimensions",
+          resizing: true,
+          setAttributes: true,
+          dimensions: { width: size, height: size },
+        },
+      ]);
+    };
+    // The node stays in its resizing state until the save lands, so it does not flash back.
+    const end = () => {
+      ring.removeEventListener("pointermove", move);
+      ring.removeEventListener("pointerup", end);
+      ring.removeEventListener("pointercancel", end);
+      void onResizeEnd(last.x, last.y, last.size).finally(() =>
+        store.getState().triggerNodeChanges([
+          {
+            id: nodeId,
+            type: "dimensions",
+            resizing: false,
+            dimensions: { width: last.size, height: last.size },
+          },
+        ]),
+      );
+    };
+    ring.addEventListener("pointermove", move);
+    ring.addEventListener("pointerup", end);
+    ring.addEventListener("pointercancel", end);
+  };
+  return (
+    <svg
+      className="n-agent-resize nodrag nopan"
+      viewBox="0 0 100 100"
+      aria-hidden="true"
+      onPointerMove={onPointerMove}
+      onPointerDown={onPointerDown}
+    >
+      <circle className="n-agent-resize-hit" cx="50" cy="50" r="50" />
+      <circle className="n-agent-resize-line" cx="50" cy="50" r="50" />
+    </svg>
   );
 }
 
@@ -323,15 +490,40 @@ function SignalEdge({ id, source, target, selected }: EdgeProps) {
   );
 }
 
-const NODE_TYPES = { agent: AgentCard };
+function BoardWindowNode(props: BoardWindowProps) {
+  switch (props.data.kind) {
+    case "chat":
+      return <ChatWindow {...props} />;
+    case "browser":
+      return <BrowserWindow {...props} />;
+    case "terminal":
+      return <TerminalWindow {...props} />;
+    case "settings":
+      return <AgentSettingsWindow {...props} />;
+  }
+}
+
+const NODE_TYPES = { agent: AgentCard, window: BoardWindowNode };
+
 const EDGE_TYPES = { signal: SignalEdge };
 
 function toFlowNode(node: BoardNode, previous?: AgentFlowNode): AgentFlowNode {
   const size = agentNodeSize(node);
+  // An unchanged node keeps its object, so React Flow doesn't re-render it while others move.
+  if (
+    previous?.data.node === node &&
+    (previous.resizing || (previous.width === size && previous.height === size)) &&
+    (previous.dragging ||
+      previous.resizing ||
+      (previous.position.x === node.x && previous.position.y === node.y))
+  ) {
+    return previous;
+  }
   return previous
     ? {
         ...previous,
-        position: previous.dragging ? previous.position : { x: node.x, y: node.y },
+        position:
+          previous.dragging || previous.resizing ? previous.position : { x: node.x, y: node.y },
         ...(previous.resizing ? {} : { width: size, height: size }),
         data: { node },
       }
@@ -403,8 +595,19 @@ function BoardCanvasPage() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [kanban, setKanban] = useState(readKanbanOpen);
   // When a run starts, the kanban returns to its band at the bottom and the agents are framed above it.
-  const flow = useRef<ReactFlowInstance<AgentFlowNode, Edge> | null>(null);
+  const flow = useRef<ReactFlowInstance<BoardFlowNode, Edge> | null>(null);
   const canvas = useRef<HTMLDivElement>(null);
+  const [fullScreenLayer, setFullScreenLayer] = useState<HTMLDivElement | null>(null);
+  // oxlint-disable-next-line t3code/react-effect-budget -- Keep native browser views and the composer menu on their board windows.
+  useEffect(() => {
+    if (!canvas.current || !fullScreenLayer) return;
+    const stopViews = syncNativeViews(canvas.current, fullScreenLayer);
+    const stopMenus = followComposerMenus(canvas.current);
+    return () => {
+      stopViews();
+      stopMenus();
+    };
+  }, [fullScreenLayer]);
   const runningId = activeRunOf(workflow)?.id ?? null;
   // Starts unseen, so opening a workflow whose run is live shows that run's kanban too.
   const [seenRunId, setSeenRunId] = useState<string | null>(null);
@@ -438,6 +641,29 @@ function BoardCanvasPage() {
   const [flowNodes, setFlowNodes] = useState<AgentFlowNode[]>(() =>
     nodes.map((n) => toFlowNode(n)),
   );
+  // Where agents were dropped, held until the store reports that move, so they don't jump back.
+  // Once saved, any later change to the node (another viewer moving it, say) also releases it.
+  type Drop = { readonly x: number; readonly y: number; readonly savedOver?: BoardNode };
+  const [dropped, setDropped] = useState<ReadonlyMap<string, Drop>>(new Map());
+  const settled = [...dropped].filter(([id, drop]) => {
+    const node = nodes.find((candidate) => candidate.id === id);
+    return (
+      !node ||
+      (node.x === drop.x && node.y === drop.y) ||
+      (drop.savedOver !== undefined && node !== drop.savedOver)
+    );
+  });
+  if (settled.length > 0) {
+    setDropped((previous) => {
+      const next = new Map(previous);
+      for (const [id, drop] of settled) if (next.get(id) === drop) next.delete(id);
+      return next;
+    });
+  }
+  const atDrop = (node: BoardNode) => {
+    const drop = dropped.get(node.id);
+    return drop ? { ...node, x: drop.x, y: drop.y } : node;
+  };
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<ReadonlySet<string>>(new Set());
   const selectedEdge =
     selectedEdgeIds.size === 1
@@ -448,19 +674,45 @@ function BoardCanvasPage() {
     : null;
   const [addingAgent, setAddingAgent] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [settingsNodeId, setSettingsNodeId] = useState<string | null>(null);
-  const settingsNode = nodes.find((n) => n.id === settingsNodeId) ?? null;
-  const [renameOnOpen, setRenameOnOpen] = useState(false);
-  const [configuringId, setConfiguringId] = useState<string | null>(null);
-  const configuringNode = nodes.find((n) => n.id === configuringId) ?? null;
-  const openPanel = (id: string, rename = false) => {
-    setRenameOnOpen(rename);
-    setSettingsNodeId(id);
-  };
+  const [fullScreen, setFullScreen] = useState<string | null>(null);
+  const [windowNodes, setWindowNodesState] = useState(() => loadWindows(workflow.id));
+  const workflowId = workflow.id;
+  const setWindowNodes = (update: (previous: WindowFlowNode[]) => WindowFlowNode[], save = true) =>
+    setWindowNodesState((previous) => {
+      const next = update(previous);
+      if (save) saveWindows(workflowId, next);
+      return next;
+    });
+  const openWindows = windowNodes.filter((window) =>
+    nodes.some((node) => node.id === window.data.nodeId),
+  );
+  // Windows move every frame of a drag, and every window and agent reads this context, so it
+  // changes only when a window opens or closes.
+  const openIds = openWindows.map((window) => window.id).join("\n");
+  // A full-screen window that's gone (closed, or its agent removed) doesn't come back full screen.
+  if (fullScreen !== null && !openIds.split("\n").includes(fullScreen)) setFullScreen(null);
+  const open = useStableCallback(
+    (kind: BoardWindowKind, nodeId: string, options: WindowOptions = {}) => {
+      const node = nodes.find((candidate) => candidate.id === nodeId);
+      if (!node) return;
+      const id = windowId(kind, nodeId);
+      setWindowNodes((previous) =>
+        previous.some((window) => window.id === id)
+          ? previous.map((window) =>
+              window.id === id ? { ...window, data: { ...window.data, ...options } } : window,
+            )
+          : [...previous, newWindowNode(kind, node, previous, options)],
+      );
+    },
+  );
+  const close = useStableCallback((id: string) => {
+    setWindowNodes((previous) => previous.filter((window) => window.id !== id));
+    setFullScreen((current) => (current === id ? null : current));
+  });
 
   const displayedNodes = nodes.map((node) =>
     toFlowNode(
-      node,
+      atDrop(node),
       flowNodes.find((candidate) => candidate.id === node.id),
     ),
   );
@@ -478,14 +730,28 @@ function BoardCanvasPage() {
     };
   });
 
-  // Canvas -> store: positions and deletions.
-  const onNodesChange = (changes: NodeChange<AgentFlowNode>[]) => {
+  // Windows live only on this canvas; agent changes go to the store.
+  const onNodesChange = (allChanges: NodeChange<BoardFlowNode>[]) => {
+    const isWindow = (change: NodeChange<BoardFlowNode>) =>
+      windowNodes.some((window) => window.id === ("id" in change ? change.id : change.item.id));
+    const windowChanges = allChanges.filter(isWindow) as NodeChange<WindowFlowNode>[];
+    if (windowChanges.length > 0) {
+      // Saved once a drag or resize settles, not on every frame of it.
+      const settling = windowChanges.some(
+        (change) =>
+          (change.type === "position" && change.dragging) ||
+          (change.type === "dimensions" && change.resizing),
+      );
+      setWindowNodes((previous) => applyNodeChanges(windowChanges, previous), !settling);
+    }
+    const changes = allChanges.filter((change) => !isWindow(change)) as NodeChange<AgentFlowNode>[];
+    if (changes.length === 0) return;
     setFlowNodes((previous) =>
       applyNodeChanges(
         changes,
         nodes.map((node) =>
           toFlowNode(
-            node,
+            atDrop(node),
             previous.find((item) => item.id === node.id),
           ),
         ),
@@ -493,13 +759,17 @@ function BoardCanvasPage() {
     );
     for (const change of changes) {
       if (change.type === "position" && change.position && change.dragging === false) {
-        void updateNode(change.id, { x: change.position.x, y: change.position.y }).then((saved) => {
-          if (saved) return;
-          const persisted = getWorkflow(workflow.id)?.nodes.find((node) => node.id === change.id);
-          if (persisted)
-            setFlowNodes((previous) =>
-              previous.map((node) => (node.id === change.id ? toFlowNode(persisted, node) : node)),
-            );
+        const drop: Drop = { x: change.position.x, y: change.position.y };
+        setDropped((previous) => new Map(previous).set(change.id, drop));
+        void updateNode(change.id, { x: drop.x, y: drop.y }).then((saved) => {
+          const savedOver = getCurrentWorkflow().nodes.find((node) => node.id === change.id);
+          setDropped((previous) => {
+            if (previous.get(change.id) !== drop) return previous;
+            const next = new Map(previous);
+            if (saved && savedOver) next.set(change.id, { ...drop, savedOver });
+            else next.delete(change.id);
+            return next;
+          });
         });
       } else if (change.type === "remove") {
         removeNode(change.id);
@@ -531,7 +801,8 @@ function BoardCanvasPage() {
 
   // Clicking one agent and then another connects them, first to second; a canvas click starts over.
   const linkFrom = useRef<string | null>(null);
-  const onNodeClick = (event: MouseEvent, node: AgentFlowNode) => {
+  const onNodeClick = (event: MouseEvent, node: BoardFlowNode) => {
+    if (node.type !== "agent") return;
     if (event.target instanceof Element && event.target.closest("button")) return;
     const from = linkFrom.current;
     if (from !== null && from !== node.id) {
@@ -550,7 +821,8 @@ function BoardCanvasPage() {
     return getCurrentWorkflow().nodes.filter((node) => ids.has(node.id));
   };
 
-  const onNodeContextMenu = (event: MouseEvent, flowNode: AgentFlowNode) => {
+  const onNodeContextMenu = (event: MouseEvent, flowNode: BoardFlowNode) => {
+    if (flowNode.type !== "agent") return;
     event.preventDefault();
     const node = flowNode.data.node;
     const targets = flowNode.selected ? selectedNodes() : [node];
@@ -582,14 +854,14 @@ function BoardCanvasPage() {
       .then((action) => {
         switch (action) {
           case "chat":
-            openPanel(node.id);
+            open("chat", node.id);
             if (node.threadId === "") void openNodeChat(node.id);
             break;
           case "settings":
-            setConfiguringId(node.id);
+            open("settings", node.id);
             break;
           case "rename":
-            openPanel(node.id, true);
+            open("chat", node.id, { rename: true });
             break;
           case "copy":
             copyNodes(targets);
@@ -658,6 +930,7 @@ function BoardCanvasPage() {
         ref={canvas}
         className={`board-canvas relative min-h-0 flex-1${connecting ? " is-connecting" : ""}`}
       >
+        <div ref={setFullScreenLayer} className="board-full-screen" />
         <div className="board-floating-controls">
           <BoardToolbar
             onRename={() => setEditingName(true)}
@@ -667,11 +940,18 @@ function BoardCanvasPage() {
             onAddAgent={() => setAddingAgent(true)}
           />
         </div>
-        <OpenSettingsContext.Provider value={setSettingsNodeId}>
-          <RunViewsContext.Provider value={{ ...views, ...flights }}>
+        <BoardWindowsProvider
+          open={open}
+          close={close}
+          openIds={openIds}
+          fullScreen={fullScreen}
+          setFullScreen={setFullScreen}
+          fullScreenLayer={fullScreenLayer}
+        >
+          <RunViewsProvider views={views} flights={flights}>
             <ReactFlow
               className="absolute! inset-0"
-              nodes={displayedNodes}
+              nodes={[...displayedNodes, ...openWindows]}
               edges={flowEdges}
               nodeTypes={NODE_TYPES}
               edgeTypes={EDGE_TYPES}
@@ -686,7 +966,9 @@ function BoardCanvasPage() {
               onPaneClick={() => {
                 linkFrom.current = null;
               }}
-              onNodeDragStart={() => recordHistoryStep()}
+              onNodeDragStart={(_, node) => {
+                if (node.type === "agent") recordHistoryStep();
+              }}
               onConnectStart={() => setConnecting(true)}
               onConnectEnd={() => setConnecting(false)}
               deleteKeyCode={["Backspace", "Delete"]}
@@ -697,8 +979,8 @@ function BoardCanvasPage() {
             >
               <Background color="var(--border)" gap={24} size={1} />
             </ReactFlow>
-          </RunViewsContext.Provider>
-        </OpenSettingsContext.Provider>
+          </RunViewsProvider>
+        </BoardWindowsProvider>
         {kanban ? (
           <BoardKanban
             workflow={workflow}
@@ -717,23 +999,8 @@ function BoardCanvasPage() {
             onClose={() => setSelectedEdgeIds(new Set())}
           />
         ) : null}
-        {settingsNode ? (
-          <NodeSettingsPanel
-            key={settingsNode.id}
-            node={settingsNode}
-            renameOnOpen={renameOnOpen}
-            onClose={() => setSettingsNodeId(null)}
-          />
-        ) : null}
       </div>
       {addingAgent ? <AgentDialog onClose={() => setAddingAgent(false)} /> : null}
-      {configuringNode ? (
-        <AgentSettingsDialog
-          node={configuringNode}
-          onClose={() => setConfiguringId(null)}
-          onRemoved={() => setSettingsNodeId(null)}
-        />
-      ) : null}
     </SidebarInset>
   );
 }

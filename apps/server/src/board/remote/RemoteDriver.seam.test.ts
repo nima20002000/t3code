@@ -14,6 +14,7 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
   ProviderInstanceId,
+  ScheduledTaskId,
   ThreadId,
   WS_METHODS,
   WsRpcGroup,
@@ -21,11 +22,14 @@ import {
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import * as RpcClient from "effect/rpc/RpcClient";
@@ -36,6 +40,7 @@ import * as Server from "../../server.ts";
 import * as PeerPairing from "./PeerPairing.ts";
 import * as PeerStore from "./PeerStore.ts";
 import * as RemoteDriver from "./RemoteDriver.ts";
+import * as FakeCodex from "./FakeCodexTransport.testkit.ts";
 
 vi.mock("../../orchestration-v2/Adapters/CodexAdapterV2.ts", async (importOriginal) => {
   const original =
@@ -159,6 +164,23 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
         title: "Remote project",
         workspaceRoot: config.cwd,
       });
+      const doomed = NodePath.join(NodeFS.mkdtempSync(NodePath.join(config.cwd, "doomed-")), "own");
+      NodeFS.mkdirSync(doomed);
+      const doomedId = ProjectId.make("board-remote-doomed");
+      yield* client[WS_METHODS.projectsMutate]({
+        type: "project.create",
+        commandId: CommandId.make("board-test-doomed"),
+        projectId: doomedId,
+        title: "Doomed project",
+        workspaceRoot: doomed,
+      });
+      yield* driver.deleteProject({
+        environmentId: peer.environmentId,
+        projectId: doomedId,
+        removeFolderPath: doomed,
+      });
+      assert.isFalse(NodeFS.existsSync(doomed));
+
       const thread = yield* driver.launch({
         environmentId: peer.environmentId,
         launch: {
@@ -356,6 +378,251 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
       assert.equal(resumeSequences[0], sent.sequence);
       assert.isAbove(replayedSequence, sent.sequence);
       assert.isAtLeast(resumedAfter ?? 0, replayedSequence);
+
+      // The agent's schedule lives on that machine, which stops it after its runs.
+      const scheduleTarget = {
+        environmentId: peer.environmentId,
+        taskId: ScheduledTaskId.make("board-remote-schedule"),
+      };
+      const scheduledTask = yield* driver.upsertScheduledTask({
+        environmentId: peer.environmentId,
+        task: {
+          id: scheduleTarget.taskId,
+          title: "Board node schedule",
+          prompt: "scheduled",
+          enabled: true,
+          schedule: { type: "interval", everyMs: 3_600_000 },
+          maxRuns: 1,
+          projectId,
+          threadId,
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-luna" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        },
+      });
+      assert.deepInclude(scheduledTask, { maxRuns: 1, threadId, enabled: true });
+      const fired = yield* client[WS_METHODS.scheduledTasksRunNow]({ id: scheduleTarget.taskId });
+      assert.deepInclude(fired.task, { runCount: 1, enabled: false, nextRunAt: null });
+      assert.deepInclude(yield* driver.getScheduledTask(scheduleTarget), {
+        runCount: 1,
+        enabled: false,
+      });
+      yield* driver.deleteScheduledTask(scheduleTarget);
+      yield* driver.deleteScheduledTask(scheduleTarget);
+      assert.isNull(yield* driver.getScheduledTask(scheduleTarget));
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer))),
   ),
+);
+
+/** A paired real server with a held turn running, then shut down mid-turn; restart starts it again. */
+const heldTurnServer = Effect.fn("RemoteSeam.heldTurnServer")(function* (prefix: string) {
+  const configContext = yield* Layer.build(ServerConfig.layerTest(process.cwd(), { prefix }));
+  const base = Context.get(configContext, ServerConfig.ServerConfig);
+  const config = {
+    ...base,
+    cwd: base.baseDir,
+    devUrl: new URL("http://127.0.0.1:5173"),
+    devAuthToken: Redacted.make(devToken),
+    noBrowser: true,
+    shellEnvironmentPrepared: true,
+  };
+  const start = Effect.fn("RemoteSeam.start")(function* (scope: Scope.Scope) {
+    const waiting = yield* Effect.forkIn(readyFile(config.serverRuntimeStatePath), scope);
+    const serverFiber = yield* Server.runServer.pipe(
+      Effect.provideService(ServerConfig.ServerConfig, config),
+      Effect.provide(NodeServices.layer),
+      Effect.forkIn(scope),
+    );
+    const contents = yield* Effect.raceFirst(
+      Fiber.join(waiting),
+      Fiber.await(serverFiber).pipe(Effect.flatMap((exit) => Effect.die(exit))),
+    );
+    return (JSON.parse(contents) as { origin: string }).origin;
+  });
+  const firstScope = yield* Scope.make();
+  const origin = yield* start(firstScope);
+  const admin = yield* PeerPairing.request(new URL("/oauth/token", origin), {
+    method: "POST",
+    body: new URLSearchParams({
+      grant_type: AuthTokenExchangeGrantType,
+      subject_token: devToken,
+      subject_token_type: AuthEnvironmentBootstrapTokenType,
+      requested_token_type: AuthAccessTokenType,
+    }),
+  });
+  const http = yield* HttpClient.HttpClient;
+  const pairingResponse = yield* http.execute(
+    HttpClientRequest.post(`${origin}/api/auth/pairing-token`).pipe(
+      HttpClientRequest.setHeader(
+        "authorization",
+        `Bearer ${(admin as { access_token: string }).access_token}`,
+      ),
+      HttpClientRequest.bodyJsonUnsafe({
+        scopes: ["orchestration:read", "orchestration:operate"],
+      }),
+    ),
+  );
+  const pairing = (yield* pairingResponse.json) as { credential: string };
+  const store = PeerStore.makeMemory();
+  const peer = yield* PeerPairing.pair({
+    name: "Restarting server",
+    pairingUrlOrCode: `${origin}/pair#token=${pairing.credential}`,
+    store,
+  });
+  const driver = RemoteDriver.make(store);
+  const projectId = ProjectId.make("board-restart-project");
+  const threadId = ThreadId.make("board-restart-thread");
+  yield* driver.ensureProject({
+    environmentId: peer.environmentId,
+    projectId,
+    title: "Restart project",
+    path: config.cwd,
+  });
+  const thread = yield* driver.launch({
+    environmentId: peer.environmentId,
+    launch: {
+      commandId: CommandId.make("board-restart-launch"),
+      projectId,
+      threadId,
+      title: "Board node",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-luna" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspaceStrategy: { type: "root" },
+    },
+  });
+  const warm = yield* driver.send({
+    thread,
+    commandId: CommandId.make("board-restart-warm"),
+    messageId: MessageId.make("board-restart-warm-message"),
+    text: "finish",
+  });
+  yield* driver.subscribeSettled({ thread, afterSequence: warm.sequence }).pipe(
+    Stream.filter((event) => event.runId === warm.runId),
+    Stream.runHead,
+  );
+  const held = yield* driver.send({
+    thread,
+    commandId: CommandId.make("board-restart-hold"),
+    messageId: MessageId.make("board-restart-hold-message"),
+    text: "hold",
+  });
+  const client = yield* testClient(peer);
+  yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
+    threadId,
+    afterSequence: held.sequence,
+  }).pipe(
+    Stream.filter(
+      (item) =>
+        item.kind === "event" &&
+        item.event.type === "provider-turn.updated" &&
+        item.event.payload.status === "running",
+    ),
+    Stream.runHead,
+  );
+  yield* Scope.close(firstScope, Exit.void);
+  const restart = Effect.gen(function* () {
+    const secondScope = yield* Scope.make();
+    yield* Effect.addFinalizer(() => Scope.close(secondScope, Exit.void));
+    const restarted = yield* start(secondScope);
+    yield* store.put({ ...peer, url: restarted });
+    return restarted;
+  });
+  return { driver, peer, thread, threadId, held, restart };
+});
+
+it.live("continues a turn the machine's restart cut off, once, in the same thread", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { driver, peer, thread, threadId, held, restart } = yield* heldTurnServer(
+        "board-remote-restart-seam-",
+      );
+      const restarted = yield* restart;
+
+      // The board only follows: t3 on the restarted machine continues the cut turn itself.
+      const [continued] = yield* driver
+        .subscribeSettled({ thread, afterSequence: held.sequence })
+        .pipe(
+          Stream.filter(
+            (event) => event.messageId === MessageId.make("board-restart-hold-message"),
+          ),
+          Stream.take(1),
+          Stream.runCollect,
+        );
+      assert.equal(continued?.status, "completed");
+      assert.notEqual(continued?.runId, held.runId);
+      assert.equal(
+        (yield* driver.readLatestAssistant({ thread, runId: continued!.runId }))?.text,
+        "fake result",
+      );
+      const projection = yield* (yield* testClient({ ...peer, url: restarted }))[
+        ORCHESTRATION_V2_WS_METHODS.getThreadProjection
+      ]({ threadId });
+      assert.deepEqual(
+        projection.runs
+          .filter((run) => run.restartContinuationOfRunId === held.runId)
+          .map((run) => run.id),
+        [continued!.runId],
+      );
+      assert.lengthOf(projection.runs, 3);
+    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer))),
+  ),
+);
+
+it.live.each([true, false])(
+  "a Stop sent while the machine is down keeps t3's continuation from finishing a turn (run known: %s)",
+  (known) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { driver, peer, thread, threadId, held, restart } = yield* heldTurnServer(
+          `board-remote-stop-seam-${known}-`,
+        );
+        // A continuation that would otherwise reply stays running until something stops it.
+        yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            FakeCodex.fakeTurns.completeFirst = false;
+          }),
+          () =>
+            Effect.sync(() => {
+              FakeCodex.fakeTurns.completeFirst = true;
+            }),
+        );
+        // As the board engine does, keep retrying the Stop while the machine is away.
+        const stopping = yield* driver
+          .interrupt({
+            thread,
+            ...(known ? { runId: held.runId } : {}),
+            commandId: CommandId.make("board-stop-away"),
+          })
+          .pipe(Effect.retry({ while: (cause) => cause.retryable === true }), Effect.forkScoped);
+        const restarted = yield* restart;
+        yield* Fiber.join(stopping);
+        const client = yield* testClient({ ...peer, url: restarted });
+        const terminal = new Set([
+          "completed",
+          "failed",
+          "cancelled",
+          "interrupted",
+          "rolled_back",
+        ]);
+        const settled = yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
+          threadId,
+        }).pipe(
+          Stream.mapEffect(() =>
+            client[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({ threadId }),
+          ),
+          Stream.filter((projection) => projection.runs.every((run) => terminal.has(run.status))),
+          Stream.runHead,
+        );
+        assert.isTrue(Option.isSome(settled));
+        if (Option.isSome(settled))
+          assert.deepEqual(
+            settled.value.runs
+              .filter((run) => run.status === "completed")
+              .map((run) => run.userMessageId),
+            [MessageId.make("board-restart-warm-message")],
+          );
+      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer))),
+    ),
 );

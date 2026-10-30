@@ -5,6 +5,9 @@ import type {
   OrchestrationV2ThreadLaunchInput,
   ProjectId,
   RunId,
+  ScheduledTask,
+  ScheduledTaskId,
+  ScheduledTaskUpsertInput,
   ThreadId,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
@@ -61,6 +64,7 @@ export class NodeDriverError extends Schema.TaggedError<NodeDriverError>()("Node
     "interrupt",
     "ensureProject",
     "deleteProject",
+    "schedule",
   ]),
   message: Schema.String,
   /** The outcome is unknown, so repeating the call with the same ids is safe. */
@@ -73,6 +77,11 @@ export interface BoardDriverProject {
   readonly projectId: ProjectId;
 }
 
+export interface BoardDriverScheduledTask {
+  readonly environmentId: EnvironmentId;
+  readonly taskId: ScheduledTaskId;
+}
+
 export interface NodeDriver {
   /**
    * Registers the t3 project for a workspace folder, creating the folder when it is missing.
@@ -82,11 +91,12 @@ export interface NodeDriver {
     input: BoardDriverProject & { readonly title: string; readonly path: string },
   ) => Effect.Effect<{ readonly adopted: boolean }, NodeDriverError>;
   /**
-   * Removes the t3 project and its threads. With `removeFolder`, also deletes a board-created folder
-   * under ~/t3-workspaces where the driver can (stock t3 has no remote folder delete).
+   * Removes the t3 project and its threads. With `removeFolderPath`, first deletes that folder (the
+   * path the user confirmed) through t3's `projects.removeFolder`, which refuses anything but the
+   * project's own root; if that fails the project is left untouched.
    */
   readonly deleteProject: (
-    input: BoardDriverProject & { readonly removeFolder?: boolean },
+    input: BoardDriverProject & { readonly removeFolderPath?: string },
   ) => Effect.Effect<void, NodeDriverError>;
   readonly launch: (input: BoardDriverLaunch) => Effect.Effect<BoardDriverThread, NodeDriverError>;
   readonly send: (input: BoardDriverSend) => Effect.Effect<BoardDriverSendResult, NodeDriverError>;
@@ -103,4 +113,19 @@ export interface NodeDriver {
     readonly commandId: CommandId;
     readonly runId?: RunId;
   }) => Effect.Effect<void, NodeDriverError>;
+  /** t3's scheduled tasks on that machine, which keeps firing them while the hub is off. */
+  readonly getScheduledTask: (
+    input: BoardDriverScheduledTask,
+  ) => Effect.Effect<ScheduledTask | null, NodeDriverError>;
+  readonly upsertScheduledTask: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly task: ScheduledTaskUpsertInput & { readonly id: ScheduledTaskId };
+  }) => Effect.Effect<ScheduledTask, NodeDriverError>;
+  readonly setScheduledTaskEnabled: (
+    input: BoardDriverScheduledTask & { readonly enabled: boolean },
+  ) => Effect.Effect<void, NodeDriverError>;
+  /** Succeeds when the task is already gone. */
+  readonly deleteScheduledTask: (
+    input: BoardDriverScheduledTask,
+  ) => Effect.Effect<void, NodeDriverError>;
 }

@@ -22,7 +22,42 @@ a merge (the server route is reserved for the later server phase):
 - `apps/web/src/routeTree.gen.ts`: generated board route registration.
 - `apps/server/scripts/migrate-dev-db.ts` and `apps/server/scripts/migrate-dev-db.test.ts`: dev seeding
   also clears the board execution and peer tables.
+- `apps/web/src/components/chat/composerNewThread.ts`, `apps/web/src/components/chat/useComposerMenuItems.ts`,
+  `apps/web/src/components/chat/useComposerSend.ts`, `apps/web/src/components/chat/ChatComposer.tsx` and
+  `apps/web/src/composer-logic.ts`: the composer's `/new` command, offered where a `ComposerNewThreadContext`
+  handler is provided (the board's chat windows).
+- `apps/server/src/cli/browser.ts`, `apps/server/src/preview/PreviewBrowserHost.ts` and `apps/server/src/preview/PreviewBrowserHost.test.ts`: `t3 browser setup` finds
+  sbin tools under `sudo env "PATH=$PATH"`, treats a written but unloaded AppArmor profile as not set up, sets up headed
+  mode (`--mode headed`: Google Chrome, Xvfb, fonts), and the server runs its own setup with `sudo -n` (`runHostSetup`).
+- Server browser mode and proxy (headless or a visible Chrome on a display, an optional browser-only proxy), stored per
+  machine in its server settings: `packages/contracts/src/settings.ts` (`serverBrowserMode`, `serverBrowserProxy`),
+  `apps/server/src/preview/ServerBrowserContexts.ts` and `apps/server/src/preview/ServerBrowserContexts.test.ts` (launch options per mode and proxy, Xvfb, relaunch),
+  `apps/server/src/preview/ServerBrowser.ts` and `apps/server/src/preview/ServerBrowser.test.ts` (reads the settings, relaunches and reopens tabs on a change,
+  the `setupHost` method), `apps/server/src/preview/ServerBrowserStream.ts` and `apps/server/src/preview/ServerBrowserStream.test.ts` (headed setup reason),
+  `apps/web/src/components/settings/IntegrationsSettings.tsx` and `apps/web/src/components/settings/settingsSearch.ts`
+  (Settings, Browser, Paired machines).
+- The browser's Set up button runs setup on the browser's own machine: `packages/contracts/src/preview.ts`,
+  `packages/contracts/src/rpc.ts` and `packages/contracts/src/clientRpcPermissions.ts` (`preview.setupHost`, guarded by
+  `environment:maintain`), `apps/server/src/ws.ts`, `apps/server/src/auth/RpcAuthorization.ts`,
+  `apps/server/src/observability/RpcInstrumentation.ts`, `packages/client-runtime/src/state/preview.ts`,
+  `packages/client-runtime/src/preview/serverBrowserStream.ts` (setup reasons), and
+  `apps/web/src/browser/ServerBrowserSurface.tsx` with its test `apps/web/src/browser/ServerBrowserSurface.browser.test.tsx`.
+- Using a server browser's page takes control and a click outside hands it back: `apps/web/src/browser/ServerBrowserSurface.tsx`,
+  plus a `data-server-browser-scope` marker on the browser chrome in `apps/web/src/components/preview/PreviewView.tsx` and
+  `apps/web/src/components/preview/ThreadPreviewMiniPlayer.tsx`.
+- `packages/contracts/src/scheduledTask.ts`, `apps/server/src/scheduledTasks/ScheduledTaskService.ts`,
+  `apps/server/src/scheduledTasks/Schedule.ts` and `apps/server/src/scheduledTasks/ScheduledTaskService.interval.test.ts`:
+  a scheduled task's optional `maxRuns` (scheduled runs stop and the task pauses once `runCount` reaches it),
+  `startAt` (no run before it; with `maxRuns` 1 a one-off, via `nextScheduledRunAtFrom`) and `beforeRun`
+  (`compact` sends `/compact` first; `new_thread` launches a fresh thread and binds the task to it), stored in
+  `schedule_json` so no core migration is needed. Board schedules use them (workflow schedules through the same
+  `nextScheduledRunAtFrom`); a published t3 ignores all three.
 - `apps/web/src/index.css`: one `@import` of `board/styles/board.css`, so Tailwind and the lint rules know the board's classes.
+- `packages/contracts/src/project.ts`, `packages/contracts/src/rpc.ts`, `apps/server/src/ws.ts`,
+  `apps/server/src/auth/RpcAuthorization.ts`, `apps/server/src/observability/RpcInstrumentation.ts`,
+  and the new `apps/server/src/project/ProjectFolderRemoval.ts`:
+  the `projects.removeFolder` RPC and `removeProjectFolder`, which deletes a project's own folder
+  (never a root, home, a parent of home or a folder holding another project) when a workspace is deleted.
 - `AGENTS.md`: one paragraph pointing agents at this file and the board folders.
 - `pnpm-lock.yaml`: workspace and board dependency lock entries.
 
@@ -43,6 +78,10 @@ selects and merges the highest stable `vX.Y.Z` upstream tag, reports conflicted
 files for comparison with the touch points above, and runs all board-owned tests.
 After resolving a conflicted merge, commit it and run `scripts/fork-sync.sh --tests`.
 It never merges `main`, preview tags, or nightly tags.
+
+When a board fix corrects genuinely wrong behavior (a feature that stopped working, an overlap,
+lost state), write the board test that fails on it first, then fix it, so the test suite catches it
+coming back. Small visual tweaks (spacing, cursors, sizes) need no test.
 
 Run board tests locally with `node scripts/board-test.mjs`. It keeps a pass per test file in
 `~/.cache/t3-board-tests`, keyed by the file, everything it imports, setup files, configs and the

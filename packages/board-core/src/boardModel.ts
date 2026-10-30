@@ -1,5 +1,12 @@
 import { ProjectId } from "@t3tools/contracts";
-import type { EnvironmentId, ModelSelection, RuntimeMode, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ModelSelection,
+  ProviderInteractionMode,
+  RuntimeMode,
+  ScheduledTaskId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 /** Pure board data model: types, defaults, storage migration and undo history. No React, no storage. */
 
@@ -19,6 +26,24 @@ export interface BoardNode {
     readonly environmentId: EnvironmentId;
     readonly projectId: ProjectId;
     readonly threadId: ThreadId;
+    /** Set on a chat started anew; it then outranks the threads of runs started before it. */
+    readonly startedAt?: string;
+  };
+  /** The t3 scheduled task on the chat's machine that sends a prompt into the chat. */
+  readonly schedule?: {
+    readonly environmentId: EnvironmentId;
+    readonly taskId: ScheduledTaskId;
+    /**
+     * The thread the board last bound the task to; another one means the machine moved it.
+     * Unset on early markers, which were bound to the node's chat.
+     */
+    readonly threadId?: ThreadId;
+    /** Set by "/new" until the machine binds the task to the new chat with these settings. */
+    readonly rebind?: {
+      readonly modelSelection?: ModelSelection;
+      readonly runtimeMode?: RuntimeMode;
+      readonly interactionMode?: ProviderInteractionMode;
+    };
   };
   /** Overrides the workflow's runtime mode for this agent's threads. */
   readonly runtimeMode?: RuntimeMode;

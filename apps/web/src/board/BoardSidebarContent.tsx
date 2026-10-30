@@ -6,7 +6,6 @@ import {
   createWorkflowIn,
   createWorkspace,
   removeWorkflow,
-  removeWorkspace,
   renameWorkflow,
   renameWorkspace,
   setCurrentWorkflow,
@@ -15,7 +14,12 @@ import {
 } from "./boardStore";
 import { markSettingsFromBoard } from "./BoardNavigation";
 import { nextFreeName } from "./boardState";
-import { ConfirmDialog, NameDialog, WorkspaceSettingsDialog } from "./WorkspaceDialogs";
+import {
+  ConfirmDialog,
+  DeleteWorkspaceDialog,
+  NameDialog,
+  WorkspaceSettingsDialog,
+} from "./WorkspaceDialogs";
 import { IconButton } from "./toolbar/IconButton";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "./upstream";
 
@@ -100,6 +104,10 @@ export function BoardSidebarPanel() {
   const panel = useRef<HTMLElement>(null);
   const moved = useRef(false);
   const folded = width <= FOLDED;
+  const deletedWorkspace =
+    dialog?.kind === "delete-workspace"
+      ? workspaces.find((workspace) => workspace.id === dialog.id)
+      : undefined;
   const settingsWorkspace =
     dialog?.kind === "workspace-settings"
       ? workspaces.find((workspace) => workspace.id === dialog.id)
@@ -369,14 +377,8 @@ export function BoardSidebarPanel() {
           onClose={close}
         />
       ) : null}
-      {dialog?.kind === "delete-workspace" ? (
-        <ConfirmDialog
-          title={`Delete workspace "${dialog.name}"?`}
-          description="Its workflows and runs are deleted. The workspace's folders on this PC are removed from disk; folders on VPS machines are kept."
-          action="Delete workspace"
-          onConfirm={() => removeWorkspace(dialog.id)}
-          onClose={close}
-        />
+      {deletedWorkspace ? (
+        <DeleteWorkspaceDialog workspace={deletedWorkspace} onClose={close} />
       ) : null}
       {dialog?.kind === "delete-workflow" ? (
         <ConfirmDialog

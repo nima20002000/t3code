@@ -3,11 +3,12 @@ import { XIcon } from "lucide-react";
 import { useState } from "react";
 
 import type { BoardWorkspace } from "@t3tools/board-core/http";
-import { addWorkspaceFolder, removeWorkspaceFolder } from "./boardStore";
+import { addWorkspaceFolder, removeWorkspace, removeWorkspaceFolder } from "./boardStore";
 import { IconButton } from "./toolbar/IconButton";
 import { useBoardMachines } from "./useBoardMachines";
 import {
   Button,
+  Checkbox,
   Dialog,
   DialogDescription,
   DialogFooter,
@@ -99,6 +100,73 @@ export function ConfirmDialog(props: {
   );
 }
 
+/** Confirms deleting a workspace; the folders on disk go only when the box is ticked. */
+export function DeleteWorkspaceDialog(props: {
+  readonly workspace: BoardWorkspace;
+  readonly onClose: () => void;
+}) {
+  const { workspace } = props;
+  const machines = useBoardMachines();
+  const [removeFolders, setRemoveFolders] = useState(false);
+  const folders = workspace.folders.filter((folder) => folder.path !== "");
+  const labelOf = (environmentId: EnvironmentId) =>
+    machines.find((machine) => machine.environmentId === environmentId)?.label ?? "Unknown machine";
+  return (
+    <Dialog open onOpenChange={(open) => !open && props.onClose()}>
+      <DialogPopup className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{`Delete workspace "${workspace.name}"?`}</DialogTitle>
+          <DialogDescription>
+            Its workflows and runs are deleted. Its folders are kept unless you tick the box below.
+          </DialogDescription>
+        </DialogHeader>
+        {folders.length > 0 ? (
+          <DialogPanel>
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox
+                checked={removeFolders}
+                onCheckedChange={(checked) => setRemoveFolders(checked === true)}
+              />
+              <span className="grid min-w-0 gap-1">
+                <strong>Also delete the folder on each machine</strong>
+                <small className="text-muted-foreground">
+                  Files in these folders are lost for good.
+                </small>
+                <ul className="grid gap-0.5">
+                  {folders.map((folder) => (
+                    <li key={folder.environmentId} className="truncate">
+                      {labelOf(folder.environmentId)}: <code>{folder.path}</code>
+                    </li>
+                  ))}
+                </ul>
+              </span>
+            </label>
+          </DialogPanel>
+        ) : null}
+        <DialogFooter>
+          <Button variant="outline" onClick={props.onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => {
+              removeWorkspace(
+                workspace.id,
+                removeFolders
+                  ? folders.map(({ environmentId, path }) => ({ environmentId, path }))
+                  : [],
+              );
+              props.onClose();
+            }}
+          >
+            Delete workspace
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
 /** The workspace's folder on each machine (machine name and path), with add and remove. */
 export function WorkspaceSettingsDialog(props: {
   readonly workspace: BoardWorkspace;
@@ -110,6 +178,7 @@ export function WorkspaceSettingsDialog(props: {
     machines.find((machine) => machine.environmentId === environmentId)?.label ?? "Unknown machine";
   const free = machines.filter(
     (machine) =>
+      machine.paired &&
       !workspace.folders.some((folder) => folder.environmentId === machine.environmentId),
   );
   const [environmentId, setEnvironmentId] = useState<EnvironmentId | "">("");

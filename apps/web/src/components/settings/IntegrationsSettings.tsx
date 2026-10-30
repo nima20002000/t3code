@@ -24,6 +24,7 @@ import {
   DEFAULT_PREVIEW_APPEARANCE,
   DEFAULT_PREVIEW_ZOOM_FACTOR,
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_SERVER_BROWSER_MODE,
   FILL_PREVIEW_VIEWPORT,
   PREVIEW_VIEWPORT_MAX_AREA,
   PREVIEW_VIEWPORT_MAX_DIMENSION,
@@ -35,6 +36,7 @@ import {
   type BrowserImportSource,
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
+  type ServerBrowserMode,
 } from "@t3tools/contracts";
 import { isValidSearchUrlTemplate } from "@t3tools/shared/preview";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
@@ -52,6 +54,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { previewEnvironment } from "~/state/preview";
+import { serverEnvironment } from "~/state/server";
 import { useServerConfigs } from "~/state/entities";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -1103,6 +1106,186 @@ function AgentBrowserAccessSetting() {
   );
 }
 
+const SERVER_BROWSER_MODE_LABELS: Readonly<Record<ServerBrowserMode, string>> = {
+  headless: "Headless",
+  headed: "Headed",
+};
+
+/**
+ * Each machine launches its own agent browser, so the mode is stored on each machine. With all
+ * machines selected, every machine that runs the other mode is asked about one at a time.
+ */
+function ServerBrowserModeSetting() {
+  const { scope, targets } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
+  const [pending, setPending] = useState<{
+    readonly mode: ServerBrowserMode;
+    readonly machines: ReadonlyArray<{
+      readonly environmentId: EnvironmentId;
+      readonly label: string;
+    }>;
+  } | null>(null);
+
+  const choose = (mode: ServerBrowserMode) => {
+    if (scope.kind !== "all" || targets.length <= 1) {
+      updateSettings({ serverBrowserMode: mode });
+      return;
+    }
+    const machines = targets
+      .filter((target) => target.settings.serverBrowserMode !== mode)
+      .map(({ environmentId, label }) => ({ environmentId, label }));
+    if (machines.length > 0) setPending({ mode, machines });
+  };
+  const answer = (change: boolean) => {
+    if (!pending) return;
+    const [machine, ...rest] = pending.machines;
+    if (machine && change) {
+      void persistServer({
+        environmentId: machine.environmentId,
+        input: { patch: { serverBrowserMode: pending.mode } },
+      }).then((result) => {
+        if (result._tag === "Success" && result.value.serverBrowserMode === pending.mode) return;
+        const failure = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
+        toastManager.add({
+          type: "error",
+          title: `Could not change the browser on ${machine.label}`,
+          description:
+            failure instanceof Error
+              ? failure.message
+              : result._tag === "Success"
+                ? "Its T3 Code is too old to choose its browser. Update it first."
+                : undefined,
+        });
+      });
+    }
+    setPending(rest.length > 0 ? { mode: pending.mode, machines: rest } : null);
+  };
+  const asking = pending?.machines[0];
+
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["serverBrowserMode"]}
+      {...searchableSetting("server-browser-mode")}
+      description="The browser agents and web clients use on a paired machine. Headless runs T3's own browser out of sight; headed runs a real Google Chrome on the machine's display, where you can watch it over VNC and sites see an ordinary browser. The desktop app's own tabs stay in the app."
+      resetAction={
+        settings.serverBrowserMode !== DEFAULT_SERVER_BROWSER_MODE ? (
+          <SettingResetButton
+            label="browser mode"
+            onClick={() => choose(DEFAULT_SERVER_BROWSER_MODE)}
+          />
+        ) : null
+      }
+      control={
+        <>
+          <Select
+            value={settings.serverBrowserMode}
+            onValueChange={(value) => {
+              if (value === "headless" || value === "headed") choose(value);
+            }}
+          >
+            <SelectTrigger
+              size="sm"
+              className="w-full sm:w-40"
+              aria-label="Browser for paired machines"
+            >
+              <SelectValue>{SERVER_BROWSER_MODE_LABELS[settings.serverBrowserMode]}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {(Object.keys(SERVER_BROWSER_MODE_LABELS) as ReadonlyArray<ServerBrowserMode>).map(
+                (mode) => (
+                  <SelectItem hideIndicator key={mode} value={mode}>
+                    {SERVER_BROWSER_MODE_LABELS[mode]}
+                  </SelectItem>
+                ),
+              )}
+            </SelectPopup>
+          </Select>
+          <AlertDialog open={asking !== undefined} onOpenChange={(open) => !open && answer(false)}>
+            <AlertDialogPopup>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  Change the browser on {asking?.label} to {pending?.mode}?
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  Its browser closes and opens again{" "}
+                  {pending?.mode === "headed" ? "as a visible Google Chrome" : "headless"}; open
+                  tabs reload at their page. If it lacks what that needs, its browser offers to set
+                  it up.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <Button variant="outline" onClick={() => answer(false)}>
+                  Keep {pending?.mode === "headed" ? "headless" : "headed"}
+                </Button>
+                <Button onClick={() => answer(true)}>Change</Button>
+              </AlertDialogFooter>
+            </AlertDialogPopup>
+          </AlertDialog>
+        </>
+      }
+    />
+  );
+}
+
+/** A proxy for one machine's agent browser only; agents' own traffic, git and terminals skip it. */
+function ServerBrowserProxySetting() {
+  const { targets } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const oneMachine = targets.length <= 1;
+
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["serverBrowserProxy"]}
+      {...searchableSetting("server-browser-proxy")}
+      description={
+        oneMachine
+          ? "Send this machine's browser through a proxy, such as http://127.0.0.1:3128. Only the browser uses it. Leave empty for none."
+          : "Select a machine to send its browser through a proxy."
+      }
+      resetAction={
+        oneMachine && settings.serverBrowserProxy !== "" ? (
+          <SettingResetButton
+            label="browser proxy"
+            onClick={() => updateSettings({ serverBrowserProxy: "" })}
+          />
+        ) : null
+      }
+      control={
+        <DraftInput
+          nativeInput
+          size="sm"
+          className="w-full sm:w-64"
+          aria-label="Browser proxy"
+          placeholder="http://127.0.0.1:3128"
+          autoCapitalize="none"
+          spellCheck={false}
+          disabled={!oneMachine}
+          maxLength={2048}
+          value={oneMachine ? settings.serverBrowserProxy : ""}
+          onCommit={(next) => {
+            // Settings reach every client; a password in here would too.
+            if (/^[^/]*\/\/[^/]*@/.test(next.trim()) || /^[^/:]*:[^/@]*@/.test(next.trim())) {
+              toastManager.add({
+                type: "warning",
+                title: "Proxy not saved",
+                description:
+                  "Leave the username and password out. Run a local forwarding proxy that signs in upstream, and enter its address.",
+              });
+              return;
+            }
+            updateSettings({ serverBrowserProxy: next.trim() });
+          }}
+        />
+      }
+    />
+  );
+}
+
 function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled: boolean }) {
   const autoShow = useClientSettings((settings) => settings.browserAutoShowFloatingPreview);
   const updateSettings = useUpdatePrimarySettings();
@@ -1607,6 +1790,10 @@ export function BrowserSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="browser-agent-access" title="Agent access">
         <AgentBrowserAccessSetting />
+      </SettingsSection>
+      <SettingsSection id="server-browser" title="Paired machines">
+        <ServerBrowserModeSetting />
+        <ServerBrowserProxySetting />
       </SettingsSection>
       <SettingsSection id="browser" title="Browsing">
         <SettingsUnavailableGroup message={desktopOnlyMessage}>

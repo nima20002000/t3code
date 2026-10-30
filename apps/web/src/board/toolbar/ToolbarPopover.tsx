@@ -29,7 +29,13 @@ export function ToolbarPopover(props: {
           </span>
         ) : null}
       </PopoverTrigger>
-      <PopoverPopup width="lg" align="start">
+      {/* The toolbar sits at the board's right edge, where a right panel or a native browser view can
+          begin, so popovers open leftwards and never move to its side. */}
+      <PopoverPopup
+        width="lg"
+        align="end"
+        collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }}
+      >
         <div className="grid gap-3 text-sm">
           <div className="font-medium">{props.label}</div>
           {props.children}

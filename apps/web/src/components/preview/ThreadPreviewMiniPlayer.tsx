@@ -531,6 +531,7 @@ function MiniPlayerShell({
         <section
           aria-label={label}
           data-preview-mini-player={sourceKey}
+          data-server-browser-scope
           className="pointer-events-none absolute select-none"
           style={{
             left: frame.x,
