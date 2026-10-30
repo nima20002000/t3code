@@ -7,6 +7,7 @@ import {
   type BoardPeer,
   type BoardSchedule,
   type BoardSnapshot,
+  type BoardWorkspaceFiles,
 } from "@t3tools/board-core/http";
 import {
   createHistory,
@@ -153,6 +154,14 @@ export function useBoardPeers(): ReadonlyArray<BoardPeer> {
 }
 export function useBoardSchedules(): ReadonlyArray<BoardSchedule> {
   return useBoardState().snapshot?.schedules ?? [];
+}
+
+const NO_FILES: Omit<BoardWorkspaceFiles, "workspaceId"> = { files: [], machines: [] };
+/** The workspace's shared files on the hub, and each machine's copy state. */
+export function useWorkspaceFiles(workspaceId: string): Omit<BoardWorkspaceFiles, "workspaceId"> {
+  return (
+    useBoardState().snapshot?.files?.find((entry) => entry.workspaceId === workspaceId) ?? NO_FILES
+  );
 }
 
 function reportError(title: string, error: unknown) {

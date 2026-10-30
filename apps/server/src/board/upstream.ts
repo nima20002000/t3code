@@ -12,3 +12,4 @@ export * as ProjectService from "../project/ProjectService.ts";
 export * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 export * as PreviewManager from "../preview/Manager.ts";
 export * as TaskSchedule from "../scheduledTasks/Schedule.ts";
+export * as ServerConfig from "../config.ts";

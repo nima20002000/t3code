@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Stream from "effect/Stream";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 
 import type { BoardEvent } from "@t3tools/board-core/http";
@@ -143,6 +143,48 @@ export async function runBoardMutation<A, E>(
   } finally {
     appAtomRegistry.set(boardPendingAtom, appAtomRegistry.get(boardPendingAtom) - 1);
   }
+}
+
+/**
+ * Adds a file to the workspace's shared files on the hub. The browser streams the file from disk,
+ * so a large file is never read into memory here.
+ */
+export async function uploadWorkspaceFile(workspaceId: string, file: File): Promise<void> {
+  const hub = boardHub();
+  const url = new URL(
+    `/api/board/workspaces/${encodeURIComponent(workspaceId)}/files/${encodeURIComponent(file.name)}`,
+    new URL("/", hub.baseUrl),
+  );
+  const request = HttpClientRequest.post(url).pipe(
+    HttpClientRequest.setBody(
+      HttpBody.raw(file, {
+        contentType: file.type || "application/octet-stream",
+        contentLength: file.size,
+      }),
+    ),
+    (request) =>
+      hub.bearer === null ? request : HttpClientRequest.bearerToken(request, hub.bearer),
+  );
+  const program = Effect.flatMap(HttpClient.HttpClient, (client) =>
+    client.execute(request).pipe(
+      Effect.flatMap((response) =>
+        response.status >= 200 && response.status < 300
+          ? Effect.succeed(null)
+          : response.json.pipe(
+              Effect.orElseSucceed(() => undefined),
+              Effect.map((body) =>
+                typeof body === "object" && body !== null && "message" in body
+                  ? String(body.message)
+                  : `Upload failed (HTTP ${response.status}).`,
+              ),
+            ),
+      ),
+    ),
+  );
+  const problem = await (hub.remote
+    ? remoteRuntime.runPromise(program)
+    : primaryRuntime.runPromise(program));
+  if (problem !== null) throw new Error(problem);
 }
 
 export function streamBoardEvents(

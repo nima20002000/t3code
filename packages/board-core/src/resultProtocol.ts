@@ -264,6 +264,8 @@ export function buildAgentInstructions(input: {
   readonly prompt?: string | undefined;
   /** The machine the agent's thread runs on; its commands execute there. */
   readonly machine?: string | undefined;
+  /** The workspace's shared files and where they are on the agent's machine. */
+  readonly sharedFiles?: SharedFilesNote | undefined;
   readonly outgoing: ReadonlyArray<string>;
   readonly incoming: ReadonlyArray<string>;
   readonly kanban?: ReadonlyArray<KanbanCard> | undefined;
@@ -277,6 +279,7 @@ export function buildAgentInstructions(input: {
           `You run on the machine "${input.machine}": every command you run executes there, in your workspace folder. Never connect to another machine (ssh or similar) to do your work; ask the agent on that machine instead.`,
         ]
       : []),
+    ...sharedFilesSection(input.sharedFiles),
     "",
     prompt.length > 0 ? prompt : PROFILE_ROLE[input.profile],
     "",
@@ -323,6 +326,24 @@ export function buildAgentInstructions(input: {
       ? kanbanSection(input.kanban ?? [], input.nodeNames ?? [])
       : []),
   ].join("\n");
+}
+
+export interface SharedFilesNote {
+  readonly folder: string;
+  readonly names: ReadonlyArray<string>;
+}
+
+const LISTED_SHARED_FILES = 50;
+
+function sharedFilesSection(note: SharedFilesNote | undefined): ReadonlyArray<string> {
+  if (!note || note.names.length === 0) return [];
+  const listed = note.names.slice(0, LISTED_SHARED_FILES);
+  const more = note.names.length - listed.length;
+  return [
+    `Your workspace has shared files, copied to every machine of the workspace. On your machine they are in ${note.folder}. Read them there; edits you make there are not shared and get replaced:`,
+    ...listed.map((name) => `- ${name}`),
+    ...(more > 0 ? [`- ... and ${more} more (list the folder)`] : []),
+  ];
 }
 
 /** The first message a node's fresh thread gets: its instructions, then the work that started it. */
