@@ -210,7 +210,7 @@ it.effect("stops scheduled runs once a task reaches its run limit", () =>
   ),
 );
 
-it.effect("compacts or moves to a fresh thread before a bound run", () =>
+it.effect("compacts after a bound run, or moves it to a fresh thread first", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse("2026-09-09T12:00:00.000Z"));
     const sent = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -248,7 +248,7 @@ it.effect("compacts or moves to a fresh thread before a bound run", () =>
       );
       expect(compacting.task.beforeRun).toBe("compact");
       yield* service.runNow({ id: compacting.task.id });
-      expect(yield* Ref.get(sent)).toEqual(["chat:/compact", `chat:${input.prompt}`]);
+      expect(yield* Ref.get(sent)).toEqual([`chat:${input.prompt}`, "chat:/compact"]);
 
       const fresh = yield* service.upsert(
         yield* decodeInput({
@@ -311,7 +311,7 @@ it.effect("compacts and runs in the project a bound thread moved to", () =>
       );
       const result = yield* service.runNow({ id: task.id });
       expect(result.task.lastRunStatus).toBe("succeeded");
-      expect(yield* Ref.get(sent)).toEqual(["moved:/compact", `moved:${input.prompt}`]);
+      expect(yield* Ref.get(sent)).toEqual([`moved:${input.prompt}`, "moved:/compact"]);
     }).pipe(Effect.provide(layer));
   }).pipe(
     Effect.provideService(ServerActivation, Effect.never),

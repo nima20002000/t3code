@@ -213,7 +213,7 @@ function ScheduleEditor(props: {
         clock="the machine's clock"
       />
       <label className="grid gap-1 text-xs text-muted-foreground">
-        Before each firing
+        Chat for each firing
         <select
           className={FIELD_CLASS}
           value={form.beforeRun}
@@ -221,9 +221,9 @@ function ScheduleEditor(props: {
             patch({ beforeRun: event.target.value as ScheduleForm["beforeRun"] })
           }
         >
-          <option value="compact">Compact the chat</option>
-          <option value="new_thread">Start a new chat</option>
-          <option value="none">Nothing</option>
+          <option value="compact">Compact it after the agent finishes</option>
+          <option value="new_thread">Start a new chat first</option>
+          <option value="none">Keep it as is</option>
         </select>
       </label>
       <div>

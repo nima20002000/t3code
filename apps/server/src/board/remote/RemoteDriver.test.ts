@@ -4,11 +4,14 @@ import {
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
+  ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
 import { FetchHttpClient } from "effect/http";
+import * as TestClock from "effect/testing/TestClock";
 import * as PeerStore from "./PeerStore.ts";
 import * as RemoteDriver from "./RemoteDriver.ts";
 
@@ -144,5 +147,32 @@ it.effect("fails with a re-pair error and sends nothing once the paired bearer e
       assert.isUndefined(result.failure.retryable);
     }
     assert.deepEqual(paths, []);
+  }),
+);
+
+it.effect("names the machine as offline when it cannot be reached at all", () =>
+  Effect.gen(function* () {
+    const environmentId = EnvironmentId.make("offline");
+    const store = PeerStore.makeMemory();
+    yield* store.put({
+      id: "offline",
+      name: "Italy VPS",
+      environmentId,
+      url: "https://peer.test/",
+      bearer: "test-secret",
+    });
+    // What fetch does when nothing answers at the address.
+    const fetch: typeof globalThis.fetch = () =>
+      Promise.reject(new DOMException("fetch failed", "NetworkError"));
+    const pending = yield* RemoteDriver.make(store)
+      .getScheduledTask({ environmentId, taskId: ScheduledTaskId.make("task") })
+      .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.result, Effect.forkChild);
+    yield* TestClock.adjust("10 seconds");
+    const result = yield* Fiber.join(pending);
+    assert.isTrue(Result.isFailure(result));
+    if (Result.isFailure(result)) {
+      assert.equal(result.failure.message, "Italy VPS is offline or can't be reached.");
+      assert.isTrue(result.failure.retryable);
+    }
   }),
 );

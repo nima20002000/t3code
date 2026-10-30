@@ -463,8 +463,10 @@ export async function openNodeChat(id: string) {
     await runBoardMutation((client) =>
       client.openNodeChat({ headers: {}, params: { workflowId: workflow.id, nodeId: id } }),
     );
+    return true;
   } catch (error) {
     reportError("Could not open the chat", error);
+    return false;
   }
 }
 /** Gives the node a fresh chat thread, with the chat's current settings, in place of the one it shows. */

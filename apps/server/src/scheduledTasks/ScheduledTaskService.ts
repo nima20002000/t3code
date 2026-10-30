@@ -845,7 +845,7 @@ export const layer = Layer.effect(
 
         // A bound thread can move to another project (No project to a project) while
         // this fires. Follow it; one move needs at most two retries. Same ids replay safely.
-        // `compact` sends the beforeRun /compact first, under its own ids.
+        // `compact` sends the /compact that follows the prompt, under its own ids.
         const sendBound = (
           threadId: ThreadId,
           projectId: ProjectId,
@@ -911,11 +911,13 @@ export const layer = Layer.effect(
             : yield* Effect.exit(
                 // The stored selection only seeds fresh threads. A bound run
                 // follows the thread's current provider, so it passes none.
-                (active.beforeRun === "compact"
-                  ? sendBound(ThreadId.make(active.threadId), active.projectId, 2, true)
-                  : Effect.void
-                ).pipe(
-                  Effect.andThen(sendBound(ThreadId.make(active.threadId), active.projectId, 2)),
+                // "compact" queues /compact behind the prompt's run, so it compacts once the agent is done.
+                sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
+                  Effect.andThen(
+                    active.beforeRun === "compact"
+                      ? sendBound(ThreadId.make(active.threadId), active.projectId, 2, true)
+                      : Effect.void,
+                  ),
                   Effect.as(ThreadId.make(active.threadId)),
                 ),
               );

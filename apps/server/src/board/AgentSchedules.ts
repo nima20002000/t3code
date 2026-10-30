@@ -97,7 +97,7 @@ const onMachine =
           Effect.andThen(
             Effect.fail(
               new BoardMachineUnavailableError({
-                message: `Could not ${action} on the agent's machine: ${cause.message}`,
+                message: `Could not ${action}. ${cause.message}`,
               }),
             ),
           ),

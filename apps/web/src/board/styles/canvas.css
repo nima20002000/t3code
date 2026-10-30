@@ -352,6 +352,9 @@
 /* The chat button sits inside the circle, quiet until the node is hovered. */
 @utility n-agent-actions {
   display: flex;
+  max-width: calc(100% - 72px);
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 4px;
   margin-top: 10px;
 }
@@ -387,7 +390,7 @@
 @utility n-agent-schedule {
   display: inline-flex;
   height: 30px;
-  max-width: 160px;
+  max-width: min(160px, 100%);
   align-items: center;
   gap: 4px;
   padding: 0 10px;

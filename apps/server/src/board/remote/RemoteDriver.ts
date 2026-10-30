@@ -45,6 +45,19 @@ class RemoteStateError extends Schema.TaggedError<RemoteStateError>()("RemoteSta
 
 class PeerExpiredError extends Schema.TaggedError<PeerExpiredError>()("PeerExpiredError", {}) {}
 
+/** The paired machine did not answer at all (off, asleep or off the network). */
+class PeerUnreachableError extends Schema.TaggedError<PeerUnreachableError>()(
+  "PeerUnreachableError",
+  { name: Schema.String, cause: Schema.Defect() },
+) {}
+const isPeerUnreachableError = Schema.is(PeerUnreachableError);
+
+const unreachable = (cause: unknown): PeerUnreachableError | undefined => {
+  if (isPeerUnreachableError(cause)) return cause;
+  if (typeof cause !== "object" || cause === null || !("cause" in cause)) return undefined;
+  return unreachable(cause.cause);
+};
+
 const isRemoteStateError = Schema.is(RemoteStateError);
 
 const error = (operation: NodeDriverError["operation"], cause: unknown) =>
@@ -52,9 +65,11 @@ const error = (operation: NodeDriverError["operation"], cause: unknown) =>
     operation,
     message: hasTag(cause, "PeerExpiredError")
       ? "Re-pair needed: access to this machine expired."
-      : operation === "deleteProject" && isRemoteStateError(cause)
-        ? cause.reason
-        : `Remote board ${operation} failed.`,
+      : unreachable(cause)
+        ? `${unreachable(cause)!.name} is offline or can't be reached.`
+        : operation === "deleteProject" && isRemoteStateError(cause)
+          ? cause.reason
+          : `Remote board ${operation} failed.`,
     ...(retryable(cause) ? { retryable: true } : {}),
     cause,
   });
@@ -160,6 +175,11 @@ const useClient = <A, E>(
       Effect.tapError((cause) =>
         connectionFailure(cause) ? reportStatus(store, target, "error", attemptPeer) : Effect.void,
       ),
+      Effect.mapError((cause) =>
+        attemptPeer && noAnswer(cause)
+          ? new PeerUnreachableError({ name: attemptPeer.name, cause })
+          : cause,
+      ),
     );
   });
 
@@ -224,6 +244,14 @@ function retryable(cause: unknown): boolean {
   if (typeof cause !== "object" || cause === null) return false;
   if ("_tag" in cause && cause._tag === "RpcClientError") return true;
   return "cause" in cause && retryable(cause.cause);
+}
+
+/** No answer from the machine at all, as opposed to an answer that refused the request. */
+function noAnswer(cause: unknown): boolean {
+  if (isPeerHttpError(cause)) return cause.status === undefined;
+  if (typeof cause !== "object" || cause === null) return false;
+  if ("_tag" in cause && cause._tag === "RpcClientError") return true;
+  return "cause" in cause && noAnswer(cause.cause);
 }
 
 function hasTag(cause: unknown, tag: string): boolean {

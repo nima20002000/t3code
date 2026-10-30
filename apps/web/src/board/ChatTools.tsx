@@ -11,7 +11,7 @@ import { useStore } from "@xyflow/react";
 import { useEffect, useState } from "react";
 
 import { BoardWindowFrame, useBoardWindows, windowId, type BoardWindowProps } from "./BoardWindows";
-import { useCurrentWorkflow, type BoardNode } from "./boardStore";
+import { openNodeChat, useCurrentWorkflow, type BoardNode } from "./boardStore";
 import {
   Button,
   closePreviewSession,
@@ -73,7 +73,13 @@ export function useAgentTools(node: BoardNode) {
   const terminals = useThreadTerminalActions(threadRef);
   const tabs = useAgentTabs(threadRef);
   const openTab = useOpenAgentTab();
-  if (!threadRef || !connected) return null;
+  if (!connected) return null;
+  // Without a chat yet, the tool's window opens on the chat the click starts.
+  if (!threadRef) {
+    const startChatThen = (kind: "terminal" | "browser") => () =>
+      void openNodeChat(node.id).then((opened) => opened && windows.open(kind, node.id));
+    return { openTerminal: startChatThen("terminal"), openBrowser: startChatThen("browser") };
+  }
   return {
     openTerminal: () => {
       if (windows.isOpen(windowId("terminal", node.id))) return windows.open("terminal", node.id);
@@ -252,7 +258,42 @@ export function TerminalWindow({ id, data, selected }: BoardWindowProps) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const windows = useBoardWindows();
   const terminalId = data.terminalId;
-  if (!node || !threadRef || !terminalId) return null;
+  if (!node || !threadRef) return null;
+  if (!terminalId)
+    return (
+      <BoardWindowFrame
+        id={id}
+        label={`${node.name} terminal`}
+        canFullScreen={false}
+        selected={selected}
+        onClose={() => windows.close(id)}
+        title={
+          <span className="min-w-0 truncate px-1 text-sm font-medium">{node.name} terminal</span>
+        }
+      >
+        <div className="grid content-start gap-3 p-4 text-sm">
+          <p className="text-muted-foreground">{node.name} has no terminal open.</p>
+          <div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                terminals.launchTerminal({
+                  place: (launched) =>
+                    windows.open("terminal", node.id, {
+                      terminalId: launched,
+                      terminalThreadId: threadRef.threadId,
+                      terminalEnvironmentId: threadRef.environmentId,
+                    }),
+                })
+              }
+            >
+              New terminal
+            </Button>
+          </div>
+        </div>
+      </BoardWindowFrame>
+    );
   return (
     <BoardWindowFrame
       id={id}
