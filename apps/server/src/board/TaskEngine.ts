@@ -164,6 +164,16 @@ const threadOf = (run: RunRecord, nodeId: string): BoardDriverThread | undefined
   );
 };
 const isActive = (run: RunRecord) => run.status === "running" || run.status === "stopping";
+/** The run with the node marked as retried for `reason`, or unmarked without one. */
+const withRetrying = (run: RunRecord, nodeId: string, reason?: string): RunRecord => {
+  if (run.retrying?.[nodeId] === reason) return run;
+  const { [nodeId]: _previous, ...others } = run.retrying ?? {};
+  const retrying = reason === undefined ? others : { ...others, [nodeId]: reason };
+  const { retrying: _retrying, ...rest } = run;
+  return Object.keys(retrying).length > 0 ? { ...rest, retrying } : rest;
+};
+const RETRY_SEND = "retrying every 15 s";
+const RETRY_SETTLE = "reconnecting";
 const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 const terminal = (status: BoardStore.TaskStatus) =>
   status === "done" || status === "failed" || status === "stopped" || status === "completing";
@@ -181,7 +191,10 @@ const make = Effect.gen(function* () {
     locks.set(id, lock);
     return lock;
   };
-  const saveRun = Effect.fn("TaskEngine.saveRun")(function* (workflow: Workflow, run: RunRecord) {
+  const saveRun = Effect.fn("TaskEngine.saveRun")(function* (workflow: Workflow, saved: RunRecord) {
+    // Only a running run retries; stopping, finishing or failing ends every retry.
+    const { retrying: _retrying, ...ended } = saved;
+    const run: RunRecord = saved.status === "running" ? saved : ended;
     yield* store.putWorkflow({
       ...workflow,
       runs: workflow.runs.map((entry) => (entry.id === run.id ? run : entry)),
@@ -341,7 +354,7 @@ const make = Effect.gen(function* () {
           task.kind === "run"
             ? { ...run, status: "failed", endedAt, summary: reason }
             : {
-                ...run,
+                ...withRetrying(run, task.nodeId),
                 requests: run.requests.map((entry) =>
                   entry.id === task.id
                     ? { ...entry, status: "failed", failureReason: reason, returnedAt: endedAt }
@@ -362,6 +375,29 @@ const make = Effect.gen(function* () {
         );
       }),
     );
+  });
+
+  /** Shows every viewer that the engine keeps retrying a node's machine, until `reason` is unset. */
+  const markRetrying = Effect.fn("TaskEngine.markRetrying")(function* (
+    task: BoardStore.BoardTask,
+    reason?: string,
+  ) {
+    yield* store.transaction(
+      Effect.gen(function* () {
+        const workflow = yield* store.getWorkflow(task.workflowId);
+        const run = workflow?.runs.find((entry) => entry.id === task.runId);
+        if (!workflow || !run || run.status !== "running") return;
+        const updated = withRetrying(run, task.nodeId, reason);
+        if (updated !== run) yield* saveRun(workflow, updated);
+      }),
+    );
+  });
+  const unreachable = Effect.fn("TaskEngine.unreachable")(function* (
+    node: BoardNode,
+    retry: string,
+  ) {
+    const name = (yield* store.getPeer(node.environmentId))?.name ?? "This machine";
+    return `${name} can't be reached, ${retry}`;
   });
 
   const interruptTask = Effect.fn("TaskEngine.interruptTask")(function* (taskId: string) {
@@ -765,6 +801,8 @@ const make = Effect.gen(function* () {
     void,
     SqlError | NodeDriverError | BoardInvalidRequestError | BoardNotFoundError
   > {
+    // A send that just went through proves the machine is up, whatever its last status said.
+    let sentHere = false;
     while (true) {
       const task = yield* store.getTask(taskId);
       if (!task) return;
@@ -839,14 +877,19 @@ const make = Effect.gen(function* () {
                     messageId,
                   } satisfies Checkpoint,
                 });
-                if (thread.seeded) return;
                 const latest = yield* store.getWorkflow(task.workflowId);
                 const latestRun = latest?.runs.find((entry) => entry.id === task.runId);
-                if (latest && latestRun)
-                  yield* saveRun(latest, {
-                    ...latestRun,
-                    threads: { ...latestRun.threads, [node.id]: { ...thread, seeded: true } },
-                  });
+                if (!latest || !latestRun) return;
+                const updated = withRetrying(
+                  thread.seeded
+                    ? latestRun
+                    : {
+                        ...latestRun,
+                        threads: { ...latestRun.threads, [node.id]: { ...thread, seeded: true } },
+                      },
+                  node.id,
+                );
+                if (updated !== latestRun) yield* saveRun(latest, updated);
               }),
             );
             return sent.success;
@@ -860,8 +903,9 @@ const make = Effect.gen(function* () {
           }
           // The peer may have accepted the message; resending with the same ids reconciles it.
           yield* Effect.logWarning("Board send is uncertain; retrying.", { taskId: task.id });
+          yield* markRetrying(task, yield* unreachable(node, RETRY_SEND));
           yield* Effect.sleep("15 seconds");
-        }
+        } else sentHere = true;
         continue;
       }
       if (checkpoint.stage === "settle") {
@@ -871,9 +915,35 @@ const make = Effect.gen(function* () {
           yield* failTask(task.id, "The node's thread is no longer available.");
           return;
         }
-        const sequence = (yield* store.snapshot()).sequence;
+        const snapshot = yield* store.snapshot();
+        const sequence = snapshot.sequence;
         const current = yield* store.getTask(task.id);
         if (!current || terminal(current.status)) return;
+        // The driver reconnects to a lost machine by itself; its status says when it is away.
+        const peerDown = (status: string | undefined) =>
+          status === "error"
+            ? unreachable(node, RETRY_SETTLE).pipe(
+                Effect.flatMap((reason) => markRetrying(task, reason)),
+              )
+            : markRetrying(task);
+        const initial = snapshot.peers.find((peer) => peer.environmentId === node.environmentId);
+        if (initial && !sentHere) yield* peerDown(initial.status);
+        const machineWatch = store.events(sequence).pipe(
+          Stream.filter(
+            (event) =>
+              event.kind === "peer.upserted" && event.peer.environmentId === node.environmentId,
+          ),
+          Stream.runForEach((event) =>
+            event.kind === "peer.upserted" ? peerDown(event.peer.status) : Effect.void,
+          ),
+          Effect.catch((cause) =>
+            Effect.logWarning("Board could not follow the agent's machine.", {
+              taskId: task.id,
+              cause,
+            }),
+          ),
+          Effect.andThen(Effect.never),
+        );
         // Best effort while the turn runs; the list as the turn left it is mirrored after it settles.
         const liveTodoList =
           node.profile === "orchestrator"
@@ -900,7 +970,9 @@ const make = Effect.gen(function* () {
             Stream.runHead,
             Effect.as(Option.none()),
           ),
-        ).pipe(Effect.raceFirst(liveTodoList));
+        ).pipe(Effect.raceFirst(liveTodoList), Effect.raceFirst(machineWatch));
+        sentHere = false;
+        yield* markRetrying(task);
         if (Option.isNone(settled)) {
           const latest = yield* store.getTask(task.id);
           if (latest?.status === "completing") continue;

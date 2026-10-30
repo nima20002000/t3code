@@ -122,7 +122,8 @@
   &[data-state="queued"] .n-agent-status {
     color: var(--agent-hue);
   }
-  &[data-state="waiting"] .n-agent-status {
+  &[data-state="waiting"] .n-agent-status,
+  &[data-state="retrying"] .n-agent-status {
     color: var(--warning);
   }
   &[data-state="completed"] .n-agent-status {
@@ -147,7 +148,8 @@
   &[data-state="running"] .n-agent-energy {
     opacity: 0.7;
   }
-  &[data-state="waiting"] .n-agent-core {
+  &[data-state="waiting"] .n-agent-core,
+  &[data-state="retrying"] .n-agent-core {
     border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
   }
   /* Approved: the answer came back; the field turns green until the agent resumes. */

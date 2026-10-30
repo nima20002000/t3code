@@ -2,7 +2,7 @@ import type { RunRequestRecord, Workflow } from "@t3tools/board-core/boardModel"
 import { runToShow } from "@t3tools/board-core/runView";
 import { XIcon } from "lucide-react";
 
-import { formatRunTime } from "./toolbar/runPresentation";
+import { formatRunTime, runStatusLabel } from "./toolbar/runPresentation";
 import { Button, Tooltip, TooltipPopup, TooltipTrigger } from "./upstream";
 
 export type ActivityTarget =
@@ -72,6 +72,11 @@ export function RunActivityCard(props: {
   const title =
     target.kind === "node" ? name(target.nodeId) : `${name(target.from)} → ${name(target.to)}`;
   const entry = target.kind === "node" && run?.nodeId === target.nodeId;
+  const ids = target.kind === "node" ? [target.nodeId] : [target.from, target.to];
+  const retrying =
+    run?.status === "running"
+      ? ids.flatMap((id) => (run.retrying?.[id] === undefined ? [] : [run.retrying[id]]))
+      : [];
   return (
     <aside
       aria-label={`${title} activity`}
@@ -81,7 +86,7 @@ export function RunActivityCard(props: {
         <div className="min-w-0">
           <h2 className="truncate text-sm font-medium">{title}</h2>
           <p className="text-xs text-muted-foreground">
-            {run ? `Run ${formatRunTime(run.startedAt)} · ${run.status}` : "No runs yet"}
+            {run ? `Run ${formatRunTime(run.startedAt)} · ${runStatusLabel(run)}` : "No runs yet"}
           </p>
         </div>
         <Button size="icon-sm" variant="ghost" aria-label="Close activity" onClick={props.onClose}>
@@ -89,6 +94,11 @@ export function RunActivityCard(props: {
         </Button>
       </div>
       <div className="min-h-0 overflow-y-auto px-3 py-1">
+        {retrying.map((reason) => (
+          <p key={reason} className="border-b py-1.5 text-xs text-warning">
+            {reason}
+          </p>
+        ))}
         {entry ? (
           <p className="border-b py-1.5 text-xs">
             <span className="font-medium">Entry task:</span> {run.task}

@@ -121,6 +121,20 @@ describe("board run views", () => {
     });
   });
 
+  it("says the engine keeps retrying a node's machine, with why, only while the run runs", () => {
+    const reason = "Italy VPS can't be reached, retrying every 15 s";
+    const retried = { ...run("running", []), retrying: { Home: reason } };
+    expect(runViews(retried, nodes, edges, facts([], ["Home"])).nodes.get("Home")).toEqual({
+      state: "retrying",
+      label: "Retrying",
+      detail: reason,
+    });
+    const stopping = { ...retried, status: "stopping" as const };
+    expect(states(runViews(stopping, nodes, edges, facts()))).toMatchObject({
+      Home: "idle: Stopped",
+    });
+  });
+
   it("says a machine is reconnecting during a blip and offline only when it is down", () => {
     const views = runViews(undefined, nodes, edges, facts([], ["Italy"], ["Home"]));
     expect(states(views)).toMatchObject({

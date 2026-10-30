@@ -3,7 +3,7 @@ import { useState } from "react";
 
 import type { BoardLogEntry, RunRecord } from "../boardStore";
 import { IconButton } from "./IconButton";
-import { formatRunTime, RUN_STATUS_DOT, RUN_STATUS_LABELS } from "./runPresentation";
+import { formatRunTime, retryReasons, runStatusDot, runStatusLabel } from "./runPresentation";
 import { Button, Popover, PopoverPopup, PopoverTrigger } from "../upstream";
 
 function LogList(props: { readonly log: ReadonlyArray<BoardLogEntry> }) {
@@ -94,6 +94,16 @@ export function ActivitiesButton(props: {
                   </Button>
                 ) : null}
               </header>
+              {run
+                ? retryReasons(run).map((reason) => (
+                    <p
+                      key={reason}
+                      className="border-b border-border/50 px-3 py-2 text-xs break-words text-warning"
+                    >
+                      {reason}
+                    </p>
+                  ))
+                : null}
               <LogList log={run ? runLog(props.log, run) : props.log} />
             </>
           )}
@@ -117,15 +127,15 @@ function RunRow(props: {
     >
       {run ? (
         <span
-          className={`size-2 flex-none rounded-full ${RUN_STATUS_DOT[run.status]}`}
-          aria-label={RUN_STATUS_LABELS[run.status]}
+          className={`size-2 flex-none rounded-full ${runStatusDot(run)}`}
+          aria-label={runStatusLabel(run)}
         />
       ) : null}
       <span className="min-w-0 flex-1">
         <span className="block truncate">{props.label}</span>
         {run ? (
           <small className="text-2xs text-muted-foreground">
-            {RUN_STATUS_LABELS[run.status]} · {formatRunTime(run.startedAt)}
+            {runStatusLabel(run)} · {formatRunTime(run.startedAt)}
           </small>
         ) : null}
       </span>

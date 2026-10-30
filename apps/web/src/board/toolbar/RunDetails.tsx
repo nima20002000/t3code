@@ -5,7 +5,14 @@ import { MessageSquareIcon, XIcon } from "lucide-react";
 import type { RunRecord } from "../boardStore";
 import { buildThreadRouteParams } from "../upstream";
 import { IconButton } from "./IconButton";
-import { formatJson, formatRunTime, RUN_STATUS_DOT, RUN_STATUS_LABELS } from "./runPresentation";
+import {
+  formatJson,
+  formatRunTime,
+  retryReasons,
+  RUN_STATUS_LABELS,
+  runStatusDot,
+  runStatusLabel,
+} from "./runPresentation";
 
 const SECTION_HEADING = "mb-1 text-2xs uppercase tracking-wider text-muted-foreground";
 
@@ -38,10 +45,10 @@ export function RunDetails(props: { readonly run: RunRecord; readonly onClose: (
         <div className="grid gap-0.5">
           <span className="inline-flex items-center gap-1.5 text-xs">
             <span
-              className={`size-2 flex-none rounded-full ${RUN_STATUS_DOT[run.status]}`}
+              className={`size-2 flex-none rounded-full ${runStatusDot(run)}`}
               aria-hidden="true"
             />
-            {RUN_STATUS_LABELS[run.status]}
+            {runStatusLabel(run)}
           </span>
           <small className="text-2xs text-muted-foreground">
             {formatRunTime(run.startedAt)}
@@ -53,6 +60,11 @@ export function RunDetails(props: { readonly run: RunRecord; readonly onClose: (
         </IconButton>
       </header>
       <div className="grid min-h-0 flex-1 content-start gap-3.5 overflow-y-auto p-3">
+        {retryReasons(run).map((reason) => (
+          <p key={reason} className="break-words text-xs text-warning">
+            {reason}
+          </p>
+        ))}
         <section>
           <h3 className={SECTION_HEADING}>Task</h3>
           <p className="break-words">
