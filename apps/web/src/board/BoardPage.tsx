@@ -337,6 +337,7 @@ function AgentCard({ data, selected, width }: NodeProps<AgentFlowNode>) {
       model={node.modelSelection.model}
       machine={machine}
       statusLabel={view.label}
+      {...(view.detail ? { statusDetail: view.detail } : {})}
       state={view.state}
       {...(cue.transition ? { transition: cue.transition, transitionKey: cue.key } : {})}
       selected={selected}

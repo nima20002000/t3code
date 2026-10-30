@@ -104,4 +104,23 @@ it("shows Board in the chat layout, swaps the thread list for the board sidebar 
       remotePanel.getByText("Connect Remote machine in Connections to view and use this thread."),
     )
     .toBeVisible();
+  // The hub keeps retrying a machine it cannot reach; every viewer sees it, and why, until it gets through.
+  const finished = workflow.runs[0]!;
+  const reason = "Remote machine can't be reached, retrying every 15 s";
+  emit({
+    kind: "run.upserted",
+    sequence: 0,
+    workflowId: workflow.id,
+    run: { ...finished, status: "running", retrying: { remote: reason } },
+  });
+  await expect.element(screen.getByText("Retrying", { exact: true })).toBeVisible();
+  await userEvent.hover(screen.getByText("Retrying", { exact: true }));
+  await expect.element(page.getByText(reason)).toBeVisible();
+  emit({
+    kind: "run.upserted",
+    sequence: 0,
+    workflowId: workflow.id,
+    run: { ...finished, status: "running" },
+  });
+  await expect.element(screen.getByText("Retrying", { exact: true })).not.toBeInTheDocument();
 });

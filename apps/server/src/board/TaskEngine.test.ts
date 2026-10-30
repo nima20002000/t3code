@@ -37,8 +37,20 @@ import * as DriverRegistry from "./DriverRegistry.ts";
 import * as TaskEngine from "./TaskEngine.ts";
 import * as BoardScheduler from "./BoardScheduler.ts";
 import * as BoardService from "./BoardService.ts";
+import * as PeerStore from "./remote/PeerStore.ts";
 
 const environmentId = EnvironmentId.make("environment:test");
+const italy = {
+  id: "italy",
+  name: "Italy VPS",
+  environmentId,
+  url: "https://italy.example",
+  bearer: "secret",
+};
+const retryingOf = (store: BoardStore.BoardStore["Service"], runId: string) =>
+  store
+    .getWorkflow("workflow")
+    .pipe(Effect.map((workflow) => workflow?.runs.find((run) => run.id === runId)?.retrying));
 const node = (id: string, profile: BoardNode["profile"] = "worker"): BoardNode => ({
   id,
   name: id,
@@ -189,8 +201,9 @@ const setupWorkflow = (
 const waitForRun = (
   store: BoardStore.BoardStore["Service"],
   predicate: (run: import("@t3tools/board-core").RunRecord) => boolean,
+  afterSequence = 0,
 ) =>
-  store.events(0).pipe(
+  store.events(afterSequence).pipe(
     Stream.filter((event) => event.kind === "run.upserted" && predicate(event.run)),
     Stream.runHead,
     Effect.map(Option.getOrThrow),
@@ -1163,13 +1176,22 @@ it.effect("retries an uncertain send with the same ids instead of failing the ta
       const engine = yield* TaskEngine.TaskEngine;
       const store = yield* BoardStore.BoardStore;
       yield* store.transaction(seed(store, setupWorkflow()));
+      yield* store.putPeer(italy);
       yield* engine.start("workflow", { id: "run:uncertain", task: "Go" });
       const first = yield* Queue.take(calls);
+      // Every viewer sees the machine is being retried, and why.
+      const retrying = yield* waitForRun(store, (run) => run.retrying !== undefined);
+      if (retrying.kind === "run.upserted")
+        assert.deepStrictEqual(retrying.run.retrying, {
+          root: "Italy VPS can't be reached, retrying every 15 s",
+        });
       yield* TestClock.adjust("15 seconds");
       const second = yield* Queue.take(calls);
       assert.strictEqual(second.commandId, first.commandId);
       assert.strictEqual(second.messageId, first.messageId);
+      yield* waitForRun(store, (run) => run.threads.root?.seeded === true);
       assert.strictEqual((yield* store.getTask("run:uncertain"))?.status, "running");
+      assert.strictEqual(yield* retryingOf(store, "run:uncertain"), undefined);
     }).pipe(Effect.provide(layer));
   }),
 );
@@ -1206,10 +1228,44 @@ it.effect("interrupts the thread when Stop lands while an uncertain send waits t
       yield* store.transaction(seed(store, setupWorkflow()));
       yield* engine.start("workflow", { id: "run:stop-uncertain", task: "Go" });
       yield* Queue.take(calls);
+      yield* waitForRun(store, (run) => run.retrying !== undefined);
       const stopped = yield* engine.stop("workflow", "run:stop-uncertain");
       const interrupt = yield* Queue.take(interrupts);
       assert.strictEqual(interrupt.runId, undefined);
       assert.strictEqual(stopped.status, "stopped");
+      assert.strictEqual(stopped.retrying, undefined);
+      assert.strictEqual(yield* retryingOf(store, "run:stop-uncertain"), undefined);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("shows a turn's machine as retried while it cannot be reached, until it is back", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const layer = TaskEngine.layer.pipe(
+      Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
+      Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    );
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      const peers = PeerStore.makeBoard(store);
+      yield* store.transaction(seed(store, setupWorkflow()));
+      yield* store.putPeer(italy);
+      yield* engine.start("workflow", { id: "run:settle", task: "Go" });
+      const sent = yield* Queue.take(harness.sends);
+      const seeded = yield* waitForRun(store, (run) => run.threads.root?.seeded === true);
+      yield* peers.setStatus!(italy, "error", "Could not reach or authenticate this machine.");
+      const lost = yield* waitForRun(store, (run) => run.retrying !== undefined, seeded.sequence);
+      if (lost.kind === "run.upserted")
+        assert.deepStrictEqual(lost.run.retrying, {
+          root: "Italy VPS can't be reached, reconnecting",
+        });
+      yield* peers.setStatus!(italy, "connected");
+      yield* waitForRun(store, (run) => run.retrying === undefined, lost.sequence);
+      yield* harness.reply(sent, finish);
+      const finished = yield* waitForRun(store, (run) => run.status === "finished");
+      if (finished.kind === "run.upserted") assert.strictEqual(finished.run.retrying, undefined);
     }).pipe(Effect.provide(layer));
   }),
 );

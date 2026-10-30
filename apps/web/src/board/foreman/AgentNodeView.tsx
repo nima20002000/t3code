@@ -9,6 +9,7 @@ export type AgentNodeState =
   | "queued"
   | "running"
   | "waiting"
+  | "retrying"
   | "completed"
   | "failed"
   | "unavailable";
@@ -32,6 +33,7 @@ export function AgentNodeView({
   machine,
   role,
   statusLabel,
+  statusDetail,
   state = "idle",
   transition,
   transitionKey,
@@ -47,6 +49,8 @@ export function AgentNodeView({
   machine: string;
   role: string;
   statusLabel: string;
+  /** Why the node is in its state; shown on hovering the status word. */
+  statusDetail?: string;
   state?: AgentNodeState;
   transition?: AgentNodeTransition;
   /** Changes for every new cue, so the same cue twice in a row still plays twice. */
@@ -86,10 +90,24 @@ export function AgentNodeView({
         role="group"
         aria-label={`${name}, ${harnessLabel}${model ? `, ${model}` : ""}, ${statusLabel}`}
       >
-        <span key={statusLabel} className="n-agent-status">
-          <i aria-hidden="true" />
-          {statusLabel}
-        </span>
+        {statusDetail ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span key={statusLabel} className="n-agent-status">
+                  <i aria-hidden="true" />
+                  {statusLabel}
+                </span>
+              }
+            />
+            <TooltipPopup>{statusDetail}</TooltipPopup>
+          </Tooltip>
+        ) : (
+          <span key={statusLabel} className="n-agent-status">
+            <i aria-hidden="true" />
+            {statusLabel}
+          </span>
+        )}
         <Tooltip>
           <TooltipTrigger render={<strong className="n-agent-name">{name}</strong>} />
           <TooltipPopup>

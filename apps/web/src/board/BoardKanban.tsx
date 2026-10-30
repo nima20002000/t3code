@@ -63,6 +63,12 @@ export function BoardKanban({ data, selected }: NodeProps<KanbanFlowNode>) {
   const cards = showEarlier ? allCards : allCards.filter((card) => !earlier.includes(card));
   const nameOf = (nodeId: string | undefined) =>
     workflow.nodes.find((node) => node.id === nodeId)?.name;
+  const running = workflow.runs.find((run) => run.status === "running");
+  /** Why the engine keeps retrying the machine of the card's agent, while it works the card. */
+  const retryingOf = (card: (typeof cards)[number]) =>
+    card.status === "doing" && card.assigneeNodeId !== undefined && card.runId === running?.id
+      ? running?.retrying?.[card.assigneeNodeId]
+      : undefined;
   const moverName = (by: string) => (by === "engine" ? "board" : (nameOf(by) ?? "agent"));
   return (
     <BoardWindowFrame
@@ -106,6 +112,7 @@ export function BoardKanban({ data, selected }: NodeProps<KanbanFlowNode>) {
               {column.map((card) => {
                 const assignee = nameOf(card.assigneeNodeId);
                 const open = expanded.has(card.id);
+                const retrying = retryingOf(card);
                 return (
                   <article key={card.id} className="rounded-md border bg-background text-xs">
                     <button
@@ -115,6 +122,7 @@ export function BoardKanban({ data, selected }: NodeProps<KanbanFlowNode>) {
                       onClick={() => toggle(card.id)}
                     >
                       <span className="min-w-0 flex-1 truncate font-medium">{card.title}</span>
+                      {retrying ? <small className="shrink-0 text-warning">Retrying</small> : null}
                     </button>
                     {open ? (
                       <div className="grid grid-cols-1 gap-1 border-t px-2 py-1.5">
@@ -126,6 +134,7 @@ export function BoardKanban({ data, selected }: NodeProps<KanbanFlowNode>) {
                         {assignee ? (
                           <small className="text-muted-foreground">{assignee}</small>
                         ) : null}
+                        {retrying ? <p className="break-words text-warning">{retrying}</p> : null}
                         {card.reason ? (
                           <p className="break-words text-muted-foreground italic">{card.reason}</p>
                         ) : null}

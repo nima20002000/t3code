@@ -139,6 +139,8 @@ export interface RunRecord {
   readonly definition: WorkflowDefinition;
   /** Its chats carry into the schedule's next run, so they are compacted once it ends. */
   readonly compactAfter?: boolean;
+  /** nodeId -> why the engine keeps retrying that node's machine; only while the run is running. */
+  readonly retrying?: Readonly<Record<string, string>>;
 }
 
 export interface WorkflowSettings {

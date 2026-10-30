@@ -6,6 +6,7 @@ export type NodeRunState =
   | "queued"
   | "running"
   | "waiting"
+  | "retrying"
   | "completed"
   | "failed"
   | "unavailable";
@@ -13,6 +14,8 @@ export type NodeRunState =
 export interface NodeRunView {
   readonly state: NodeRunState;
   readonly label: string;
+  /** Why the node is in this state, when the label alone does not say. */
+  readonly detail?: string;
 }
 
 /** A fact crossing an edge: a request going out (task), its return coming home, or a failure. */
@@ -84,7 +87,10 @@ export function runViews<N extends BoardNode>(
     const openOut = outgoing.some((request) => request.status === "pending");
 
     let view: NodeRunView;
-    if (facts.connection === "reconnecting")
+    // The engine knows its send is not getting through, which says more than the viewer's own link.
+    const retrying = run?.status === "running" ? run.retrying?.[node.id] : undefined;
+    if (retrying !== undefined) view = { state: "retrying", label: "Retrying", detail: retrying };
+    else if (facts.connection === "reconnecting")
       view = { state: "unavailable", label: "Reconnecting…" };
     else if (facts.connection === "offline")
       view = { state: "unavailable", label: "Machine offline" };

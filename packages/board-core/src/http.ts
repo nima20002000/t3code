@@ -150,6 +150,7 @@ export const BoardRunSchema = Schema.Struct({
   }),
   /** Its chats carry into the schedule's next run, so they are compacted once it ends. */
   compactAfter: Schema.optionalKey(Schema.Boolean),
+  retrying: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
 export const BoardKanbanPlacementSchema = Schema.Struct({
   x: Schema.Number,
