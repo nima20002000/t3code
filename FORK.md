@@ -84,6 +84,10 @@ a merge (the server route is reserved for the later server phase):
   a GPU snapshot go to `.t3/logs/dev-electron.log`, and Chromium's own log to `.t3/logs/electron-<time>.log`.
 - `apps/web/src/appearanceFonts.ts`: `resolveDefaultFamilyLabel` caches its answer per font stack. Each DOM font
   probe forces a full layout, and Settings → Appearance ran about 20 of them on every visit (~250ms on a large board).
+- `apps/web/src/routes/_chat.settings.tsx`: the settings layouts read the matched section (`useMatches`), not
+  `useLocation`, so switching sections no longer remounts the outgoing section once before removing it
+  (Providers ~640 → ~245ms in the dev app). `apps/web/src/components/settings/KeybindingsSettings.tsx`: rows use
+  `content-visibility:auto` so offscreen rows skip style and layout.
 - `AGENTS.md`: one paragraph pointing agents at this file and the board folders.
 - `pnpm-lock.yaml`: workspace and board dependency lock entries.
 

@@ -988,9 +988,10 @@ function KeybindingSettingsRow(props: KeybindingRowProps) {
   const editor = useKeybindingRowEditor({ row, allRows, onSave });
 
   return (
+    // Offscreen rows skip style and layout until scrolled to; the list has ~90 heavy rows.
     <SettingsRow
       id={anchorId}
-      className="group/row rounded-none"
+      className="group/row rounded-none [contain-intrinsic-size:auto_56px] [content-visibility:auto]"
       title={<KeybindingRowTitle row={row} />}
       description={<KeybindingRowWhen row={row} editor={editor} variables={variables} />}
       control={
