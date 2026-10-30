@@ -112,7 +112,7 @@ it("keeps a board page under the windows and panels drawn above its window", asy
   expect(document.elementFromPoint(150, 320)).toBe(b.view);
   expect(document.elementFromPoint(105, 315)).toBe(b.view);
 
-  // A panel floating over the board, like the Kanban, opens over the page.
+  // A panel floating over the board, like run details, opens over the page.
   const panel = fixed("left: 120px; top: 320px; width: 30px; height: 20px; z-index: 20");
   b.canvas.append(panel);
   await vi.waitFor(() => expect(document.elementFromPoint(130, 330)).toBe(panel));

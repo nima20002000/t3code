@@ -1,11 +1,12 @@
+import type { Node, NodeProps } from "@xyflow/react";
+import type { KanbanPlacement } from "@t3tools/board-core/boardModel";
 import { KANBAN_STATUSES, type KanbanStatus } from "@t3tools/board-core/kanban";
-import { ClipboardListIcon, XIcon } from "lucide-react";
+import { ClipboardListIcon } from "lucide-react";
 import { useState } from "react";
 
-import { useKanbanCards, type Workflow } from "../boardStore";
-import { FloatingPanel } from "../FloatingPanel";
-import { Button } from "../upstream";
-import { IconButton } from "./IconButton";
+import { placeKanban, useCurrentWorkflow, useKanbanCards } from "./boardStore";
+import { BoardWindowFrame } from "./BoardWindows";
+import { Button } from "./upstream";
 
 const LABELS: Record<KanbanStatus, string> = {
   todo: "To do",
@@ -15,18 +16,39 @@ const LABELS: Record<KanbanStatus, string> = {
   done: "Done",
 };
 
+export const KANBAN_NODE_ID = ":kanban";
+
+/** The workflow's kanban as an object on the canvas, placed where the workflow keeps it. */
+export type KanbanFlowNode = Node<{ readonly runId: string | null }, "kanban">;
+
+export const DEFAULT_KANBAN_SIZE = { width: 900, height: 320 } as const;
+
+export function kanbanNode(
+  placement: KanbanPlacement,
+  runId: string | null,
+  selected: boolean,
+): KanbanFlowNode {
+  return {
+    id: KANBAN_NODE_ID,
+    type: "kanban",
+    position: { x: placement.x, y: placement.y },
+    width: placement.width,
+    height: placement.height,
+    zIndex: 5,
+    selected,
+    dragHandle: ".board-window-header",
+    data: { runId },
+  };
+}
+
 /**
- * The workflow's kanban as a window over the board: cards the orchestrator keeps, by status. It shows
- * `runId`'s cards and every open card; done cards of earlier runs stay folded until asked for.
+ * Cards the orchestrator keeps, by status. It shows `runId`'s cards and every open card; done
+ * cards of earlier runs stay folded until asked for.
  */
-export function BoardKanban(props: {
-  readonly workflow: Workflow;
-  readonly runId: string | null;
-  /** A new value (a run starting) returns the kanban to its band at the bottom. */
-  readonly dockKey: string | null;
-  readonly onClose: () => void;
-}) {
-  const allCards = useKanbanCards(props.workflow.id);
+export function BoardKanban({ data, selected }: NodeProps<KanbanFlowNode>) {
+  const workflow = useCurrentWorkflow();
+  const runId = data.runId;
+  const allCards = useKanbanCards(workflow.id);
   const [showEarlier, setShowEarlier] = useState(false);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const toggle = (id: string) =>
@@ -35,34 +57,32 @@ export function BoardKanban(props: {
       if (!next.delete(id)) next.add(id);
       return next;
     });
-  const earlier = allCards.filter((card) => card.status === "done" && card.runId !== props.runId);
+  const earlier = allCards.filter((card) => card.status === "done" && card.runId !== runId);
   const cards = showEarlier ? allCards : allCards.filter((card) => !earlier.includes(card));
   const nameOf = (nodeId: string | undefined) =>
-    props.workflow.nodes.find((node) => node.id === nodeId)?.name;
+    workflow.nodes.find((node) => node.id === nodeId)?.name;
   const moverName = (by: string) => (by === "engine" ? "board" : (nameOf(by) ?? "agent"));
   return (
-    <FloatingPanel
-      storageKey="board:kanban-panel"
+    <BoardWindowFrame
+      id={KANBAN_NODE_ID}
       label="Kanban"
-      className="right-3 bottom-3 left-3 h-[32%]"
-      resetKey={props.dockKey}
-      header={
+      selected={selected}
+      canFullScreen={false}
+      closeLabel="Remove kanban from board"
+      onClose={() => void placeKanban(null)}
+      title={
         <>
           <ClipboardListIcon className="size-3.5 text-muted-foreground" />
           <span className="text-sm font-medium">Kanban</span>
-          <small className="text-xs text-muted-foreground">
-            {props.runId ? "this run" : "all runs"}
-          </small>
-          <div className="flex-1" />
-          {earlier.length > 0 ? (
-            <Button size="xs" variant="ghost" onClick={() => setShowEarlier((value) => !value)}>
-              {showEarlier ? "Hide earlier runs" : `Earlier runs (${earlier.length})`}
-            </Button>
-          ) : null}
-          <IconButton label="Close kanban" onClick={props.onClose}>
-            <XIcon size={15} />
-          </IconButton>
+          <small className="text-xs text-muted-foreground">{runId ? "this run" : "all runs"}</small>
         </>
+      }
+      actions={
+        earlier.length > 0 ? (
+          <Button size="xs" variant="ghost" onClick={() => setShowEarlier((value) => !value)}>
+            {showEarlier ? "Hide earlier runs" : `Earlier runs (${earlier.length})`}
+          </Button>
+        ) : null
       }
     >
       <div className="grid min-h-0 flex-1 auto-cols-fr grid-flow-col gap-2 overflow-x-auto p-2">
@@ -120,6 +140,6 @@ export function BoardKanban(props: {
           );
         })}
       </div>
-    </FloatingPanel>
+    </BoardWindowFrame>
   );
 }

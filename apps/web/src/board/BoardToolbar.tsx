@@ -101,8 +101,8 @@ export function BoardTitle(props: {
 export function BoardToolbar(props: {
   readonly onRename: () => void;
   readonly onSelectRun: (runId: string | null) => void;
-  readonly kanban: boolean;
-  readonly onToggleKanban: () => void;
+  readonly kanbanOnBoard: boolean;
+  readonly onKanban: () => void;
   readonly onAddAgent: () => void;
 }) {
   const workflow = useCurrentWorkflow();
@@ -188,10 +188,8 @@ export function BoardToolbar(props: {
               onShowRun={props.onSelectRun}
             />
             <IconButton
-              label="Kanban"
-              variant={props.kanban ? "secondary" : "ghost"}
-              aria-pressed={props.kanban}
-              onClick={props.onToggleKanban}
+              label={props.kanbanOnBoard ? "Show kanban" : "Add kanban"}
+              onClick={props.onKanban}
             >
               <ClipboardListIcon />
             </IconButton>

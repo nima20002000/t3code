@@ -97,6 +97,8 @@ async function openBoard() {
         definition: { nodes, edges: [], settings: base.settings },
       },
     ],
+    // Put on the board far from the agents, as if by a viewer on a much larger screen.
+    kanban: { x: 1500, y: 1100, width: 700, height: 300 },
   };
   let eventController: ReadableStreamDefaultController<Uint8Array> | undefined;
   let sequence = 1;
@@ -108,6 +110,16 @@ async function openBoard() {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if ((input instanceof Request ? input.method : init?.method) === "POST") {
       posts.push(url.pathname);
+      if (url.pathname === "/api/board/workflows/board-seam") {
+        // Like the server: the kanban is placed, moved or taken off and every viewer hears of it.
+        const body = await new Request(input, init).text();
+        const { kanban } = JSON.parse(body) as { kanban: object | null };
+        const { kanban: _old, ...rest } = workflow;
+        const next = kanban ? { ...rest, kanban } : rest;
+        sequence += 1;
+        emit({ kind: "workflow.upserted", sequence, workflow: next });
+        return Response.json(next);
+      }
       if (url.pathname.endsWith("/chat/new")) {
         // Like the server: Scout's chat moves to a new thread, newer than its run's.
         const uses = posts.filter((path) => path === url.pathname).length;
@@ -135,7 +147,22 @@ async function openBoard() {
         sequence: 0,
         workspaces: [{ id: "workspace", name: "Workspace", folders: [] }],
         workflows: [workflow],
-        kanban: [],
+        kanban: [
+          {
+            workflowId: "board-seam",
+            cards: [
+              {
+                id: "card",
+                title: "Map the parser",
+                body: "",
+                status: "doing",
+                updatedBy: "scout",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                runId: "run",
+              },
+            ],
+          },
+        ],
         peers: [
           {
             id: "remote-peer",
@@ -186,7 +213,7 @@ async function openBoard() {
   };
 }
 
-it("shows Board in the chat layout, swaps the thread list for the board sidebar and mounts the node's real ChatView, where /new starts a new thread", async () => {
+it("shows Board in the chat layout, swaps the thread list for the board sidebar and mounts the node's real ChatView, where /new starts a new thread, and keeps the kanban on the board", async () => {
   // One test: the board's HTTP client keeps the first fetch it sees, so a second test's fake board API would never be called.
   await using board = await openBoard();
   const { screen, workflow, emit } = board;
@@ -194,6 +221,20 @@ it("shows Board in the chat layout, swaps the thread list for the board sidebar 
   await expect.element(screen.getByRole("navigation", { name: "Threads" })).not.toBeInTheDocument();
   await expect.element(screen.getByText("Scout", { exact: true })).toBeVisible();
   await vi.waitFor(() => expect(board.following()).toBe(true));
+  // The kanban kept far from the agents still opens in view, with its cards.
+  const kanban = screen.getByRole("region", { name: "Kanban" });
+  await expect.element(kanban.getByText("Map the parser")).toBeVisible();
+  const inView = () => {
+    const box = kanban.element().getBoundingClientRect();
+    const canvas = document.querySelector(".board-canvas")!.getBoundingClientRect();
+    return (
+      box.left >= canvas.left &&
+      box.top >= canvas.top &&
+      box.right <= canvas.right &&
+      box.bottom <= canvas.bottom
+    );
+  };
+  await vi.waitFor(() => expect(inView()).toBe(true));
   emit({
     kind: "workflow.upserted",
     sequence: 1,
@@ -256,4 +297,16 @@ it("shows Board in the chat layout, swaps the thread list for the board sidebar 
       remotePanel.getByText("Connect Remote machine in Connections to view and use this thread."),
     )
     .toBeVisible();
+
+  // Taken off the board and added back, for every viewer.
+  const workflowPath = "/api/board/workflows/board-seam";
+  await userEvent.click(kanban.getByRole("button", { name: "Remove kanban from board" }));
+  await expect.element(kanban).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Add kanban" }));
+  await expect
+    .element(screen.getByRole("region", { name: "Kanban" }).getByText("Map the parser"))
+    .toBeVisible();
+  await vi.waitFor(() => expect(inView()).toBe(true));
+  expect(boardPosts().filter((path) => path === workflowPath)).toHaveLength(2);
+  await expect.element(screen.getByRole("button", { name: "Show kanban" })).toBeVisible();
 });

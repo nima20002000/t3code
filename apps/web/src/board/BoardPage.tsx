@@ -68,7 +68,9 @@ import {
   type Workflow,
   useBoardPeers,
   type BoardNode,
+  type KanbanPlacement,
   activeRunOf,
+  placeKanban,
 } from "./boardStore";
 import { AgentHandles } from "./foreman/AgentHandles";
 import {
@@ -81,7 +83,13 @@ import { agentNodeSize, useFloatingCurve } from "./foreman/signalEdge";
 import { useHoverControls } from "./foreman/useHoverControls";
 import { claimBoardStartup } from "./BoardNavigation";
 import { BoardTitle, BoardToolbar } from "./BoardToolbar";
-import { BoardKanban } from "./toolbar/BoardKanban";
+import {
+  BoardKanban,
+  DEFAULT_KANBAN_SIZE,
+  KANBAN_NODE_ID,
+  kanbanNode,
+  type KanbanFlowNode,
+} from "./BoardKanban";
 import { useNodeRunViews } from "./toolbar/useNodeStatuses";
 import { useNodeConnections } from "./useNodeConnection";
 import { RunActivityCard, type ActivityTarget } from "./RunActivity";
@@ -251,7 +259,7 @@ function useHeldView(view: NodeRunView, held: boolean) {
 }
 
 type AgentFlowNode = Node<{ readonly node: BoardNode }, "agent">;
-type BoardFlowNode = AgentFlowNode | WindowFlowNode;
+type BoardFlowNode = AgentFlowNode | WindowFlowNode | KanbanFlowNode;
 
 function harnessOf(instanceId: string): "codex" | "claude" | "neutral" {
   const id = instanceId.toLowerCase();
@@ -503,7 +511,7 @@ function BoardWindowNode(props: BoardWindowProps) {
   }
 }
 
-const NODE_TYPES = { agent: AgentCard, window: BoardWindowNode };
+const NODE_TYPES = { agent: AgentCard, window: BoardWindowNode, kanban: BoardKanban };
 
 const EDGE_TYPES = { signal: SignalEdge };
 
@@ -571,20 +579,12 @@ export function BoardPage() {
   return <BoardCanvasPage key={workflow.id} />;
 }
 
-const KANBAN_OPEN_KEY = "board:kanban-open";
 const newestRunId = (workflow: Workflow) =>
   workflow.runs.reduce<{ id: string; startedAt: string } | null>(
     (newest, run) => (newest === null || run.startedAt > newest.startedAt ? run : newest),
     null,
   )?.id ?? null;
-/** The kanban starts closed, opens when a run starts, and the viewer's choice is remembered. */
-function readKanbanOpen() {
-  try {
-    return localStorage.getItem(KANBAN_OPEN_KEY) === "true";
-  } catch {
-    return false;
-  }
-}
+const FRAME_PADDING = { top: "72px", bottom: "48px", x: "48px" } as const;
 
 function BoardCanvasPage() {
   const workflow = useCurrentWorkflow();
@@ -593,8 +593,6 @@ function BoardCanvasPage() {
   const flights = useFlights(views.edges, edges);
   const [editingName, setEditingName] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const [kanban, setKanban] = useState(readKanbanOpen);
-  // When a run starts, the kanban returns to its band at the bottom and the agents are framed above it.
   const flow = useRef<ReactFlowInstance<BoardFlowNode, Edge> | null>(null);
   const canvas = useRef<HTMLDivElement>(null);
   const [fullScreenLayer, setFullScreenLayer] = useState<HTMLDivElement | null>(null);
@@ -609,34 +607,15 @@ function BoardCanvasPage() {
     };
   }, [fullScreenLayer]);
   const runningId = activeRunOf(workflow)?.id ?? null;
-  // Starts unseen, so opening a workflow whose run is live shows that run's kanban too.
-  const [seenRunId, setSeenRunId] = useState<string | null>(null);
-  if (runningId !== seenRunId) {
-    setSeenRunId(runningId);
-    if (runningId) setKanban(true);
-  }
+  // When a run starts, the agents (and the kanban, when it is on the board) are framed.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Frame React Flow's viewport when a run starts.
   useEffect(() => {
     if (!runningId) return;
     const frame = requestAnimationFrame(() => {
-      const kanbanPanel = canvas.current?.querySelector("aside[aria-label=Kanban]");
-      const kanbanHeight = kanbanPanel?.getBoundingClientRect().height ?? 0;
-      void flow.current?.fitView({
-        padding: { top: "72px", bottom: `${Math.round(kanbanHeight) + 32}px`, x: "48px" },
-        maxZoom: 1,
-        duration: 300,
-      });
+      void flow.current?.fitView({ padding: FRAME_PADDING, maxZoom: 1, duration: 300 });
     });
     return () => cancelAnimationFrame(frame);
   }, [runningId]);
-  const toggleKanban = (open: boolean) => {
-    setKanban(open);
-    try {
-      localStorage.setItem(KANBAN_OPEN_KEY, String(open));
-    } catch {
-      // Storage can be unavailable; the kanban then just starts closed.
-    }
-  };
   const selectedRun = workflow.runs.find((run) => run.id === selectedRunId) ?? null;
   const [flowNodes, setFlowNodes] = useState<AgentFlowNode[]>(() =>
     nodes.map((n) => toFlowNode(n)),
@@ -663,6 +642,74 @@ function BoardCanvasPage() {
   const atDrop = (node: BoardNode) => {
     const drop = dropped.get(node.id);
     return drop ? { ...node, x: drop.x, y: drop.y } : node;
+  };
+  // The kanban's spot while it is dragged or resized, then while it saves: any placement the store
+  // reports after the save was sent (this one, another viewer's, a fresh snapshot) takes over. Taken
+  // off the board mid-gesture, it stays off: the gesture's end is not saved.
+  type KanbanDraft = {
+    readonly placement: KanbanPlacement;
+    readonly sentOver?: KanbanPlacement | undefined;
+  };
+  const [kanbanDraft, setKanbanDraft] = useState<KanbanDraft | null>(null);
+  const [kanbanSelected, setKanbanSelected] = useState(false);
+  if (
+    kanbanDraft &&
+    ("sentOver" in kanbanDraft
+      ? workflow.kanban !== kanbanDraft.sentOver
+      : workflow.kanban === undefined)
+  ) {
+    setKanbanDraft(null);
+  }
+  const kanbanPlacement = kanbanDraft?.placement ?? workflow.kanban;
+  // An agent could carry the kanban's id; the kanban then stays off the canvas rather than hide it.
+  const kanbanIdFree = !nodes.some((node) => node.id === KANBAN_NODE_ID);
+  const kanbanFlowNode =
+    kanbanPlacement && kanbanIdFree
+      ? kanbanNode(kanbanPlacement, selectedRun?.id ?? newestRunId(workflow), kanbanSelected)
+      : null;
+  const saveKanban = (placement: KanbanPlacement) => {
+    const draft: KanbanDraft = { placement, sentOver: getCurrentWorkflow().kanban };
+    setKanbanDraft(draft);
+    void placeKanban(placement).then((saved) => {
+      if (!saved) setKanbanDraft((current) => (current === draft ? null : current));
+    });
+  };
+  const frameKanban = (all: boolean) =>
+    requestAnimationFrame(() => {
+      void flow.current?.fitView({
+        padding: FRAME_PADDING,
+        maxZoom: 1,
+        duration: 300,
+        ...(all ? {} : { nodes: [{ id: KANBAN_NODE_ID }] }),
+      });
+    });
+  // On the board: frame it. Off it: put it under the agents (or mid-view on an empty board).
+  const onKanban = () => {
+    if (kanbanFlowNode) {
+      frameKanban(false);
+      return;
+    }
+    const { width, height } = DEFAULT_KANBAN_SIZE;
+    let placement: KanbanPlacement;
+    if (nodes.length > 0) {
+      const left = Math.min(...nodes.map((node) => node.x));
+      const right = Math.max(...nodes.map((node) => node.x + agentNodeSize(node)));
+      const bottom = Math.max(...nodes.map((node) => node.y + agentNodeSize(node)));
+      placement = { x: (left + right) / 2 - width / 2, y: bottom + 64, width, height };
+    } else {
+      const box = canvas.current?.getBoundingClientRect();
+      const center = flow.current?.screenToFlowPosition({
+        x: (box?.left ?? 0) + (box?.width ?? 0) / 2,
+        y: (box?.top ?? 0) + (box?.height ?? 0) / 2,
+      }) ?? { x: 0, y: 0 };
+      placement = { x: center.x - width / 2, y: center.y - height / 2, width, height };
+    }
+    saveKanban({
+      ...placement,
+      x: Math.round(placement.x),
+      y: Math.round(placement.y),
+    });
+    frameKanban(true);
   };
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<ReadonlySet<string>>(new Set());
   const selectedEdge =
@@ -730,8 +777,15 @@ function BoardCanvasPage() {
     };
   });
 
-  // Windows live only on this canvas; agent changes go to the store.
-  const onNodesChange = (allChanges: NodeChange<BoardFlowNode>[]) => {
+  // Windows live only on this canvas; agent and kanban changes go to the store.
+  const onNodesChange = (everyChange: NodeChange<BoardFlowNode>[]) => {
+    const idOf = (change: NodeChange<BoardFlowNode>) =>
+      "id" in change ? change.id : change.item.id;
+    const isKanban = (change: NodeChange<BoardFlowNode>) =>
+      kanbanIdFree && idOf(change) === KANBAN_NODE_ID;
+    const kanbanChanges = everyChange.filter(isKanban) as NodeChange<KanbanFlowNode>[];
+    if (kanbanFlowNode && kanbanChanges.length > 0) onKanbanChanges(kanbanChanges, kanbanFlowNode);
+    const allChanges = everyChange.filter((change) => !isKanban(change));
     const isWindow = (change: NodeChange<BoardFlowNode>) =>
       windowNodes.some((window) => window.id === ("id" in change ? change.id : change.item.id));
     const windowChanges = allChanges.filter(isWindow) as NodeChange<WindowFlowNode>[];
@@ -775,6 +829,35 @@ function BoardCanvasPage() {
         removeNode(change.id);
       }
     }
+  };
+
+  const onKanbanChanges = (changes: NodeChange<KanbanFlowNode>[], current: KanbanFlowNode) => {
+    for (const change of changes) {
+      if (change.type === "select") setKanbanSelected(change.selected);
+      if (change.type === "remove") void placeKanban(null);
+    }
+    // Measuring the node is not a move; a drag or a resize is, and it is saved once it settles.
+    const moves = changes.filter(
+      (change) =>
+        change.type === "position" ||
+        (change.type === "dimensions" &&
+          (change.resizing !== undefined || change.setAttributes !== undefined)),
+    );
+    if (moves.length === 0) return;
+    const [next = current] = applyNodeChanges(moves, [current]);
+    const placement: KanbanPlacement = {
+      x: Math.round(next.position.x),
+      y: Math.round(next.position.y),
+      width: Math.round(next.width ?? current.width ?? DEFAULT_KANBAN_SIZE.width),
+      height: Math.round(next.height ?? current.height ?? DEFAULT_KANBAN_SIZE.height),
+    };
+    const moving = moves.some(
+      (change) =>
+        (change.type === "position" && change.dragging === true) ||
+        (change.type === "dimensions" && change.resizing === true),
+    );
+    if (moving) setKanbanDraft({ placement });
+    else saveKanban(placement);
   };
 
   const onEdgesChange = (changes: EdgeChange[]) => {
@@ -935,8 +1018,8 @@ function BoardCanvasPage() {
           <BoardToolbar
             onRename={() => setEditingName(true)}
             onSelectRun={setSelectedRunId}
-            kanban={kanban}
-            onToggleKanban={() => toggleKanban(!kanban)}
+            kanbanOnBoard={kanbanFlowNode !== null}
+            onKanban={onKanban}
             onAddAgent={() => setAddingAgent(true)}
           />
         </div>
@@ -951,7 +1034,11 @@ function BoardCanvasPage() {
           <RunViewsProvider views={views} flights={flights}>
             <ReactFlow
               className="absolute! inset-0"
-              nodes={[...displayedNodes, ...openWindows]}
+              nodes={[
+                ...displayedNodes,
+                ...(kanbanFlowNode ? [kanbanFlowNode] : []),
+                ...openWindows,
+              ]}
               edges={flowEdges}
               nodeTypes={NODE_TYPES}
               edgeTypes={EDGE_TYPES}
@@ -981,14 +1068,6 @@ function BoardCanvasPage() {
             </ReactFlow>
           </RunViewsProvider>
         </BoardWindowsProvider>
-        {kanban ? (
-          <BoardKanban
-            workflow={workflow}
-            runId={selectedRun?.id ?? newestRunId(workflow)}
-            dockKey={runningId}
-            onClose={() => toggleKanban(false)}
-          />
-        ) : null}
         {selectedRun ? (
           <RunDetails run={selectedRun} onClose={() => setSelectedRunId(null)} />
         ) : null}

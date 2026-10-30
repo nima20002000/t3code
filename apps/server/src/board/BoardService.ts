@@ -372,8 +372,12 @@ const make = Effect.gen(function* () {
     return yield* store.transaction(
       Effect.gen(function* () {
         const workflow = yield* getWorkflow(id);
-        yield* checkEditable(workflow);
-        return yield* save({ ...workflow, ...input });
+        const { kanban, ...edits } = input;
+        // The kanban is layout, not the workflow a run follows, so it moves during a run too.
+        if (Object.keys(edits).length > 0) yield* checkEditable(workflow);
+        const { kanban: _placed, ...rest } = workflow;
+        const placed = kanban === undefined ? workflow.kanban : (kanban ?? undefined);
+        return yield* save({ ...rest, ...edits, ...(placed ? { kanban: placed } : {}) });
       }),
     );
   });
