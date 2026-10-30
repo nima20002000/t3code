@@ -11,6 +11,7 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION,
   type EnvironmentId,
 } from "@t3tools/contracts";
+import { BOARD_CLIENT_LABEL } from "@t3tools/board-core";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -132,7 +133,7 @@ export const pair = Effect.fn("PeerPairing.pair")(function* (input: {
       requested_token_type: AuthAccessTokenType,
       // Everything the link grants, so the hub can also let its own windows in (BoardPeers.windowPairing).
       scope: AuthStandardClientScopes.join(" "),
-      client_label: "T3 Code Board",
+      client_label: BOARD_CLIENT_LABEL,
       client_device_type: "bot",
     }),
   }).pipe(Effect.mapError((cause) => new PeerPairingError({ stage: "exchange", cause })));

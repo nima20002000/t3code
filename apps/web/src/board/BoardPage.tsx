@@ -264,11 +264,6 @@ function useHeldView(view: NodeRunView, held: boolean) {
 type AgentFlowNode = Node<{ readonly node: BoardNode }, "agent">;
 type BoardFlowNode = AgentFlowNode | WindowFlowNode | KanbanFlowNode;
 
-function harnessOf(instanceId: string): "codex" | "claude" | "neutral" {
-  const id = instanceId.toLowerCase();
-  return id.includes("codex") ? "codex" : id.includes("claude") ? "claude" : "neutral";
-}
-
 const MIN_NODE_SIZE = 140;
 const MAX_NODE_SIZE = 520;
 
@@ -338,7 +333,6 @@ function AgentCard({ data, selected, width }: NodeProps<AgentFlowNode>) {
   return (
     <AgentNodeView
       name={node.name}
-      harness={harnessOf(instanceId)}
       harnessLabel={instanceId}
       model={node.modelSelection.model}
       machine={machine}

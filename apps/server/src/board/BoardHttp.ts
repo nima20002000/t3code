@@ -17,6 +17,7 @@ import * as Stream from "effect/Stream";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import type { SqlError } from "effect/sql/SqlError";
 import * as AgentSchedules from "./AgentSchedules.ts";
+import * as BoardMembership from "./BoardMembership.ts";
 import * as BoardScheduler from "./BoardScheduler.ts";
 import * as BoardPeers from "./BoardPeers.ts";
 import * as BoardService from "./BoardService.ts";
@@ -135,6 +136,9 @@ const handlers = HttpApiBuilder.group(
       .handle("listPeers", () => read(board.listPeers()))
       .handle("pairPeer", ({ payload }) => operate(peers.pair(payload)))
       .handle("getTailscale", () => maintain(TailscaleJoin.status()))
+      .handle("getMembership", () =>
+        read(BoardMembership.membership(board).pipe(Effect.catch(internalFailure))),
+      )
       .handle("joinTailscale", ({ payload }) => maintain(TailscaleJoin.join(payload.authKey)))
       .handle("pairPeerWindow", ({ params }) =>
         AuthHttp.requireEnvironmentScope(AuthOrchestrationReadScope).pipe(

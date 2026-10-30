@@ -13,10 +13,6 @@
   --focus: var(--ring);
   --danger: var(--destructive);
   --danger-border: color-mix(in srgb, var(--destructive) 45%, var(--border));
-  --harness-codex: #2f66d6;
-  --harness-claude: #c4531f;
-  --harness-neutral: #5f6680;
-  --on-harness: #ffffff;
   --signal-task: #0b8f74;
   --signal-return: #8a5a14;
   --shadow-popover: 0 8px 24px #0000001f;
@@ -35,10 +31,6 @@
   --type-eyebrow-tracking: 0.08em;
   color: var(--text);
   .dark & {
-    --harness-codex: #6aa5ff;
-    --harness-claude: #ff9a6c;
-    --harness-neutral: #a3adc6;
-    --on-harness: #0b1020;
     --signal-task: #3ee6bd;
     --signal-return: #ffb55c;
     --shadow-popover: 0 8px 24px #00000066;
@@ -104,7 +96,8 @@
 }
 @utility n-agent {
   --agent-size: 212px;
-  --agent-hue: var(--harness-neutral);
+  /* One accent for every agent: the provider is in the tooltip, not the color. */
+  --agent-hue: var(--primary);
   --wave: var(--agent-hue);
   position: relative;
   width: var(--agent-size);
@@ -112,12 +105,6 @@
   color: var(--text);
   font-family: var(--font-sans);
   isolation: isolate;
-  &[data-harness="codex"] {
-    --agent-hue: var(--harness-codex);
-  }
-  &[data-harness="claude"] {
-    --agent-hue: var(--harness-claude);
-  }
   .react-flow__node-agent & {
     width: 100%;
     height: 100%;
@@ -150,38 +137,25 @@
   &[data-state="unavailable"] .n-agent-core {
     opacity: 0.7;
   }
+  /* Quiet live states: the rim and status word carry the state, no glow or tinted fill. */
   &[data-state="running"] .n-agent-core {
-    border-color: color-mix(in srgb, var(--agent-hue) 70%, var(--border));
-    background: color-mix(in srgb, var(--agent-hue) 9%, var(--surface-raised));
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--agent-hue) 24%, transparent),
-      0 0 24px color-mix(in srgb, var(--agent-hue) 14%, transparent);
+    border-color: color-mix(in srgb, var(--agent-hue) 55%, var(--border));
   }
   &[data-state="queued"] .n-agent-energy {
-    opacity: 0.35;
+    opacity: 0.25;
   }
   &[data-state="running"] .n-agent-energy {
-    opacity: 1;
-  }
-  /* Waiting on someone else: the field turns amber and slows down. */
-  &[data-state="waiting"] .n-agent-energy {
-    --agent-hue: var(--warning);
-    opacity: 0.75;
+    opacity: 0.7;
   }
   &[data-state="waiting"] .n-agent-core {
-    border-color: color-mix(in srgb, var(--warning) 55%, var(--border));
+    border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
   }
   /* Approved: the answer came back; the field turns green until the agent resumes. */
   &[data-state="approved"] .n-agent-status {
     color: var(--success);
   }
   &[data-state="approved"] .n-agent-core {
-    border-color: color-mix(in srgb, var(--success) 60%, var(--border));
-    background: color-mix(in srgb, var(--success) 6%, var(--surface-raised));
-  }
-  &[data-state="approved"] .n-agent-energy {
-    --agent-hue: var(--success);
-    opacity: 0.85;
+    border-color: color-mix(in srgb, var(--success) 40%, var(--border));
   }
   /* Arrival bang: rings and sparks leave the rim in the color of what arrived. */
   &[data-transition="ask"],
@@ -254,9 +228,9 @@
   flex-direction: column;
   align-items: center;
   padding: 30px 0 0;
-  border: 1px solid color-mix(in srgb, var(--agent-hue) 35%, var(--border));
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-full);
-  background: color-mix(in srgb, var(--agent-hue) 4%, var(--surface-raised));
+  background: var(--surface-raised);
   color: inherit;
   font: inherit;
   cursor: inherit;
@@ -335,7 +309,6 @@
   }
 }
 
-/* Energy field: a harness-colored light circling a running agent. Decoration only. */
 /* The agent's role and machine under its name. */
 @utility n-agent-role {
   flex-shrink: 0;
@@ -369,7 +342,7 @@
   height: 30px;
   place-items: center;
   padding: 0;
-  border: 1px solid color-mix(in srgb, var(--agent-hue) 30%, var(--border));
+  border: 1px solid var(--border);
   border-radius: var(--radius-full);
   background: transparent;
   color: var(--text-muted);
@@ -448,6 +421,7 @@
   }
 }
 
+/* Energy field: a light circling a running agent. Decoration only. */
 @utility n-agent-energy {
   position: absolute;
   inset: -10px;
@@ -458,7 +432,7 @@
   background: radial-gradient(
     closest-side,
     transparent 88%,
-    color-mix(in srgb, var(--agent-hue) 22%, transparent) 94%,
+    color-mix(in srgb, var(--agent-hue) 12%, transparent) 94%,
     transparent 100%
   );
   transition: opacity 400ms ease;
@@ -468,7 +442,6 @@
     inset: 7px;
     border: 1px solid color-mix(in srgb, var(--agent-hue) 60%, transparent);
     border-radius: inherit;
-    box-shadow: 0 0 14px color-mix(in srgb, var(--agent-hue) 26%, transparent);
     opacity: 0.3;
   }
   &::after {
@@ -511,9 +484,7 @@
     border-radius: inherit;
     /* Rings show only while they animate out; one a cue doesn't animate must not linger. */
     opacity: 0;
-    box-shadow:
-      0 0 22px color-mix(in srgb, var(--wave) 55%, transparent),
-      inset 0 0 18px color-mix(in srgb, var(--wave) 30%, transparent);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--wave) 30%, transparent);
   }
   & i {
     position: absolute;
@@ -859,8 +830,8 @@
   }
   30% {
     box-shadow:
-      0 0 0 7px color-mix(in srgb, var(--wave) 30%, transparent),
-      0 0 52px color-mix(in srgb, var(--wave) 50%, transparent);
+      0 0 0 5px color-mix(in srgb, var(--wave) 20%, transparent),
+      0 0 20px color-mix(in srgb, var(--wave) 22%, transparent);
   }
   100% {
     box-shadow: 0 0 0 0 transparent;
@@ -917,8 +888,8 @@
   }
   30% {
     box-shadow:
-      0 0 0 6px color-mix(in srgb, var(--agent-hue) 28%, transparent),
-      0 0 48px color-mix(in srgb, var(--agent-hue) 45%, transparent);
+      0 0 0 5px color-mix(in srgb, var(--agent-hue) 18%, transparent),
+      0 0 20px color-mix(in srgb, var(--agent-hue) 20%, transparent);
   }
   100% {
     box-shadow:

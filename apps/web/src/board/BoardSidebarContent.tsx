@@ -7,7 +7,14 @@ import {
   SettingsIcon,
   WorkflowIcon,
 } from "lucide-react";
-import { useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
 
 import {
   createWorkflowIn,
@@ -19,6 +26,7 @@ import {
   useBoardState,
   useBoardWorkspaces,
 } from "./boardStore";
+import { runBoardApi } from "./boardApi";
 import { markSettingsFromBoard } from "./BoardNavigation";
 import { nextFreeName } from "./boardState";
 import {
@@ -97,6 +105,28 @@ function Row(props: {
   );
 }
 
+/** Whether this computer is already on a board; null until known. Rechecked when the app regains focus. */
+function useOnBoard(enabled: boolean): boolean | null {
+  const [onBoard, setOnBoard] = useState<boolean | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks this computer's server, and asks again on focus since a hub can add it meanwhile
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    const check = () =>
+      runBoardApi((client) => client.getMembership({ headers: {} }), controller.signal).then(
+        (membership) => setOnBoard(membership.onBoard),
+        () => undefined,
+      );
+    void check();
+    window.addEventListener("focus", check);
+    return () => {
+      controller.abort();
+      window.removeEventListener("focus", check);
+    };
+  }, [enabled]);
+  return onBoard;
+}
+
 /**
  * The board's own sidebar (t3's thread sidebar is replaced on /board): workspaces with their
  * workflows. Its edge follows the pointer down to an icon rail; labels fade with the width.
@@ -109,6 +139,8 @@ export function BoardSidebarPanel() {
     takeJoinBoardReopen() ? { kind: "join-board" } : null,
   );
   const close = () => setDialog(null);
+  // Only a fresh computer that no board has added yet offers to join one.
+  const onBoard = useOnBoard(isElectron);
   const navigate = useNavigate();
   const [width, setWidth] = useState(() => readWidth(WIDTH_KEY, DEFAULT_OPEN));
   const [dragging, setDragging] = useState(false);
@@ -321,7 +353,7 @@ export function BoardSidebarPanel() {
         ))}
       </nav>
       <div className="shrink-0 p-2">
-        {isElectron ? (
+        {isElectron && (onBoard === false || dialog?.kind === "join-board") ? (
           <Row
             icon={<MonitorUpIcon className="size-4" />}
             label="Add to a board"

@@ -21,13 +21,12 @@ export interface AgentNodeAction {
 }
 
 /**
- * Adapted from Foreman Code's AgentNodeView (shared/ui/nocturne/Canvas.tsx): a circle with harness
- * rim, status word and one-shot transition cues. It shows only the status, name, role and machine,
+ * Adapted from Foreman Code's AgentNodeView (shared/ui/nocturne/Canvas.tsx): a circle with a
+ * status rim, status word and one-shot transition cues. It shows only the status, name, role and machine,
  * with its action buttons inside the circle; harness and model are in the name's tooltip.
  */
 export function AgentNodeView({
   name,
-  harness,
   harnessLabel,
   model,
   machine,
@@ -43,7 +42,6 @@ export function AgentNodeView({
   children,
 }: {
   name: string;
-  harness: "codex" | "claude" | "neutral";
   harnessLabel: string;
   model?: string | null;
   machine: string;
@@ -68,7 +66,6 @@ export function AgentNodeView({
       style={size === undefined ? undefined : ({ "--agent-size": `${size}px` } as CSSProperties)}
       data-state={state}
       data-transition={transition}
-      data-harness={harness}
       data-selected={selected || undefined}
       data-hovered={hover.hovered || undefined}
       onPointerEnter={hover.onPointerEnter}

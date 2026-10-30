@@ -177,6 +177,11 @@ export const BoardTailscaleStatusSchema = Schema.Struct({
   tailnet: Schema.NullOr(Schema.String),
 });
 export type BoardTailscaleStatus = typeof BoardTailscaleStatusSchema.Type;
+/** The client label a hub pairs with, so a computer can tell a board already added it. */
+export const BOARD_CLIENT_LABEL = "T3 Code Board";
+/** Whether this computer is already part of a board: it has machines, or a board added it. */
+export const BoardMembershipSchema = Schema.Struct({ onBoard: Schema.Boolean });
+export type BoardMembership = typeof BoardMembershipSchema.Type;
 export const BoardJoinTailscaleInput = Schema.Struct({ authKey: TrimmedNonEmptyString });
 
 export const BoardPeerSchema = Schema.Struct({
@@ -724,6 +729,13 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
     HttpApiEndpoint.get("getTailscale", "/tailscale", {
       headers: OptionalAuthHeaders,
       success: BoardTailscaleStatusSchema,
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.get("getMembership", "/membership", {
+      headers: OptionalAuthHeaders,
+      success: BoardMembershipSchema,
       error: Errors,
     }),
   )

@@ -135,6 +135,10 @@ it.live("authenticates paired clients and streams committed board events", () =>
           const cookie = session.headers.getSetCookie()[0]?.split(";", 1)[0];
           assert.isDefined(cookie);
           assert.strictEqual((await call(get("/api/board/snapshot", cookie))).status, 200);
+          // A fresh computer: no machines, and no board has paired with it yet.
+          const membership = await call(get("/api/board/membership", cookie));
+          assert.strictEqual(membership.status, 200);
+          assert.deepStrictEqual(await membership.json(), { onBoard: false });
           const stream = await call(get("/api/board/events?afterSequence=0", cookie));
           assert.strictEqual(stream.status, 200);
           assert.include(stream.headers.get("content-type"), "text/event-stream");
