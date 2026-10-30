@@ -250,6 +250,12 @@ const make = Effect.gen(function* () {
     input: BoardSaveNodeScheduleInput,
   ) {
     const { workflow, node } = yield* findNode(workflowId, nodeId);
+    // Reach the agent's machine before opening its chat there, so an offline one is reported as such.
+    yield* readTask(
+      yield* driverFor(node.environmentId, "save the schedule"),
+      { environmentId: node.environmentId, taskId: taskIdFor(workflowId, nodeId) },
+      "save the schedule",
+    );
     const opened = (yield* engine.openNodeChat(workflowId, nodeId)).chat;
     if (!opened) return yield* new BoardInternalError({ message: "The agent has no chat." });
     if (node.schedule && node.schedule.environmentId !== opened.environmentId)

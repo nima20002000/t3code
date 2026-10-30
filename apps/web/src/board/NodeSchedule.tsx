@@ -54,13 +54,15 @@ export function NodeScheduleButton({ node }: { readonly node: BoardNode }) {
   const [draft, setDraft] = useState<ScheduleForm | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const run = async (action: () => Promise<unknown>) => {
+  /** `saved` is the form a save sends; once it lands, the editor shows the task again. */
+  const run = async (action: () => Promise<unknown>, saved?: ScheduleForm) => {
     if (busy) return;
     setBusy(true);
     setError(null);
     try {
       await action();
-      setDraft(null);
+      // Edits made while it was saving stay.
+      if (saved) setDraft((current) => (current === saved ? null : current));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -159,7 +161,7 @@ function ScheduleEditor(props: {
   readonly onChange: (form: ScheduleForm) => void;
   readonly busy: boolean;
   readonly error: string | null;
-  readonly run: (action: () => Promise<unknown>) => Promise<void>;
+  readonly run: (action: () => Promise<unknown>, saved?: ScheduleForm) => Promise<void>;
 }) {
   const { node, task, form, busy, error, run } = props;
   const input = scheduleInput(form);
@@ -229,7 +231,7 @@ function ScheduleEditor(props: {
           size="sm"
           disabled={input === null || busy}
           onClick={() => {
-            if (input) void run(() => saveNodeSchedule(node.id, input));
+            if (input) void run(() => saveNodeSchedule(node.id, input), form);
           }}
         >
           {task ? "Save schedule" : "Schedule"}

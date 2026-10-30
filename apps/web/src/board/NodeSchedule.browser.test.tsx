@@ -9,6 +9,7 @@ import { render } from "../../test/render";
 import { NodeScheduleButton } from "./NodeSchedule";
 
 const save = vi.hoisted(() => ({ reject: (_error: Error) => {} }));
+const machine = vi.hoisted(() => ({ tasks: [] as unknown[] }));
 
 vi.mock("./boardStore", () => ({
   saveNodeSchedule: () =>
@@ -32,7 +33,10 @@ vi.mock("./upstream", () => ({
     cloneElement(props.render, {}, props.children),
   PopoverPopup: (props: { children: ReactNode }) => <div>{props.children}</div>,
   serverEnvironment: { scheduledTasksLive: () => null },
-  useEnvironmentQuery: () => ({ data: null, dataUpdatedAt: 0 }),
+  useEnvironmentQuery: () =>
+    machine.tasks.length === 0
+      ? { data: null, dataUpdatedAt: 0 }
+      : { data: { tasks: machine.tasks }, dataUpdatedAt: 1 },
 }));
 
 const environmentId = EnvironmentId.make("vps");
@@ -49,6 +53,7 @@ const node = (schedule?: BoardNode["schedule"]): BoardNode => ({
 });
 
 it("keeps what was typed and shows the error when the machine refuses the schedule", async () => {
+  machine.tasks = [];
   // The popover needs no routes.
   await using screen = await render(<NodeScheduleButton node={node()} />, { router: false });
   await userEvent.fill(screen.getByPlaceholder("What should the agent do each time?"), "Check in");
@@ -63,4 +68,27 @@ it("keeps what was typed and shows the error when the machine refuses the schedu
   await expect
     .element(screen.getByPlaceholder("What should the agent do each time?"))
     .toHaveValue("Check in");
+});
+
+it("keeps an unsaved edit when the schedule is paused", async () => {
+  const taskId = ScheduledTaskId.make("task");
+  machine.tasks = [
+    {
+      id: taskId,
+      prompt: "Old prompt",
+      enabled: true,
+      runCount: 1,
+      maxRuns: 3,
+      nextRunAt: "2026-01-01T10:00:00.000Z",
+      threadId: "chat",
+      schedule: { type: "interval", everyMs: 60_000 },
+    },
+  ];
+  await using screen = await render(<NodeScheduleButton node={node({ environmentId, taskId })} />, {
+    router: false,
+  });
+  const prompt = screen.getByPlaceholder("What should the agent do each time?");
+  await userEvent.fill(prompt, "New prompt");
+  await userEvent.click(screen.getByRole("button", { name: "Pause" }));
+  await expect.element(prompt).toHaveValue("New prompt");
 });
