@@ -8,7 +8,7 @@ import {
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { BotIcon, PlusIcon, XIcon } from "lucide-react";
 import { useStore } from "@xyflow/react";
-import { type ReactNode, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { BoardWindowFrame, useBoardWindows, windowId, type BoardWindowProps } from "./BoardWindows";
 import { useCurrentWorkflow, type BoardNode } from "./boardStore";
@@ -29,7 +29,6 @@ import {
   usePrimaryEnvironmentId,
   useThreadTerminalActions,
   withDesktopTab,
-  HostSetupRunnerContext,
 } from "./upstream";
 
 /**
@@ -87,28 +86,6 @@ export function useAgentTools(node: BoardNode) {
           }),
       });
     },
-    /**
-     * Runs a command in a fresh terminal on the agent's machine, in a window of its own, so it never
-     * lands in whatever the agent's terminal is running. A setup already open is just shown.
-     */
-    runInTerminal: terminals.canWrite()
-      ? (command: string) => {
-          if (windows.fullScreen !== null) windows.setFullScreen(null);
-          if (windows.isOpen(windowId("setup", node.id))) return windows.open("setup", node.id);
-          const launched = terminals.launchTerminal({
-            place: (terminalId) =>
-              windows.open("setup", node.id, {
-                terminalId,
-                terminalThreadId: threadRef.threadId,
-                terminalEnvironmentId: threadRef.environmentId,
-              }),
-          });
-          void launched?.result.then((opened) => {
-            if (opened._tag === "Success")
-              terminals.writeToTerminal(launched.terminalId, `${command}\n`);
-          });
-        }
-      : null,
     openBrowser: () => {
       if (tabs.length > 0) return windows.open("browser", node.id);
       void openTab(threadRef).then((opened) => {
@@ -116,16 +93,6 @@ export function useAgentTools(node: BoardNode) {
       });
     },
   };
-}
-
-/** A browser's host setup (such as sudo t3 browser setup) runs in the agent's terminal window. */
-function SetupInAgentTerminal(props: { readonly node: BoardNode; readonly children: ReactNode }) {
-  const tools = useAgentTools(props.node);
-  return (
-    <HostSetupRunnerContext value={tools?.runInTerminal ?? null}>
-      {props.children}
-    </HostSetupRunnerContext>
-  );
 }
 
 /** The agent's browser, live: it follows the tab the agent touched last unless one is picked. */
@@ -247,15 +214,13 @@ export function BrowserWindow({ id, data, selected }: BoardWindowProps) {
         </button>
       </div>
       {tabId ? (
-        <SetupInAgentTerminal node={node}>
-          <PreviewPanel
-            mode="embedded"
-            threadRef={threadRef}
-            tabId={tabId}
-            configuredUrls={[]}
-            visible
-          />
-        </SetupInAgentTerminal>
+        <PreviewPanel
+          mode="embedded"
+          threadRef={threadRef}
+          tabId={tabId}
+          configuredUrls={[]}
+          visible
+        />
       ) : (
         <div className="grid content-start gap-3 p-4 text-sm">
           <p className="text-muted-foreground">{node.name} has no browser tab open.</p>
@@ -287,12 +252,11 @@ export function TerminalWindow({ id, data, selected }: BoardWindowProps) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const windows = useBoardWindows();
   const terminalId = data.terminalId;
-  const title = data.kind === "setup" ? "browser setup" : "terminal";
   if (!node || !threadRef || !terminalId) return null;
   return (
     <BoardWindowFrame
       id={id}
-      label={`${node.name} ${title}`}
+      label={`${node.name} terminal`}
       canFullScreen={false}
       selected={selected}
       onClose={() => {
@@ -300,9 +264,7 @@ export function TerminalWindow({ id, data, selected }: BoardWindowProps) {
         windows.close(id);
       }}
       title={
-        <span className="min-w-0 truncate px-1 text-sm font-medium">
-          {node.name} {title}
-        </span>
+        <span className="min-w-0 truncate px-1 text-sm font-medium">{node.name} terminal</span>
       }
     >
       <PersistentThreadTerminalPanel

@@ -142,10 +142,19 @@ export type PreviewRuntime = typeof PreviewRuntime.Type;
 
 /** JSON reason for preview stream close code 4503; must fit the 123-byte close-reason limit. */
 export const PreviewStreamHostSetup = Schema.Struct({
-  need: Schema.Literals(["sandbox", "libraries"]),
+  /** "browser": headed mode lacks Google Chrome or a display. */
+  need: Schema.Literals(["sandbox", "libraries", "browser"]),
   command: Schema.String,
 });
 export type PreviewStreamHostSetup = typeof PreviewStreamHostSetup.Type;
+
+/** The server runs its own browser setup with `sudo -n`; without passwordless sudo it hands back the command. */
+export const PreviewSetupHostResult = Schema.Union([
+  Schema.TaggedStruct("Ready", { ranSetup: Schema.Boolean }),
+  Schema.TaggedStruct("NeedsPassword", { command: Schema.String }),
+  Schema.TaggedStruct("Failed", { command: Schema.String, detail: Schema.String }),
+]);
+export type PreviewSetupHostResult = typeof PreviewSetupHostResult.Type;
 export const PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE = 4503;
 
 export const PreviewSessionSnapshot = Schema.Struct({

@@ -783,6 +783,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["allow disable enable open drive preview tools sessions project override"],
   },
   {
+    id: "server-browser-mode",
+    title: "Browser for paired machines",
+    to: "/settings/browser",
+    scope: "environment-defaults",
+    searchTerms: ["headless headed visible google chrome vnc display xvfb server remote bot"],
+  },
+  {
+    id: "server-browser-proxy",
+    title: "Browser proxy",
+    to: "/settings/browser",
+    scope: "environment-defaults",
+    searchTerms: ["proxy http socks ip address server remote browser only"],
+  },
+  {
     id: "device-hosts",
     title: "Device hosts",
     to: "/settings/devices",

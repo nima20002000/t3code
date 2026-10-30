@@ -59,7 +59,6 @@ export {
 } from "../providerInstances";
 export { useRightPanelStore } from "../rightPanelStore";
 export { ComposerHandleContext, type ComposerHandleRef } from "../composerHandleContext";
-export { HostSetupRunnerContext } from "../browser/hostSetupRunner";
 export {
   ComposerNewThreadContext,
   type ComposerNewThreadSettings,

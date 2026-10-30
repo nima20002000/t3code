@@ -279,6 +279,13 @@ export const BrowserCustomSearchUrl = Schema.String.check(
   Schema.isMaxLength(BROWSER_CUSTOM_SEARCH_URL_MAX_LENGTH),
 );
 
+/** How a server runs its own agent browser: T3's headless shell, or a visible Google Chrome on a display. */
+export const ServerBrowserMode = Schema.Literals(["headless", "headed"]);
+export type ServerBrowserMode = typeof ServerBrowserMode.Type;
+export const DEFAULT_SERVER_BROWSER_MODE: ServerBrowserMode = "headless";
+/** A proxy URL for the server's agent browser only, such as `http://127.0.0.1:3128`; empty for none. */
+export const ServerBrowserProxy = TrimmedString.check(Schema.isMaxLength(2048));
+
 export const LoadBalancingWeights = Schema.Record(
   TrimmedNonEmptyString,
   Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
@@ -1123,6 +1130,10 @@ export const ServerSettings = Schema.Struct({
   ),
 
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  serverBrowserMode: ServerBrowserMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SERVER_BROWSER_MODE)),
+  ),
+  serverBrowserProxy: ServerBrowserProxy.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   projectAgentBrowserAccessOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1473,6 +1484,8 @@ export const ServerSettingsPatch = Schema.Struct({
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
+  serverBrowserMode: Schema.optionalKey(ServerBrowserMode),
+  serverBrowserProxy: Schema.optionalKey(ServerBrowserProxy),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),

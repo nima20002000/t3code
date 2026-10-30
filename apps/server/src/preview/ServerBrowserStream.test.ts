@@ -23,7 +23,7 @@ import { HttpRouter, HttpServer } from "effect/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
-import { routeLayer } from "./ServerBrowserStream.ts";
+import { hostSetupCloseReason, routeLayer } from "./ServerBrowserStream.ts";
 
 const platformLayer = NodeHttpPlatform.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -89,6 +89,7 @@ it.effect.each([
     const browser = ServerBrowser.ServerBrowser.of({
       clearProfile: () => Effect.void,
       reportProfiles: () => Effect.void,
+      setupHost: Effect.die("unused"),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: () => Effect.succeed(false),
       attachViewer: (input) =>
@@ -164,6 +165,7 @@ it.effect("sends replies ahead of stale frames and only the newest frame after a
     const browser = ServerBrowser.ServerBrowser.of({
       clearProfile: () => Effect.void,
       reportProfiles: () => Effect.void,
+      setupHost: Effect.die("unused"),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: () => Effect.succeed(false),
       attachViewer: () => Effect.succeed({ output, input: () => Effect.void }),
@@ -235,6 +237,7 @@ it.effect.each([
     const browser = ServerBrowser.ServerBrowser.of({
       clearProfile: () => Effect.void,
       reportProfiles: () => Effect.void,
+      setupHost: Effect.die("unused"),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: () => Effect.succeed(false),
       attachViewer: () => {
@@ -276,6 +279,7 @@ it.effect("serves a tab's download only to an authorized session", () =>
     const browser = ServerBrowser.ServerBrowser.of({
       clearProfile: () => Effect.void,
       reportProfiles: () => Effect.void,
+      setupHost: Effect.die("unused"),
       openDownload: (input) =>
         Effect.sync(() => {
           requests.push(input);
@@ -324,6 +328,7 @@ it.effect("passes uploaded files to the page's open picker and needs operate sco
     const browser = ServerBrowser.ServerBrowser.of({
       clearProfile: () => Effect.void,
       reportProfiles: () => Effect.void,
+      setupHost: Effect.die("unused"),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: (input) =>
         Effect.sync(() => {
@@ -393,6 +398,7 @@ it.effect.each([
     const browser = ServerBrowser.ServerBrowser.of({
       clearProfile: () => Effect.void,
       reportProfiles: () => Effect.void,
+      setupHost: Effect.die("unused"),
       openDownload: () => Effect.succeedNone,
       answerFileChooser: () => Effect.succeed(false),
       attachViewer: () => Effect.fail(new ServerBrowser.ServerBrowserLaunchError({ cause: error })),
@@ -432,3 +438,16 @@ it.effect.each([
     });
   }).pipe(Effect.scoped),
 );
+
+it("keeps a headed setup reason within the 123 bytes a close frame carries", () => {
+  const long =
+    'sudo env "PATH=$PATH" /home/someone/.t3/runtime/versions/0.1.3-board.4/t3 browser setup --mode headed';
+  const reason = hostSetupCloseReason({ need: "browser", command: long });
+  expect(new TextEncoder().encode(reason).length).toBeLessThanOrEqual(123);
+  expect(JSON.parse(reason)).toEqual({
+    need: "browser",
+    command: "sudo t3 browser setup --mode headed",
+  });
+  const short = hostSetupCloseReason({ need: "sandbox", command: "sudo t3 browser setup" });
+  expect(JSON.parse(short)).toEqual({ need: "sandbox", command: "sudo t3 browser setup" });
+});
