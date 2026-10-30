@@ -277,6 +277,12 @@ export class BoardConflictError extends Schema.TaggedError<BoardConflictError>()
   { message: Schema.String },
   { httpApiStatus: 409 },
 ) {}
+/** The agent's machine could not be reached, so nothing was changed there. */
+export class BoardMachineUnavailableError extends Schema.TaggedError<BoardMachineUnavailableError>()(
+  "BoardMachineUnavailableError",
+  { message: Schema.String },
+  { httpApiStatus: 503 },
+) {}
 export class BoardInternalError extends Schema.TaggedError<BoardInternalError>()(
   "BoardInternalError",
   { message: Schema.String },
@@ -287,6 +293,7 @@ const Errors = [
   EnvironmentScopeRequiredError,
   BoardNotFoundError,
   BoardConflictError,
+  BoardMachineUnavailableError,
   BoardInternalError,
 ] as const;
 const WorkflowParams = Schema.Struct({ workflowId: Id });

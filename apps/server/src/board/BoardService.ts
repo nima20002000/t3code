@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import {
   BoardConflictError,
   type BoardInternalError,
+  type BoardMachineUnavailableError,
   BoardInvalidRequestError,
   BoardNotFoundError,
   createWorkflow,
@@ -53,7 +54,8 @@ type BoardError =
   | BoardNotFoundError
   | BoardInvalidRequestError
   | BoardConflictError
-  | BoardInternalError;
+  | BoardInternalError
+  | BoardMachineUnavailableError;
 type Op<A> = Effect.Effect<A, BoardError>;
 type EngineError = BoardError;
 

@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   BoardConflictError,
-  BoardInternalError,
+  BoardMachineUnavailableError,
   BoardInvalidRequestError,
   NodeDriverError,
   type BoardCreateNodeInput,
@@ -68,32 +68,37 @@ const makeMachines = Effect.gen(function* () {
     Ref.getAndSet(hook, Effect.void).pipe(Effect.flatten, Effect.orDie);
   const key = (input: { environmentId: EnvironmentId; taskId: string }) =>
     `${input.environmentId}\0${input.taskId}`;
-  const reach = (environmentId: EnvironmentId) =>
-    Ref.get(offline).pipe(
-      Effect.flatMap((down) =>
-        down.has(environmentId)
-          ? Effect.fail(
-              new NodeDriverError({
-                operation: "schedule",
-                message: "Remote board schedule failed.",
-              }),
-            )
-          : Effect.void,
-      ),
-    );
+  // Down for everything, or only for schedule calls (a machine that drops right after a launch).
+  const scheduleOffline = yield* Ref.make(new Set<EnvironmentId>());
+  const down =
+    (sets: ReadonlyArray<Ref.Ref<Set<EnvironmentId>>>) => (environmentId: EnvironmentId) =>
+      Effect.forEach(sets, Ref.get).pipe(
+        Effect.flatMap((all) =>
+          all.some((set) => set.has(environmentId))
+            ? Effect.fail(
+                new NodeDriverError({
+                  operation: "schedule",
+                  message: "Remote board schedule failed.",
+                }),
+              )
+            : Effect.void,
+        ),
+      );
+  const reach = down([offline]);
+  const reachSchedules = down([offline, scheduleOffline]);
   const schedules: Pick<
     NodeDriver,
     "getScheduledTask" | "upsertScheduledTask" | "setScheduledTaskEnabled" | "deleteScheduledTask"
   > = {
     getScheduledTask: (input) =>
-      reach(input.environmentId).pipe(
+      reachSchedules(input.environmentId).pipe(
         Effect.andThen(Ref.get(tasks)),
         Effect.map((all) => all.get(key(input)) ?? null),
       ),
     upsertScheduledTask: ({ environmentId, task: input }) =>
       Effect.gen(function* () {
         yield* once(beforeUpsert);
-        yield* reach(environmentId);
+        yield* reachSchedules(environmentId);
         const limited = !(yield* Ref.get(stock)).has(environmentId);
         const k = key({ environmentId, taskId: input.id });
         const existing = (yield* Ref.get(tasks)).get(k);
@@ -136,7 +141,7 @@ const makeMachines = Effect.gen(function* () {
         return (yield* Ref.get(tasks)).get(k) ?? task;
       }),
     setScheduledTaskEnabled: (input) =>
-      reach(input.environmentId).pipe(
+      reachSchedules(input.environmentId).pipe(
         Effect.andThen(
           Ref.update(tasks, (all) => {
             const task = all.get(key(input));
@@ -145,7 +150,7 @@ const makeMachines = Effect.gen(function* () {
         ),
       ),
     deleteScheduledTask: (input) =>
-      reach(input.environmentId).pipe(
+      reachSchedules(input.environmentId).pipe(
         Effect.andThen(
           Ref.update(tasks, (all) => {
             const next = new Map(all);
@@ -192,7 +197,18 @@ const makeMachines = Effect.gen(function* () {
           ]),
         ),
     );
-  return { schedules, offline, stock, fire, on, rebind, beforeUpsert, afterUpsert };
+  return {
+    schedules,
+    offline,
+    scheduleOffline,
+    stock,
+    fire,
+    on,
+    rebind,
+    beforeUpsert,
+    afterUpsert,
+    reach,
+  };
 });
 
 const makeLayer = Effect.gen(function* () {
@@ -219,11 +235,13 @@ const makeLayer = Effect.gen(function* () {
         Effect.asVoid,
       ),
     launch: (input) =>
-      Effect.succeed({
-        environmentId: input.environmentId,
-        projectId: input.launch.projectId,
-        threadId: input.launch.threadId,
-      }),
+      machines.reach(input.environmentId).pipe(
+        Effect.as({
+          environmentId: input.environmentId,
+          projectId: input.launch.projectId,
+          threadId: input.launch.threadId,
+        }),
+      ),
     send: (input) => Effect.succeed({ runId: RunId.make(input.messageId), sequence: 0 }),
     subscribeSettled: () => Stream.empty,
     readLatestAssistant: () => Effect.succeed(null),
@@ -665,11 +683,15 @@ it.effect("an unreachable machine fails the schedule cleanly and holds back the 
       yield* board.createWorkspace({ id: "ws", name: "Workspace" });
       yield* board.createWorkflow({ id: "w", name: "W", workspaceId: "ws" });
       yield* board.createNode("w", nodeInput("a"));
+      yield* board.createNode("w", nodeInput("fresh"));
       yield* board.openNodeChat("w", "a");
 
       yield* Ref.set(machines.offline, new Set([environmentId]));
       const failure = yield* board.saveNodeSchedule("w", "a", scheduleInput).pipe(Effect.flip);
-      assert.instanceOf(failure, BoardInternalError);
+      assert.instanceOf(failure, BoardMachineUnavailableError);
+      // An agent whose chat would first be opened there gets the same answer.
+      const unopened = yield* board.saveNodeSchedule("w", "fresh", scheduleInput).pipe(Effect.flip);
+      assert.instanceOf(unopened, BoardMachineUnavailableError);
       assert.include(failure.message, "Could not save the schedule");
       yield* Ref.set(machines.offline, new Set());
       assert.isUndefined((yield* board.getWorkflow("w")).nodes[0]?.schedule);
@@ -678,8 +700,8 @@ it.effect("an unreachable machine fails the schedule cleanly and holds back the 
       yield* board.saveNodeSchedule("w", "a", scheduleInput);
       yield* Ref.set(machines.offline, new Set([environmentId]));
       const held = yield* board.deleteNode("w", "a").pipe(Effect.flip);
-      assert.instanceOf(held, BoardInternalError);
-      assert.lengthOf((yield* board.getWorkflow("w")).nodes, 1);
+      assert.instanceOf(held, BoardMachineUnavailableError);
+      assert.isTrue((yield* board.getWorkflow("w")).nodes.some((entry) => entry.id === "a"));
       yield* Ref.set(machines.offline, new Set());
       assert.lengthOf(yield* machines.on(environmentId), 1);
     }).pipe(Effect.provide(layer));
@@ -815,9 +837,9 @@ it.effect("a /new that could not reach the machine is caught up on the next sync
       yield* board.saveNodeSchedule("w", "a", { ...scheduleInput, beforeRun: "new_thread" });
       // A firing moved the task before the board noticed, then "/new" could not reach the machine.
       yield* machines.rebind(environmentId, "fired-thread");
-      yield* Ref.set(machines.offline, new Set([environmentId]));
+      yield* Ref.set(machines.scheduleOffline, new Set([environmentId]));
       yield* board.newNodeChat("w", "a", { interactionMode: "plan" }).pipe(Effect.flip);
-      yield* Ref.set(machines.offline, new Set());
+      yield* Ref.set(machines.scheduleOffline, new Set());
       const chat = (yield* board.getWorkflow("w")).nodes[0]?.chat;
       yield* board.syncNodeSchedule("w", "a");
       assert.strictEqual((yield* board.getWorkflow("w")).nodes[0]?.chat?.threadId, chat?.threadId);

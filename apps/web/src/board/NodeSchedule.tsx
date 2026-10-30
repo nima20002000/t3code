@@ -50,13 +50,43 @@ export function NodeScheduleButton({ node }: { readonly node: BoardNode }) {
       syncNodeSchedule(node.id);
   }, [firedThread, chatThread, pendingRebind, seenAt, node.id]);
   const connected = useNodeConnections()(marker?.environmentId ?? "") === "connected";
+  // The editor's state lives here, so a save that changes the node mid-flight keeps it.
+  const [draft, setDraft] = useState<ScheduleForm | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  /** `saved` is the form a save sends; once it lands, the editor shows the task again. */
+  const run = async (action: () => Promise<unknown>, saved?: ScheduleForm) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+      // Edits made while it was saving stay.
+      if (saved) setDraft((current) => (current === saved ? null : current));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
   // The hub reaches paired machines the browser may not be connected to; their tasks are unseen.
-  const unseen = marker !== undefined && task === null && (!connected || query.data === null);
+  const unseen =
+    marker !== undefined &&
+    task === null &&
+    !busy &&
+    draft === null &&
+    (!connected || query.data === null);
   const summary = task ? scheduleSummary(task) : null;
   const label = summary ? scheduleLabel(summary) : unseen ? "Scheduled" : null;
   return (
     <span className="contents" onClick={(event) => event.stopPropagation()}>
-      <Popover>
+      <Popover
+        onOpenChange={(open) => {
+          if (open) return;
+          setDraft(null);
+          setError(null);
+        }}
+      >
         <PopoverTrigger
           render={
             <button
@@ -75,9 +105,13 @@ export function NodeScheduleButton({ node }: { readonly node: BoardNode }) {
             <UnseenSchedule node={node} loading={connected} />
           ) : (
             <ScheduleEditor
-              key={task ? `${task.id}:${task.runCount}` : "new"}
               node={node}
               task={task}
+              form={draft ?? formOf(task)}
+              onChange={setDraft}
+              busy={busy}
+              error={error}
+              run={run}
             />
           )}
         </PopoverPopup>
@@ -119,26 +153,20 @@ function UnseenSchedule(props: { readonly node: BoardNode; readonly loading: boo
   );
 }
 
-function ScheduleEditor(props: { readonly node: BoardNode; readonly task: ScheduledTask | null }) {
-  const { node, task } = props;
-  const [form, setForm] = useState<ScheduleForm>(() => formOf(task));
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+/** Until edited, the form shows the task as it is now, so runs it fired since are not regranted. */
+function ScheduleEditor(props: {
+  readonly node: BoardNode;
+  readonly task: ScheduledTask | null;
+  readonly form: ScheduleForm;
+  readonly onChange: (form: ScheduleForm) => void;
+  readonly busy: boolean;
+  readonly error: string | null;
+  readonly run: (action: () => Promise<unknown>, saved?: ScheduleForm) => Promise<void>;
+}) {
+  const { node, task, form, busy, error, run } = props;
   const input = scheduleInput(form);
   const summary = task ? scheduleSummary(task) : null;
-  const patch = (next: Partial<ScheduleForm>) => setForm((current) => ({ ...current, ...next }));
-  const run = async (action: () => Promise<unknown>) => {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await action();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const patch = (next: Partial<ScheduleForm>) => props.onChange({ ...form, ...next });
   return (
     <div className="grid gap-2 text-sm">
       <div className="font-medium">{node.name} schedule</div>
@@ -203,7 +231,7 @@ function ScheduleEditor(props: { readonly node: BoardNode; readonly task: Schedu
           size="sm"
           disabled={input === null || busy}
           onClick={() => {
-            if (input) void run(() => saveNodeSchedule(node.id, input));
+            if (input) void run(() => saveNodeSchedule(node.id, input), form);
           }}
         >
           {task ? "Save schedule" : "Schedule"}

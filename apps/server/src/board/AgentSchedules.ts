@@ -1,9 +1,10 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Task ids are derived synchronously from the node.
 import * as NodeCrypto from "node:crypto";
 import {
+  BoardConflictError,
   BoardInternalError,
+  BoardMachineUnavailableError,
   BoardNotFoundError,
-  type BoardConflictError,
   type BoardInvalidRequestError,
   type BoardNewNodeChatInput,
   type BoardNode,
@@ -33,6 +34,7 @@ type ScheduleError =
   | SqlError
   | BoardNotFoundError
   | BoardInternalError
+  | BoardMachineUnavailableError
   | BoardConflictError
   | BoardInvalidRequestError;
 
@@ -72,7 +74,9 @@ export class AgentSchedules extends Context.Service<
      * Deletes the nodes' tasks before the nodes go; fails while a paired machine is unreachable.
      * Call it inside `exclusive`, with the delete that follows.
      */
-    readonly release: (nodes: ReadonlyArray<BoardNode>) => Effect.Effect<void, BoardInternalError>;
+    readonly release: (
+      nodes: ReadonlyArray<BoardNode>,
+    ) => Effect.Effect<void, BoardMachineUnavailableError>;
   }
 >()("t3/board/AgentSchedules") {}
 
@@ -81,10 +85,25 @@ const taskIdFor = (workflowId: string, nodeId: string) =>
     `board:${NodeCrypto.createHash("sha256").update(`schedule\0${workflowId}\0${nodeId}`).digest("hex")}`,
   );
 
-const unreachable = (action: string) => (cause: NodeDriverError) =>
-  new BoardInternalError({
-    message: `Could not ${action} on the agent's machine: ${cause.message}`,
-  });
+/** A driver failure as a typed error the board shows; the cause goes to the log. */
+const onMachine =
+  (action: string) =>
+  <A, R>(effect: Effect.Effect<A, NodeDriverError, R>) =>
+    effect.pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning(`Agent schedule: could not ${action} on the agent's machine`, {
+          cause,
+        }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new BoardMachineUnavailableError({
+                message: `Could not ${action} on the agent's machine: ${cause.message}`,
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
 
 /** The saved task as an upsert, so a change to one field keeps every other one. */
 function upsertOf(
@@ -135,7 +154,7 @@ const make = Effect.gen(function* () {
     return node.schedule;
   });
   const driverFor = (environmentId: Marker["environmentId"], action: string) =>
-    drivers.get(environmentId).pipe(Effect.mapError(unreachable(action)));
+    drivers.get(environmentId).pipe(onMachine(action));
   const patchNode = Effect.fn("AgentSchedules.patchNode")(function* (
     workflowId: string,
     nodeId: string,
@@ -193,15 +212,13 @@ const make = Effect.gen(function* () {
   });
   const deleteTask = Effect.fn("AgentSchedules.deleteTask")(function* (marker: Marker) {
     const driver = yield* driverFor(marker.environmentId, "remove the schedule");
-    yield* driver
-      .deleteScheduledTask(marker)
-      .pipe(Effect.mapError(unreachable("remove the schedule")));
+    yield* driver.deleteScheduledTask(marker).pipe(onMachine("remove the schedule"));
   });
   const readTask = (
     driver: NodeDriver,
     marker: Pick<Marker, "environmentId" | "taskId">,
     action: string,
-  ) => driver.getScheduledTask(marker).pipe(Effect.mapError(unreachable(action)));
+  ) => driver.getScheduledTask(marker).pipe(onMachine(action));
   /** Binds the task to the node's chat, keeping its other settings. */
   const bindToChat = Effect.fn("AgentSchedules.bindToChat")(function* (
     workflowId: string,
@@ -214,7 +231,7 @@ const make = Effect.gen(function* () {
   ) {
     const input = upsertOf(task);
     if (!input)
-      return yield* new BoardInternalError({
+      return yield* new BoardConflictError({
         message: "The agent's schedule was changed to a webhook in t3.",
       });
     yield* driver
@@ -222,7 +239,7 @@ const make = Effect.gen(function* () {
         environmentId: marker.environmentId,
         task: { ...input, projectId: chat.projectId, threadId: chat.threadId, ...settings },
       })
-      .pipe(Effect.mapError(unreachable("move the schedule to the new chat")));
+      .pipe(onMachine("move the schedule to the new chat"));
     const { rebind: _done, ...bound } = marker;
     yield* setMarker(workflowId, nodeId, { ...bound, threadId: chat.threadId });
   });
@@ -233,6 +250,12 @@ const make = Effect.gen(function* () {
     input: BoardSaveNodeScheduleInput,
   ) {
     const { workflow, node } = yield* findNode(workflowId, nodeId);
+    // Reach the agent's machine before opening its chat there, so an offline one is reported as such.
+    yield* readTask(
+      yield* driverFor(node.environmentId, "save the schedule"),
+      { environmentId: node.environmentId, taskId: taskIdFor(workflowId, nodeId) },
+      "save the schedule",
+    );
     const opened = (yield* engine.openNodeChat(workflowId, nodeId)).chat;
     if (!opened) return yield* new BoardInternalError({ message: "The agent has no chat." });
     if (node.schedule && node.schedule.environmentId !== opened.environmentId)
@@ -269,7 +292,7 @@ const make = Effect.gen(function* () {
             interactionMode: existing?.interactionMode ?? "default",
           },
         })
-        .pipe(Effect.mapError(unreachable("save the schedule")));
+        .pipe(onMachine("save the schedule"));
     const first = yield* write(existing?.runCount ?? 0).pipe(
       Effect.tapError(() =>
         existing
@@ -296,7 +319,10 @@ const make = Effect.gen(function* () {
       yield* driver
         .deleteScheduledTask(marker)
         .pipe(Effect.andThen(setMarker(workflowId, nodeId, undefined)), Effect.ignore);
-      return yield* new BoardInternalError({
+      yield* Effect.logWarning("Agent schedule refused: the machine's t3 dropped schedule fields", {
+        environmentId: marker.environmentId,
+      });
+      return yield* new BoardConflictError({
         message:
           "The agent's machine runs a t3 without run limits, start times or chat preparation for schedules. Update it to the board's t3 build.",
       });
@@ -323,7 +349,7 @@ const make = Effect.gen(function* () {
     const driver = yield* driverFor(marker.environmentId, "update the schedule");
     yield* driver
       .setScheduledTaskEnabled({ ...marker, enabled })
-      .pipe(Effect.mapError(unreachable("update the schedule")));
+      .pipe(onMachine("update the schedule"));
   });
 
   const remove = Effect.fn("AgentSchedules.remove")(function* (workflowId: string, nodeId: string) {
@@ -388,15 +414,13 @@ const make = Effect.gen(function* () {
       }
       targets.push({ node, marker, driver: driver.value });
     }
-    const unreachableFor = (node: BoardNode) => (cause: NodeDriverError) =>
-      new BoardInternalError({
-        message: `Could not remove ${node.name}'s schedule from its machine: ${cause.message} Try again when the machine is online.`,
-      });
+    const action = (node: BoardNode) =>
+      `remove ${node.name}'s schedule (try again when the machine is online)`;
     // Reach every machine first, so one that is offline does not leave the others half removed.
     for (const { node, marker, driver } of targets)
-      yield* driver.getScheduledTask(marker).pipe(Effect.mapError(unreachableFor(node)));
+      yield* driver.getScheduledTask(marker).pipe(onMachine(action(node)));
     for (const { node, marker, driver } of targets)
-      yield* driver.deleteScheduledTask(marker).pipe(Effect.mapError(unreachableFor(node)));
+      yield* driver.deleteScheduledTask(marker).pipe(onMachine(action(node)));
   });
 
   return AgentSchedules.of({
