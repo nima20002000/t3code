@@ -67,6 +67,16 @@ const make = Effect.gen(function* () {
       threadId: result.threadId,
     };
   });
+  const projectBusy: NodeDriver["projectBusy"] = Effect.fn("LocalDriver.projectBusy")(
+    function* (input) {
+      const snapshot = yield* threads
+        .getShellSnapshot()
+        .pipe(Effect.mapError(error("projectBusy")));
+      return snapshot.threads.some(
+        (thread) => thread.projectId === input.projectId && thread.activeRunId !== null,
+      );
+    },
+  );
   const send: NodeDriver["send"] = Effect.fn("LocalDriver.send")(function* (input) {
     const result = yield* threads
       .sendToThread({
@@ -272,6 +282,7 @@ const make = Effect.gen(function* () {
     setScheduledTaskEnabled,
     deleteScheduledTask,
     launch,
+    projectBusy,
     send,
     subscribeSettled,
     readLatestAssistant,

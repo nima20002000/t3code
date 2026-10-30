@@ -571,6 +571,7 @@ const make = Effect.gen(function* () {
           ...unlimited,
           ...(input.task === undefined ? {} : { task: input.task }),
           ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
+          ...(input.chats === undefined ? {} : { chats: input.chats }),
           timing,
           ...(maxRuns === undefined ? {} : { maxRuns }),
         };

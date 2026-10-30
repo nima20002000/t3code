@@ -121,6 +121,8 @@ function upsertOf(
     maxRuns: task.maxRuns ?? null,
     beforeRun: task.beforeRun ?? null,
     startAt: task.startAt ?? null,
+    // Board schedules wait for the workspace's agents to go idle; older tasks gain it on any change.
+    waitForIdle: true,
     workspaceStrategy: task.workspaceStrategy,
     modelSelection: task.modelSelection,
     runtimeMode: task.runtimeMode,
@@ -284,6 +286,7 @@ const make = Effect.gen(function* () {
             startAt: plan.startAt ?? null,
             maxRuns: plan.runs === undefined ? null : runCount + plan.runs,
             beforeRun,
+            waitForIdle: true,
             projectId: chat.projectId,
             threadId: chat.threadId,
             workspaceStrategy: { type: "root" },

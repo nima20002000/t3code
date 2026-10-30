@@ -51,7 +51,7 @@ it("opens the schedule popover leftwards from the right-hand toolbar, inside the
   const field = page.getByPlaceholder("What should each scheduled run do?");
   await expect.element(field).toBeVisible();
   for (const mode of ["interval", "time", "once"]) {
-    await userEvent.selectOptions(page.getByRole("combobox"), mode);
+    await userEvent.selectOptions(page.getByRole("combobox", { name: "When" }), mode);
     const popup = document.querySelector<HTMLElement>("[data-slot=popover-popup]")!;
     const bounds = popup.getBoundingClientRect();
     expect(bounds.left).toBeGreaterThanOrEqual(0);

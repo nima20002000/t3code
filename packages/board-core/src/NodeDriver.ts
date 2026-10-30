@@ -65,6 +65,7 @@ export class NodeDriverError extends Schema.TaggedError<NodeDriverError>()("Node
     "ensureProject",
     "deleteProject",
     "schedule",
+    "projectBusy",
   ]),
   message: Schema.String,
   /** The outcome is unknown, so repeating the call with the same ids is safe. */
@@ -99,6 +100,8 @@ export interface NodeDriver {
     input: BoardDriverProject & { readonly removeFolderPath?: string },
   ) => Effect.Effect<void, NodeDriverError>;
   readonly launch: (input: BoardDriverLaunch) => Effect.Effect<BoardDriverThread, NodeDriverError>;
+  /** Whether any thread in the project is running on that machine, such as an agent's own chat. */
+  readonly projectBusy: (input: BoardDriverProject) => Effect.Effect<boolean, NodeDriverError>;
   readonly send: (input: BoardDriverSend) => Effect.Effect<BoardDriverSendResult, NodeDriverError>;
   readonly subscribeSettled: (input: {
     readonly thread: BoardDriverThread;

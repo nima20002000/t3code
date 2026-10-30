@@ -233,6 +233,8 @@ export const ScheduledTask = Schema.Struct({
   maxRuns: Schema.optional(ScheduledTaskMaxRuns),
   beforeRun: Schema.optional(ScheduledTaskBeforeRun),
   startAt: Schema.optional(ScheduledTaskStartAt),
+  /** A due run waits while any thread in the task's project is running. */
+  waitForIdle: Schema.optional(Schema.Boolean),
   webhook: Schema.optional(ScheduledTaskWebhookEndpoint),
 });
 export type ScheduledTask = typeof ScheduledTask.Type;
@@ -265,6 +267,9 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   }),
   startAt: Schema.optional(Schema.NullOr(ScheduledTaskStartAt)).annotate({
     description: "Omitted: keep stored. null: none.",
+  }),
+  waitForIdle: Schema.optional(Schema.NullOr(Schema.Boolean)).annotate({
+    description: "Omitted: keep stored. null: off.",
   }),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   modelSelection: ModelSelection,

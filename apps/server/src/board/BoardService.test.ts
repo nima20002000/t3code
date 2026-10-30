@@ -219,6 +219,7 @@ const makeLayer = Effect.gen(function* () {
   const driver: NodeDriver = {
     ...machines.schedules,
     ensureProject: () => Effect.succeed({ adopted: false }),
+    projectBusy: () => Effect.succeed(false),
     deleteProject: (input) =>
       Ref.get(failing).pipe(
         Effect.flatMap((id) =>

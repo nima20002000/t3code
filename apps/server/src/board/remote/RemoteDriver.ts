@@ -330,6 +330,19 @@ export function make(store: PeerStore): NodeDriver {
         threadId: result.threadId,
       };
     }),
+    projectBusy: Effect.fn("RemoteDriver.projectBusy")(function* (input) {
+      const first = yield* useClient(store, input, (client) =>
+        client[ORCHESTRATION_V2_WS_METHODS.subscribeShell]({}).pipe(
+          Stream.filter((item) => item.kind === "snapshot"),
+          Stream.runHead,
+        ),
+      ).pipe(Effect.mapError((cause) => error("projectBusy", cause)));
+      return Option.isSome(first) && first.value.kind === "snapshot"
+        ? first.value.snapshot.threads.some(
+            (thread) => thread.projectId === input.projectId && thread.activeRunId !== null,
+          )
+        : false;
+    }),
     send: Effect.fn("RemoteDriver.send")(function* (input) {
       return yield* useClient(store, input.thread, (client) =>
         Effect.gen(function* () {

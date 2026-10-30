@@ -133,10 +133,12 @@ export interface RunRecord {
   readonly summary?: string;
   readonly data?: unknown;
   readonly requests: ReadonlyArray<RunRequestRecord>;
-  /** nodeId -> the fresh thread this run launched for it, once it first got work. */
+  /** nodeId -> the thread this run launched for it, or carried over from the schedule's last run. */
   readonly threads: Readonly<Record<string, RunThread>>;
   /** The workflow as it was when the run started; later edits never change a run. */
   readonly definition: WorkflowDefinition;
+  /** Its chats carry into the schedule's next run, so they are compacted once it ends. */
+  readonly compactAfter?: boolean;
 }
 
 export interface WorkflowSettings {

@@ -174,6 +174,7 @@ const decodeScheduleExtrasJson = Schema.decodeUnknownOption(
       maxRuns: ScheduledTask.fields.maxRuns,
       beforeRun: ScheduledTask.fields.beforeRun,
       startAt: ScheduledTask.fields.startAt,
+      waitForIdle: ScheduledTask.fields.waitForIdle,
     }),
   ),
 );
@@ -183,6 +184,7 @@ const scheduleJson = (task: ScheduledTask) =>
     ...(task.maxRuns === undefined ? {} : { maxRuns: task.maxRuns }),
     ...(task.beforeRun === undefined ? {} : { beforeRun: task.beforeRun }),
     ...(task.startAt === undefined ? {} : { startAt: task.startAt }),
+    ...(task.waitForIdle === undefined ? {} : { waitForIdle: task.waitForIdle }),
   });
 const runsExhausted = (task: Pick<ScheduledTask, "runCount" | "maxRuns">) =>
   task.maxRuns !== undefined && task.runCount >= task.maxRuns;
@@ -374,6 +376,7 @@ const decodeRow = Effect.fnUntraced(
       ...(extras?.maxRuns === undefined ? {} : { maxRuns: extras.maxRuns }),
       ...(extras?.beforeRun === undefined ? {} : { beforeRun: extras.beforeRun }),
       ...(extras?.startAt === undefined ? {} : { startAt: extras.startAt }),
+      ...(extras?.waitForIdle === undefined ? {} : { waitForIdle: extras.waitForIdle }),
       ...(webhook === undefined ? {} : { webhook }),
     });
   },
@@ -1026,6 +1029,15 @@ export const layer = Layer.effect(
       yield* notifyChanged;
     });
 
+    const held = new Set<string>();
+    const projectBusy = (projectId: ProjectId) =>
+      threadManagement.getShellSnapshot().pipe(
+        Effect.map(({ threads }) =>
+          threads.some((thread) => thread.projectId === projectId && thread.activeRunId !== null),
+        ),
+        // An unreadable snapshot must not hold schedules forever.
+        Effect.orElseSucceed(() => false),
+      );
     const runDueTasks = Effect.fn("ScheduledTaskService.runDueTasks")(function* () {
       const now = yield* localNow;
       const tasks = yield* listDueTasks(now).pipe(
@@ -1037,11 +1049,18 @@ export const layer = Layer.effect(
       yield* Effect.forEach(
         due,
         ({ task, dueAt }) =>
-          Effect.suspend(() =>
-            isMissedFixedTimeRun(task.schedule, dueAt, now)
+          Effect.gen(function* () {
+            const key = `${task.id}\0${task.nextRunAt}`;
+            if (task.waitForIdle && (yield* projectBusy(task.projectId))) {
+              held.add(key);
+              return;
+            }
+            // A run held for busy work is late on purpose, not missed while the server was off.
+            const wasHeld = held.delete(key);
+            return yield* !wasHeld && isMissedFixedTimeRun(task.schedule, dueAt, now)
               ? rescheduleMissedRun(task, now)
-              : runTask(task, "scheduled"),
-          ).pipe(
+              : runTask(task, "scheduled");
+          }).pipe(
             Effect.catch((cause) =>
               Effect.logWarning("Scheduled task run failed", { taskId: task.id, cause }),
             ),
@@ -1225,6 +1244,10 @@ export const layer = Layer.effect(
         input.beforeRun === undefined ? existingTask?.beforeRun : (input.beforeRun ?? undefined);
       const startAt =
         input.startAt === undefined ? existingTask?.startAt : (input.startAt ?? undefined);
+      const waitForIdle =
+        input.waitForIdle === undefined
+          ? existingTask?.waitForIdle
+          : (input.waitForIdle ?? undefined);
       const runCount = existingTask?.runCount ?? 0;
       // A task that ran out of runs has no next run; raising its limit must schedule one.
       const scheduleUnchanged =
@@ -1259,6 +1282,7 @@ export const layer = Layer.effect(
         ...(maxRuns === undefined ? {} : { maxRuns }),
         ...(beforeRun === undefined ? {} : { beforeRun }),
         ...(startAt === undefined ? {} : { startAt }),
+        ...(waitForIdle === undefined ? {} : { waitForIdle }),
       };
       yield* saveTask(task, input.requireExisting === true, webhook);
       yield* notifyChanged;

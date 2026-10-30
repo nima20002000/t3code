@@ -11,6 +11,7 @@ import {
 import {
   EnvironmentId,
   MessageId,
+  ProjectId,
   ProviderInstanceId,
   RunId,
   type ThreadId,
@@ -70,8 +71,11 @@ const makeHarness = Effect.gen(function* () {
   // A thread's queue exists once the engine launched it.
   const queueFor = (threadId: ThreadId) => replies.get(threadId)!;
   const messages = yield* Ref.make(new Map<RunId, string>());
+  // Whether an agent's own chat in the workspace folder is working on the machine.
+  const projectBusy = yield* Ref.make(false);
   const driver: NodeDriver = {
     ensureProject: (input) => Queue.offer(projects, input).pipe(Effect.as({ adopted: false })),
+    projectBusy: () => Ref.get(projectBusy),
     deleteProject: () => Effect.void,
     launch: (input) =>
       Effect.gen(function* () {
@@ -129,6 +133,7 @@ const makeHarness = Effect.gen(function* () {
     interrupts,
     launches,
     projects,
+    projectBusy,
     reply,
     registry,
     driver,
@@ -777,6 +782,125 @@ it.effect("a workflow schedule with a run limit stops after its last run", () =>
   }),
 );
 
+const schedulerLayer = (harness: Effect.Success<typeof makeHarness>) =>
+  BoardScheduler.layer.pipe(
+    Layer.provideMerge(TaskEngine.layer),
+    Layer.provide(Layer.succeed(DriverRegistry.DriverRegistry, harness.registry)),
+    Layer.provideMerge(BoardStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+  );
+
+it.effect("a due workflow schedule waits while an agent works in the workspace, then runs", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(
+        Effect.gen(function* () {
+          yield* store.putWorkspace({
+            ...workspace,
+            folders: [
+              {
+                environmentId,
+                projectId: ProjectId.make("project:workspace"),
+                path: "/work",
+                managed: true,
+              },
+            ],
+          });
+          yield* store.putWorkflow(setupWorkflow());
+          yield* store.putSchedule({
+            id: "daily",
+            workflowId: "workflow",
+            task: "Held task",
+            timing: { type: "fixed_time", timeOfDay: "00:00" },
+            runCount: 0,
+            enabled: true,
+            nextRunAt: DateTime.formatIso(yield* DateTime.now),
+          });
+        }),
+      );
+      yield* Ref.set(harness.projectBusy, true);
+      // Long past the grace a missed time-of-day run gets: held, not missed.
+      yield* TestClock.adjust("20 minutes");
+      assert.isTrue(Option.isNone(yield* Queue.poll(harness.sends)));
+      assert.strictEqual((yield* store.listSchedules())[0]?.runCount, 0);
+      yield* Ref.set(harness.projectBusy, false);
+      yield* TestClock.adjust("5 seconds");
+      const sent = yield* Queue.take(harness.sends);
+      assert.include(sent.text, "Held task");
+      assert.strictEqual((yield* store.listSchedules())[0]?.runCount, 1);
+      yield* harness.reply(sent, finish);
+    }).pipe(Effect.provide(schedulerLayer(harness)));
+  }),
+);
+
+it.effect("a schedule that continues its chats compacts them after each run and reuses them", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(
+        Effect.gen(function* () {
+          yield* seed(store, setupWorkflow());
+          yield* store.putSchedule({
+            id: "continued",
+            workflowId: "workflow",
+            task: "Continue task",
+            timing: { type: "interval", everyMs: 60_000 },
+            runCount: 0,
+            enabled: true,
+            chats: "continue",
+            nextRunAt: DateTime.formatIso(yield* DateTime.now),
+          });
+        }),
+      );
+      yield* TestClock.adjust("5 seconds");
+      const first = yield* Queue.take(harness.sends);
+      yield* harness.reply(first, finish);
+      const compact = yield* Queue.take(harness.sends);
+      assert.strictEqual(compact.text, "/compact");
+      assert.strictEqual(compact.thread.threadId, first.thread.threadId);
+      yield* TestClock.adjust("60 seconds");
+      const second = yield* Queue.take(harness.sends);
+      assert.include(second.text, "Continue task");
+      assert.strictEqual(second.thread.threadId, first.thread.threadId);
+      assert.lengthOf(yield* Queue.takeAll(harness.launches), 1);
+      yield* harness.reply(second, finish);
+    }).pipe(Effect.provide(schedulerLayer(harness)));
+  }),
+);
+
+it.effect("a schedule with new chats starts each run in a fresh chat and compacts nothing", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(
+        Effect.gen(function* () {
+          yield* seed(store, setupWorkflow());
+          yield* store.putSchedule({
+            id: "fresh",
+            workflowId: "workflow",
+            task: "Fresh task",
+            timing: { type: "interval", everyMs: 60_000 },
+            runCount: 0,
+            enabled: true,
+            nextRunAt: DateTime.formatIso(yield* DateTime.now),
+          });
+        }),
+      );
+      yield* TestClock.adjust("5 seconds");
+      const first = yield* Queue.take(harness.sends);
+      yield* harness.reply(first, finish);
+      yield* TestClock.adjust("60 seconds");
+      const second = yield* Queue.take(harness.sends);
+      assert.include(second.text, "Fresh task");
+      assert.notStrictEqual(second.thread.threadId, first.thread.threadId);
+      yield* harness.reply(second, finish);
+    }).pipe(Effect.provide(schedulerLayer(harness)));
+  }),
+);
+
 it.effect("retries persisted stop intents in the background", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness;
@@ -1040,7 +1164,7 @@ it.effect("fails a task with the driver's message when the send is certain to ha
   }),
 );
 
-it.effect("does not start a schedule while a run is active and skips a paused schedule", () =>
+it.effect("a due schedule waits while a run is active and a paused one never starts", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness;
     const layer = BoardScheduler.layer.pipe(
@@ -1082,12 +1206,9 @@ it.effect("does not start a schedule while a run is active and skips a paused sc
         }),
       );
       yield* TestClock.adjust("5 seconds");
-      yield* store.events(0).pipe(
-        Stream.filter((entry) => entry.kind === "schedule.upserted"),
-        Stream.runHead,
-      );
       const schedules = yield* store.listSchedules();
-      assert.notStrictEqual(schedules.find((entry) => entry.id === "active")?.nextRunAt, dueAt);
+      // Still due: it starts once the run is over instead of losing this firing.
+      assert.strictEqual(schedules.find((entry) => entry.id === "active")?.nextRunAt, dueAt);
       assert.strictEqual(schedules.find((entry) => entry.id === "paused")?.nextRunAt, dueAt);
       assert.strictEqual((yield* store.getWorkflow("workflow"))?.runs.length, 1);
       assert.strictEqual(yield* Queue.size(harness.sends), 0);

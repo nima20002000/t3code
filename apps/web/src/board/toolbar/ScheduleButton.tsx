@@ -1,4 +1,5 @@
 import { ClockIcon, Trash2Icon } from "lucide-react";
+import type { BoardScheduleChats } from "@t3tools/board-core/http";
 import { entryNodeOf } from "@t3tools/board-core/routing";
 import { useState } from "react";
 
@@ -21,6 +22,7 @@ export function ScheduleButton(props: { readonly nodes: ReadonlyArray<BoardNode>
   const schedules = useBoardSchedules().filter((schedule) => schedule.workflowId === workflow.id);
   const [task, setTask] = useState("");
   const [timingForm, setTimingForm] = useState<TimingForm>(() => timingFormOf(null, ""));
+  const [chats, setChats] = useState<BoardScheduleChats>("new");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const entry = entryNodeOf(props.nodes);
@@ -40,6 +42,7 @@ export function ScheduleButton(props: { readonly nodes: ReadonlyArray<BoardNode>
             task: task.trim(),
             ...timing,
             enabled: true,
+            chats,
           },
         }),
       );
@@ -90,6 +93,17 @@ export function ScheduleButton(props: { readonly nodes: ReadonlyArray<BoardNode>
             onChange={(patch) => setTimingForm((current) => ({ ...current, ...patch }))}
             clock="the hub's clock"
           />
+          <label className="grid gap-1 text-xs text-muted-foreground">
+            Chats for each run
+            <select
+              className="h-8 w-full rounded-md border bg-background px-2 text-sm"
+              value={chats}
+              onChange={(event) => setChats(event.target.value as BoardScheduleChats)}
+            >
+              <option value="new">Start new chats first</option>
+              <option value="continue">Continue the same chats, compact after the run</option>
+            </select>
+          </label>
           <div>
             <Button size="sm" disabled={!valid || busy} onClick={() => void create()}>
               Schedule this workflow
@@ -107,6 +121,7 @@ export function ScheduleButton(props: { readonly nodes: ReadonlyArray<BoardNode>
                 <div className="truncate">{schedule.task}</div>
                 <div className="text-xs text-muted-foreground">
                   {timingLabel(schedule.timing)}
+                  {schedule.chats === "continue" ? " · same chats" : ""}
                   {status ? ` · ${status}` : ""}
                 </div>
               </div>

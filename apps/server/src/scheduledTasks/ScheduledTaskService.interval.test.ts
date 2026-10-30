@@ -375,3 +375,59 @@ it.effect("a start time makes a one-off, and keeps a time of day from firing bef
     Effect.provide(SqlitePersistence.layerMemory),
   ),
 );
+
+it.effect("a due task that waits for idle holds while its project runs, then fires", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-09T12:00:00.000Z"));
+    const sent = yield* Ref.make<ReadonlyArray<string>>([]);
+    const busy = yield* Ref.make(true);
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          dependencies,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: (request) =>
+              Ref.update(sent, (all) => [...all, request.text]).pipe(Effect.as({} as never)),
+            // Another chat in the same folder, such as the agent's workflow run, is working.
+            getShellSnapshot: () =>
+              Ref.get(busy).pipe(
+                Effect.map(
+                  (running) =>
+                    ({
+                      threads: [
+                        {
+                          projectId: input.projectId,
+                          activeRunId: running ? "run-elsewhere" : null,
+                        },
+                      ],
+                    }) as never,
+                ),
+              ),
+          }),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      yield* service.upsert(
+        yield* decodeInput({
+          ...input,
+          commandId: "wait-for-idle",
+          threadId: "chat",
+          waitForIdle: true,
+          schedule: { type: "fixed_time", timeOfDay: "12:01" },
+        }),
+      );
+      // Well past the grace a missed time-of-day run gets: held, not missed.
+      yield* TestClock.adjust("30 minutes");
+      expect(yield* Ref.get(sent)).toEqual([]);
+      yield* Ref.set(busy, false);
+      yield* TestClock.adjust("5 seconds");
+      expect(yield* Ref.get(sent)).toEqual([input.prompt]);
+    }).pipe(Effect.provide(layer));
+  }).pipe(
+    Effect.provideService(ServerActivation, Effect.void),
+    Effect.provide(SqlitePersistence.layerMemory),
+  ),
+);

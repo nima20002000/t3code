@@ -148,6 +148,8 @@ export const BoardRunSchema = Schema.Struct({
     edges: Schema.Array(BoardEdgeSchema),
     settings: BoardWorkflowSettingsSchema,
   }),
+  /** Its chats carry into the schedule's next run, so they are compacted once it ends. */
+  compactAfter: Schema.optionalKey(Schema.Boolean),
 });
 export const BoardWorkflowSchema = Schema.Struct({
   id: Id,
@@ -171,6 +173,9 @@ export const BoardPeerSchema = Schema.Struct({
   expiresAt: Schema.optionalKey(Schema.String),
 });
 export type BoardPeer = typeof BoardPeerSchema.Type;
+/** Each scheduled run starts new chats, or continues the previous scheduled run's chats. */
+export const BoardScheduleChats = Schema.Literals(["new", "continue"]);
+export type BoardScheduleChats = typeof BoardScheduleChats.Type;
 /** A workflow's own schedule, run by the hub; it stops once `runCount` reaches `maxRuns`. */
 export const BoardScheduleSchema = Schema.Struct({
   id: Id,
@@ -181,6 +186,8 @@ export const BoardScheduleSchema = Schema.Struct({
   runCount: NonNegativeInt,
   enabled: Schema.Boolean,
   nextRunAt: Schema.NullOr(Schema.String),
+  /** Absent: "new". */
+  chats: Schema.optionalKey(BoardScheduleChats),
 });
 export type BoardSchedule = typeof BoardScheduleSchema.Type;
 
@@ -387,6 +394,7 @@ export const BoardCreateScheduleInput = Schema.Struct({
   timing: BoardTimingSchema,
   runs: Schema.optionalKey(BoardScheduleRuns),
   enabled: Schema.Boolean,
+  chats: Schema.optionalKey(BoardScheduleChats),
 });
 /** `runs` counts from now; null removes the limit. */
 export const BoardUpdateScheduleInput = Schema.Struct({
@@ -394,6 +402,7 @@ export const BoardUpdateScheduleInput = Schema.Struct({
   timing: Schema.optionalKey(BoardTimingSchema),
   runs: Schema.optionalKey(Schema.NullOr(BoardScheduleRuns)),
   enabled: Schema.optionalKey(Schema.Boolean),
+  chats: Schema.optionalKey(BoardScheduleChats),
 });
 
 export type BoardCreateWorkflowInput = typeof BoardCreateWorkflowInput.Type;

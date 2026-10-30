@@ -38,7 +38,14 @@ import {
   type RunThread,
   type Workflow,
 } from "@t3tools/board-core";
-import { CommandId, MessageId, ThreadId, type EnvironmentId, type RunId } from "@t3tools/contracts";
+import {
+  CommandId,
+  IDLE_COMPACTION_TEXT,
+  MessageId,
+  ThreadId,
+  type EnvironmentId,
+  type RunId,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -88,10 +95,12 @@ export class TaskEngine extends Context.Service<
       workflowId: string,
       input: BoardStartRunInput,
     ) => Effect.Effect<RunRecord, EngineError>;
+    /** With `continueRunsOf`, the run takes over the chats of the latest finished run with that id prefix. */
     readonly startClaimed: (
       workflowId: string,
       input: BoardStartRunInput,
       claim: Effect.Effect<boolean, SqlError>,
+      options?: { readonly continueRunsOf?: string },
     ) => Effect.Effect<RunRecord | undefined, EngineError>;
     readonly stop: (workflowId: string, runId: string) => Effect.Effect<RunRecord, EngineError>;
     readonly openNodeChat: (
@@ -111,6 +120,24 @@ const runWorkflow = (workflow: Workflow, run: RunRecord): Workflow => ({
   ...run.definition,
   runs: [run],
 });
+/**
+ * The chats of the latest finished run whose id starts with `prefix`, for the nodes still on the
+ * same machine. They are seeded again, since compaction may have folded the instructions away.
+ */
+const carriedThreads = (workflow: Workflow, prefix: string): RunRecord["threads"] => {
+  const previous = workflow.runs
+    .filter((run) => run.id.startsWith(prefix) && !isActive(run))
+    .toSorted((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+  if (!previous) return {};
+  return Object.fromEntries(
+    workflow.nodes.flatMap((node) => {
+      const thread = previous.threads[node.id];
+      return thread && thread.environmentId === node.environmentId
+        ? [[node.id, { ...thread, seeded: false }]]
+        : [];
+    }),
+  );
+};
 const threadOf = (run: RunRecord, nodeId: string): BoardDriverThread | undefined => {
   const thread = run.threads[nodeId];
   return (
@@ -1120,6 +1147,7 @@ const make = Effect.gen(function* () {
     workflowId: string,
     input: BoardStartRunInput,
     claim?: Effect.Effect<boolean, SqlError>,
+    continueRunsOf?: string,
   ) {
     const result = yield* store
       .transaction(
@@ -1155,12 +1183,13 @@ const make = Effect.gen(function* () {
             status: "running",
             startedAt: yield* now,
             requests: [],
-            threads: {},
+            threads: continueRunsOf === undefined ? {} : carriedThreads(workflow, continueRunsOf),
             definition: {
               nodes: workflow.nodes,
               edges: workflow.edges,
               settings: workflow.settings,
             },
+            ...(continueRunsOf === undefined ? {} : { compactAfter: true }),
           };
           const task: BoardStore.BoardTask = {
             id: input.id,
@@ -1315,8 +1344,50 @@ const make = Effect.gen(function* () {
       Effect.repeat(Schedule.spaced("30 seconds")),
     ),
   );
+  /** Queues /compact in each chat of an ended run whose chats carry into the schedule's next run. */
+  const compacted = new Set<string>();
+  const compactRunChats = Effect.fn("TaskEngine.compactRunChats")(function* (run: RunRecord) {
+    if (!run.compactAfter || isActive(run) || compacted.has(run.id)) return;
+    compacted.add(run.id);
+    for (const [nodeId, thread] of Object.entries(run.threads)) {
+      const key = `${run.id}\0${nodeId}\0compact`;
+      yield* drivers.get(thread.environmentId).pipe(
+        Effect.flatMap((driver) =>
+          driver.send({
+            thread,
+            // Fixed ids: a repeat after a restart is the same command to t3.
+            commandId: CommandId.make(stableId(key, "command")),
+            messageId: MessageId.make(stableId(key, "message")),
+            text: IDLE_COMPACTION_TEXT,
+          }),
+        ),
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not compact a scheduled run's chat", {
+            runId: run.id,
+            nodeId,
+            cause,
+          }),
+        ),
+      );
+    }
+  });
+  yield* forkParked(
+    Effect.gen(function* () {
+      const { sequence } = yield* store.snapshot();
+      for (const workflow of yield* store.listWorkflows())
+        for (const run of workflow.runs) yield* compactRunChats(run);
+      yield* store
+        .events(sequence)
+        .pipe(
+          Stream.runForEach((event) =>
+            event.kind === "run.upserted" ? compactRunChats(event.run) : Effect.void,
+          ),
+        );
+    }).pipe(Effect.catch((cause) => Effect.logError("Board run compaction stopped", { cause }))),
+  );
   const startClaimed: TaskEngine["Service"]["startClaimed"] = Effect.fn("TaskEngine.startClaimed")(
-    (workflowId, input, claim) => startWith(workflowId, input, claim),
+    (workflowId, input, claim, options) =>
+      startWith(workflowId, input, claim, options?.continueRunsOf),
   );
   return TaskEngine.of({ start, startClaimed, stop, openNodeChat });
 });
