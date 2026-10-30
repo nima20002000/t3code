@@ -259,7 +259,14 @@ function resolveGenericFamilyLabel(generic: string): string | null {
   return null;
 }
 
+// Each DOM probe forces a full layout, so resolve a stack once per session, not on every settings visit.
+const defaultFamilyLabels = new Map<string, string | null>();
 export function resolveDefaultFamilyLabel(stack: string): string | null {
+  if (!defaultFamilyLabels.has(stack)) defaultFamilyLabels.set(stack, resolveFamilyLabel(stack));
+  return defaultFamilyLabels.get(stack) ?? null;
+}
+
+function resolveFamilyLabel(stack: string): string | null {
   for (const raw of stack.split(",")) {
     const family = raw.trim().replace(/^(['"])(.*)\1$/, "$2");
     if (family.length === 0) continue;

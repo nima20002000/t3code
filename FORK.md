@@ -74,6 +74,8 @@ a merge (the server route is reserved for the later server phase):
 - `apps/desktop/scripts/dev-electron.mjs`: on Linux the dev app runs with `--disable-gpu` (`T3CODE_DESKTOP_GPU=1` turns
   the GPU back on) after an amdgpu fault during a relaunch took down the desktop. Each launch, restart reason, exit and
   a GPU snapshot go to `.t3/logs/dev-electron.log`, and Chromium's own log to `.t3/logs/electron-<time>.log`.
+- `apps/web/src/appearanceFonts.ts`: `resolveDefaultFamilyLabel` caches its answer per font stack. Each DOM font
+  probe forces a full layout, and Settings → Appearance ran about 20 of them on every visit (~250ms on a large board).
 - `AGENTS.md`: one paragraph pointing agents at this file and the board folders.
 - `pnpm-lock.yaml`: workspace and board dependency lock entries.
 
