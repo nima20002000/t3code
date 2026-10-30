@@ -178,6 +178,20 @@ function isSavedWindow(value: unknown): value is SavedWindow {
   );
 }
 
+/** Opening an open window again brings it to the front, above any window covering it. */
+export function raiseWindow(
+  windows: ReadonlyArray<WindowFlowNode>,
+  id: string,
+  options: WindowOptions,
+): WindowFlowNode[] {
+  const target = windows.find((window) => window.id === id);
+  if (!target) return [...windows];
+  return [
+    ...windows.filter((window) => window !== target),
+    { ...target, data: { ...target.data, ...options } },
+  ];
+}
+
 /** Open windows are this viewer's layout, so they're kept in the browser, per workflow. */
 export function loadWindows(workflowId: string): WindowFlowNode[] {
   try {
@@ -314,26 +328,30 @@ const FADE_MS = 240;
 const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
 const windowSection = (id: string) =>
   document.querySelector<HTMLElement>(`section[data-window-id="${CSS.escape(id)}"]`);
-let wanted: string | null = null;
-let changing = false;
+// Per layer, so a board that went away can't hold up (or answer) the next board's requests.
+const transitions = new WeakMap<HTMLElement, { wanted: string | null; changing: boolean }>();
 
 /**
  * Moves full screen to the window last asked for (null: back to the board), one change at a time,
  * so a quick second request is honoured once the first lands and a closed window is skipped.
  */
-async function requestFullScreen(
+export async function requestFullScreen(
   id: string | null,
   layer: HTMLElement | null,
   apply: (id: string | null) => void,
 ) {
-  wanted = id;
-  if (changing || !layer) {
-    if (!layer) apply(id);
+  if (!layer) {
+    apply(id);
     return;
   }
-  changing = true;
+  const state = transitions.get(layer) ?? { wanted: null, changing: false };
+  transitions.set(layer, state);
+  state.wanted = id;
+  if (state.changing) return;
+  state.changing = true;
   try {
-    for (;;) {
+    while (layer.isConnected) {
+      const { wanted } = state;
       const from = layer.querySelector<HTMLElement>("section[data-window-id]")?.dataset.windowId;
       const shown = from ?? null;
       const to = wanted === null || windowSection(wanted) ? wanted : shown;
@@ -341,7 +359,7 @@ async function requestFullScreen(
       await changeFullScreen(shown, to, apply);
     }
   } finally {
-    changing = false;
+    state.changing = false;
   }
 }
 

@@ -100,7 +100,8 @@ export function runViews<N extends BoardNode>(
         : openOut
           ? { state: "waiting", label: waitingLabel(outgoing) }
           : { state: "queued", label: from ? `Starting · from ${from}` : "Starting" };
-    } else if (isEntry) view = entryOutcome(run!);
+    } else if (facts.turnActive) view = { state: "running", label: "Working" };
+    else if (isEntry) view = entryOutcome(run!);
     else if (current && FAILED.has(current.status))
       view = {
         state: "failed",

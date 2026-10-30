@@ -288,6 +288,7 @@
 /* Block-level so a long state ("Waiting for CI …") ellipsizes inside the circle instead of running past its edge. */
 @utility n-agent-status {
   display: inline-block;
+  flex-shrink: 0;
   max-width: 128px;
   color: var(--text-muted);
   font: var(--type-eyebrow);
@@ -320,6 +321,7 @@
 }
 
 @utility n-agent-name {
+  flex-shrink: 0;
   max-width: 156px;
   overflow: hidden;
   color: var(--text-strong);
@@ -336,6 +338,7 @@
 /* Energy field: a harness-colored light circling a running agent. Decoration only. */
 /* The agent's role and machine under its name. */
 @utility n-agent-role {
+  flex-shrink: 0;
   max-width: calc(100% - 64px);
   overflow: hidden;
   margin-top: 2px;
@@ -357,6 +360,8 @@
   justify-content: center;
   gap: 4px;
   margin-top: 10px;
+  min-height: 0;
+  overflow: hidden;
 }
 @utility n-agent-chat {
   display: grid;

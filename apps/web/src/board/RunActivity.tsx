@@ -58,6 +58,8 @@ export function RunActivityCard(props: {
   readonly workflow: Workflow;
   readonly target: ActivityTarget;
   readonly onClose: () => void;
+  /** Run details are open; on a narrow screen they take the room, so this card steps aside. */
+  readonly detailsOpen?: boolean;
 }) {
   const { workflow, target } = props;
   const run = runToShow(workflow.runs);
@@ -73,7 +75,7 @@ export function RunActivityCard(props: {
   return (
     <aside
       aria-label={`${title} activity`}
-      className="absolute bottom-3 left-3 z-20 flex max-h-[45%] w-[360px] max-w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-xl border bg-background shadow-lg"
+      className={`absolute bottom-3 left-3 z-20 flex max-h-[45%] w-[360px] max-w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-xl border bg-background shadow-lg ${props.detailsOpen ? "max-[900px]:hidden" : ""}`}
     >
       <div className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2">
         <div className="min-w-0">

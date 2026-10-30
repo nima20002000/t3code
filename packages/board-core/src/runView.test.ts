@@ -147,6 +147,16 @@ describe("board run views", () => {
     expect(views.edges.get("Home:Italy")?.signal).toBeUndefined();
   });
 
+  it("shows a live chat turn over the outcome of a run that already ended", () => {
+    const views = runViews(
+      run("failed", [request("r1", "Italy", "returned", "t1")]),
+      nodes,
+      edges,
+      facts(["Home", "Italy"]),
+    );
+    expect(states(views)).toMatchObject({ Home: "running: Working", Italy: "running: Working" });
+  });
+
   it("draws the newest finished run by start time, whatever the stored order", () => {
     const older = { ...run("finished", []), id: "older", startedAt: "2026-10-27T10:00:00.000Z" };
     const newer = { ...run("stopped", []), id: "newer", startedAt: "2026-10-27T11:00:00.000Z" };

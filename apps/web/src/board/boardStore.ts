@@ -28,6 +28,7 @@ import type { KanbanCard } from "@t3tools/board-core/kanban";
 import { Atom } from "effect/reactivity";
 import { useEffect } from "react";
 
+import { agentNodeSize } from "./foreman/signalEdge";
 import { runBoardApi, runBoardMutation, streamBoardEvents } from "./boardApi";
 import { applyBoardEvent, workflowView, type Workflow } from "./boardState";
 
@@ -53,13 +54,22 @@ interface BoardState {
   readonly historyVersion: number;
 }
 
+const CURRENT_KEY = "t3.board.currentWorkflow";
+function storedWorkflowId() {
+  try {
+    return localStorage.getItem(CURRENT_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 // Kept across hot reloads so a reloaded module keeps the atom the mounted page reads.
 const hotData: { boardStateAtom?: Atom.Writable<BoardState> } = import.meta.hot?.data ?? {};
 const boardStateAtom: Atom.Writable<BoardState> =
   hotData.boardStateAtom ??
   Atom.make<BoardState>({
     snapshot: null,
-    currentId: "",
+    currentId: storedWorkflowId(),
     status: "loading",
     error: null,
     historyVersion: 0,
@@ -67,15 +77,26 @@ const boardStateAtom: Atom.Writable<BoardState> =
 hotData.boardStateAtom = boardStateAtom;
 const histories = new Map<string, History>();
 const getState = () => appAtomRegistry.get(boardStateAtom);
-const setState = (patch: Partial<BoardState>) =>
+const setState = (patch: Partial<BoardState>) => {
   appAtomRegistry.set(boardStateAtom, { ...getState(), ...patch });
+  if (patch.currentId) {
+    try {
+      localStorage.setItem(CURRENT_KEY, patch.currentId);
+    } catch {
+      // The selection just isn't remembered.
+    }
+  }
+};
 const getSnapshot = () => getState().snapshot;
 
-function setSnapshot(snapshot: BoardSnapshot) {
+export function setSnapshot(snapshot: BoardSnapshot) {
   const previous = getState();
-  const currentId = snapshot.workflows.some((w) => w.id === previous.currentId)
-    ? previous.currentId
-    : (snapshot.workflows[0]?.id ?? "");
+  const currentId =
+    [previous.currentId, storedWorkflowId()].find((id) =>
+      snapshot.workflows.some((w) => w.id === id),
+    ) ??
+    snapshot.workflows[0]?.id ??
+    "";
   setState({ snapshot, currentId, status: "connected", error: null });
 }
 
@@ -409,12 +430,26 @@ export function renameWorkflow(id: string, name: string) {
     ),
   );
 }
-export function nextNodePosition(workflow: Pick<Workflow, "nodes">) {
+const PLACEMENT_GAP = 16;
+/** The first grid spot where a new agent of this profile clears every existing agent's circle box. */
+export function nextNodePosition(
+  workflow: Pick<Workflow, "nodes">,
+  profile: CoreNode["profile"] = "worker",
+) {
+  const size = agentNodeSize({ profile });
   for (let index = 0; ; index++) {
     const x = 40 + (index % 4) * 300,
       y = 40 + Math.floor(index / 4) * 230;
-    if (!workflow.nodes.some((node) => Math.abs(node.x - x) < 300 && Math.abs(node.y - y) < 230))
-      return { x, y };
+    const clear = workflow.nodes.every((node) => {
+      const other = agentNodeSize(node);
+      return (
+        x + size + PLACEMENT_GAP <= node.x ||
+        node.x + other + PLACEMENT_GAP <= x ||
+        y + size + PLACEMENT_GAP <= node.y ||
+        node.y + other + PLACEMENT_GAP <= y
+      );
+    });
+    if (clear) return { x, y };
   }
 }
 export async function createNode(workflowId: string, input: BoardCreateNodeInput) {
