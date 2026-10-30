@@ -1301,6 +1301,35 @@ it.effect("Stop moves the stopped work's cards out of doing", () =>
   }),
 );
 
+it.effect("Stop moves the run's cards still in todo to blocked", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(seed(store, setupWorkflow()));
+      yield* engine.start("workflow", { id: "run:stop-todo", task: "Delegate" });
+      yield* harness.reply(
+        yield* Queue.take(harness.sends),
+        request.replace('"kanban":[', '"kanban":[{"op":"create","title":"later"},'),
+      );
+      yield* Queue.take(harness.sends);
+      yield* Queue.take(harness.sends);
+      yield* engine.stop("workflow", "run:stop-todo");
+      const cards = yield* store.listKanban("workflow");
+      assert.deepStrictEqual(
+        cards.map((card) => [card.title, card.status]),
+        [
+          ["later", "blocked"],
+          ["first", "blocked"],
+          ["second", "blocked"],
+        ],
+      );
+      assert.strictEqual(cards.find((card) => card.title === "later")?.reason, "Stopped by user.");
+    }).pipe(Effect.provide(engineWith(harness.driver)));
+  }),
+);
+
 it.effect("finishes a Stop within seconds once the agent's machine is back", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness;

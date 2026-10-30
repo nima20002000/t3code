@@ -424,6 +424,18 @@ const make = Effect.gen(function* () {
             }
             if (!workflow || !run || run.status !== "running") return { targets: selected, run };
             const at = yield* now;
+            if (workflowId !== undefined) {
+              const waiting = (yield* store.listKanban(workflow.id)).filter(
+                (card) => card.runId === runId && card.status === "todo",
+              );
+              if (waiting.length > 0)
+                yield* writeCards(workflow.id, {
+                  upserted: waiting.map((card) =>
+                    moveCard(card, "blocked", at, "Stopped by user."),
+                  ),
+                  deleted: [],
+                });
+            }
             const updated: RunRecord = {
               ...run,
               ...(workflowId === undefined
