@@ -5,7 +5,8 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { useRef, useState, type FormEvent } from "react";
+import type { BoardPeer } from "@t3tools/board-core/http";
+import { useId, useRef, useState, type FormEvent } from "react";
 import * as Schema from "effect/Schema";
 
 import {
@@ -16,6 +17,7 @@ import {
   useCurrentWorkflow,
   type BoardNode,
 } from "./boardStore";
+import { AddComputerForm } from "./AddComputerForm";
 import { pairConnectedMachine } from "./boardApi";
 import { loadWindows } from "./BoardWindows";
 import { useBoardMachines } from "./useBoardMachines";
@@ -57,7 +59,15 @@ export function AgentDialog(props: {
   readonly onSendInstructions?: () => void;
 }) {
   const { node } = props;
-  const connected = useBoardMachines();
+  const machines = useBoardMachines();
+  const machineFieldId = useId();
+  const [addingComputer, setAddingComputer] = useState(false);
+  // A just-paired computer reaches the board's peer list a moment after pairing returns.
+  const [added, setAdded] = useState<BoardPeer | null>(null);
+  const connected =
+    added && !machines.some((machine) => machine.environmentId === added.environmentId)
+      ? [...machines, { environmentId: added.environmentId, label: added.name, paired: true }]
+      : machines;
   const providersByEnvironment = useEnvironmentProviders();
   const workflow = useCurrentWorkflow();
   const workspace = useBoardWorkspaces().find((item) => item.id === workflow.workspaceId);
@@ -176,24 +186,46 @@ export function AgentDialog(props: {
           </option>
         </select>
       </label>
-      <label className="flex flex-col gap-1">
-        Machine
-        <select
-          className={FIELD_CLASS}
-          value={environmentId}
-          onChange={(event) => {
-            setEnvironmentId(event.target.value as EnvironmentId | "");
-          }}
-        >
-          <option value="">Select...</option>
-          {connected.map((environment) => (
-            <option key={environment.environmentId} value={environment.environmentId}>
-              {environment.label}
-              {environment.paired ? "" : " (pairs when added)"}
-            </option>
-          ))}
-        </select>
-      </label>
+      <div className="flex flex-col gap-1">
+        <label htmlFor={machineFieldId}>Machine</label>
+        <div className="flex gap-2">
+          <select
+            id={machineFieldId}
+            className={FIELD_CLASS}
+            value={environmentId}
+            onChange={(event) => {
+              setEnvironmentId(event.target.value as EnvironmentId | "");
+            }}
+          >
+            <option value="">Select...</option>
+            {connected.map((environment) => (
+              <option key={environment.environmentId} value={environment.environmentId}>
+                {environment.label}
+                {environment.paired ? "" : " (pairs when added)"}
+              </option>
+            ))}
+          </select>
+          <Button
+            type="button"
+            variant="outline"
+            aria-expanded={addingComputer}
+            onClick={() => setAddingComputer((open) => !open)}
+          >
+            Add a computer
+          </Button>
+        </div>
+        {addingComputer ? (
+          <div className="rounded-md border p-3">
+            <AddComputerForm
+              onAdded={(peer) => {
+                setAdded(peer);
+                setEnvironmentId(peer.environmentId);
+                setAddingComputer(false);
+              }}
+            />
+          </div>
+        ) : null}
+      </div>
       <div className="flex flex-col gap-1">
         Folder
         <p className="text-muted-foreground">
