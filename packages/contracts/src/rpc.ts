@@ -268,6 +268,7 @@ import {
   DiscoveredLocalServerList,
   ConfiguredLocalServerUrls,
   PreviewCloseInput,
+  PreviewMoveTabsInput,
   PreviewError,
   PreviewEvent,
   PreviewListInput,
@@ -477,6 +478,7 @@ export const WS_METHODS = {
   previewResize: "preview.resize",
   previewAdjust: "preview.adjust",
   previewClose: "preview.close",
+  previewMoveTabs: "preview.moveTabs",
   previewList: "preview.list",
   previewClearProfile: "preview.clearProfile",
   previewSetupHost: "preview.setupHost",
@@ -1587,6 +1589,11 @@ const WsPreviewCloseRpc = Rpc.make(WS_METHODS.previewClose, {
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
+const WsPreviewMoveTabsRpc = Rpc.make(WS_METHODS.previewMoveTabs, {
+  payload: PreviewMoveTabsInput,
+  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
+});
+
 const WsPreviewListRpc = Rpc.make(WS_METHODS.previewList, {
   payload: PreviewListInput,
   success: PreviewListResult,
@@ -2119,6 +2126,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewResizeRpc,
   WsPreviewAdjustRpc,
   WsPreviewCloseRpc,
+  WsPreviewMoveTabsRpc,
   WsPreviewListRpc,
   WsPreviewClearProfileRpc,
   WsPreviewSetupHostRpc,

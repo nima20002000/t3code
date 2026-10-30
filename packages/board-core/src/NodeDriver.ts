@@ -102,8 +102,8 @@ export interface NodeDriver {
   ) => Effect.Effect<void, NodeDriverError>;
   readonly launch: (input: BoardDriverLaunch) => Effect.Effect<BoardDriverThread, NodeDriverError>;
   /**
-   * Reopens the machine's browser tabs of `from` in `to`, same pages and browser profile (so logins
-   * stay), and closes them in `from`: an agent's new chat keeps the browser its last one used.
+   * Hands the machine's browser tabs of `from` to `to` with their live pages, so they never reload
+   * and the agent of `to` reuses them: an agent's new chat keeps the browser its last one used.
    */
   readonly carryBrowserTabs: (input: {
     readonly environmentId: EnvironmentId;

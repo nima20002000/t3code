@@ -27,7 +27,7 @@ import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
-import { PreviewControlRequiredError } from "@t3tools/contracts";
+import { PreviewControlRequiredError, type PreviewMoveTabsInput } from "@t3tools/contracts";
 
 export class PreviewManager extends Context.Service<
   PreviewManager,
@@ -56,11 +56,24 @@ export class PreviewManager extends Context.Service<
       input: PreviewAdjustInput,
     ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
     readonly close: (input: PreviewCloseInput) => Effect.Effect<void, PreviewError>;
+    /**
+     * Hands the server tabs of `from` to `to` under the same tab ids: `to` sees them open, `from`
+     * sees them close. Move hooks run inside the lock first, so the live pages move with them.
+     */
+    readonly moveTabs: (input: PreviewMoveTabsInput) => Effect.Effect<void>;
+    /** The server browser moves its live page here; a hook must not block. */
+    readonly onMove: (hook: (move: PreviewTabMove) => void) => Effect.Effect<void>;
     readonly list: (input: PreviewListInput) => Effect.Effect<PreviewListResult>;
     readonly events: Stream.Stream<PreviewEvent>;
     readonly subscribeEvents: Effect.Effect<PubSub.Subscription<PreviewEvent>, never, Scope.Scope>;
   }
 >()("t3/preview/Manager/PreviewManager") {}
+
+export interface PreviewTabMove {
+  readonly from: string;
+  readonly to: string;
+  readonly tabId: string;
+}
 
 interface PreviewSessionState {
   readonly threadId: string;
@@ -402,6 +415,60 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     },
   );
 
+  const moveHooks: Array<(move: PreviewTabMove) => void> = [];
+  const onMove: PreviewManager["Service"]["onMove"] = (hook) =>
+    Effect.sync(() => {
+      moveHooks.push(hook);
+    });
+
+  const moveTabs: PreviewManager["Service"]["moveTabs"] = Effect.fn("PreviewManager.moveTabs")(
+    function* (input) {
+      const createdAt = yield* currentIsoTimestamp;
+      yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
+        Effect.gen(function* () {
+          const sessions = new Map(state.sessions);
+          let revision = state.revision;
+          for (const session of sessionsForThread(state, input.from)) {
+            if (session.snapshot.runtime !== "server") continue;
+            const snapshot: PreviewSessionSnapshot = {
+              ...session.snapshot,
+              threadId: input.to,
+              updatedAt: createdAt,
+            };
+            sessions.delete(compositeKey(input.from, session.tabId));
+            sessions.set(compositeKey(input.to, session.tabId), {
+              threadId: input.to,
+              tabId: session.tabId,
+              snapshot,
+            });
+            for (const hook of moveHooks)
+              hook({ from: input.from, to: input.to, tabId: session.tabId });
+            revision += 1;
+            yield* PubSub.publish(eventsPubSub, {
+              type: "opened",
+              threadId: input.to,
+              tabId: session.tabId,
+              createdAt,
+              serverEpoch,
+              revision,
+              snapshot,
+            });
+            revision += 1;
+            yield* PubSub.publish(eventsPubSub, {
+              type: "closed",
+              threadId: input.from,
+              tabId: session.tabId,
+              createdAt,
+              serverEpoch,
+              revision,
+            });
+          }
+          return [undefined, { sessions, revision }] as const;
+        }),
+      );
+    },
+  );
+
   const list: PreviewManager["Service"]["list"] = Effect.fn("PreviewManager.list")(
     function* (input) {
       return yield* SynchronizedRef.get(stateRef).pipe(
@@ -455,6 +522,8 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     resize,
     adjust,
     close,
+    moveTabs,
+    onMove,
     list,
     events,
     subscribeEvents: PubSub.subscribe(eventsPubSub),

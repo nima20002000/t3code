@@ -290,8 +290,10 @@ interface Recording {
 }
 
 interface ServerTab {
-  readonly threadId: ThreadId;
+  /** Changes when the tab moves to another chat (`moveTabs`); the page stays. */
+  threadId: ThreadId;
   readonly tabId: string;
+  readonly downloadKey: string;
   readonly page: Page;
   readonly cdp: CDPSession;
   readonly frameSessions: Map<Frame, CDPSession>;
@@ -823,6 +825,7 @@ const make = Effect.gen(function* () {
     const tab: ServerTab = {
       threadId: ThreadId.make(snapshot.threadId),
       tabId: snapshot.tabId,
+      downloadKey: tabKey(snapshot.threadId, snapshot.tabId),
       page,
       cdp,
       frameSessions: new Map(),
@@ -993,7 +996,7 @@ const make = Effect.gen(function* () {
   const downloadDir = (tab: ServerTab) =>
     NodePath.join(
       downloadsRoot,
-      NodeCrypto.createHash("sha256").update(tabKey(tab.threadId, tab.tabId)).digest("hex"),
+      NodeCrypto.createHash("sha256").update(tab.downloadKey).digest("hex"),
     );
 
   const clearAbortedNavigation = (tab: ServerTab) => {
@@ -1374,6 +1377,18 @@ const make = Effect.gen(function* () {
           right.usedAt - left.usedAt,
       )[0]
     );
+  };
+
+  /**
+   * The chat's tab nobody else claims, such as one opened from the chat's browser or handed over
+   * from the agent's previous chat, while the caller has none of its own there.
+   */
+  const unownedThreadTab = (threadId: string, agentSessionId: string) => {
+    const threadTabs = [...tabs.values()].filter((tab) => tab.threadId === threadId);
+    if (threadTabs.some((tab) => tab.control.agentId === agentSessionId)) return undefined;
+    return threadTabs
+      .filter((tab) => tab.control.agentId === null && tab.control.controller === null)
+      .sort((left, right) => right.usedAt - left.usedAt)[0];
   };
 
   const tabOwner = (tab: ServerTab) =>
@@ -1851,7 +1866,9 @@ const make = Effect.gen(function* () {
         const existing =
           found && (request.tabIdExplicit || found.control.agentId === request.agentSessionId)
             ? found
-            : undefined;
+            : reuse && !request.tabIdExplicit && open.profileId === undefined
+              ? unownedThreadTab(request.threadId, request.agentSessionId)
+              : undefined;
         const navigationTimeout = Math.min(request.timeoutMs, NAVIGATION_TIMEOUT_MS);
         const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
         if (!existing) {
@@ -2521,6 +2538,17 @@ const make = Effect.gen(function* () {
   });
 
   yield* manager.events.pipe(Stream.runForEach(mirrorManagerEvent), Effect.forkScoped);
+  // The page goes with its session. The desktop app keys its page by chat, so a desktop tab stays
+  // behind: the `closed` event drops it and the `opened` one starts a new page in the new chat.
+  yield* manager.onMove((move) => {
+    const tab = tabs.get(tabKey(move.from, move.tabId));
+    if (!tab || tab.desktop) return;
+    tabs.delete(tabKey(move.from, move.tabId));
+    tab.threadId = ThreadId.make(move.to);
+    tab.control.disown();
+    tabs.set(tabKey(move.to, move.tabId), tab);
+    reportLiveTabs();
+  });
   if (
     (yield* browserSettings).mode === "headless" &&
     !PreviewBrowserHost.sandboxDisabled(yield* HostProcess.Environment) &&

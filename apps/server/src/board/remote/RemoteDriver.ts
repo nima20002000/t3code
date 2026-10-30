@@ -333,6 +333,15 @@ export function make(store: PeerStore): NodeDriver {
     carryBrowserTabs: Effect.fn("RemoteDriver.carryBrowserTabs")(function* (input) {
       yield* useClient(store, input, (client) =>
         Effect.gen(function* () {
+          const moved = yield* client[WS_METHODS.previewMoveTabs]({
+            from: input.from,
+            to: input.to,
+          }).pipe(
+            Effect.as(true),
+            // A machine on a release without `preview.moveTabs` reopens the pages instead.
+            Effect.orElseSucceed(() => false),
+          );
+          if (moved) return;
           const { sessions } = yield* client[WS_METHODS.previewList]({ threadId: input.from });
           for (const session of sessions) {
             if (session.runtime !== "server" || session.navStatus._tag === "Idle") continue;

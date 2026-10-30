@@ -221,6 +221,13 @@ export const PreviewCloseInput = Schema.Struct({
 });
 export type PreviewCloseInput = typeof PreviewCloseInput.Type;
 
+/** Hands every server browser tab of `from` to `to`, keeping the live pages. */
+export const PreviewMoveTabsInput = Schema.Struct({
+  from: ThreadId,
+  to: ThreadId,
+});
+export type PreviewMoveTabsInput = typeof PreviewMoveTabsInput.Type;
+
 export const BROWSER_RECORDING_FRAME_RATES = [30, 60] as const;
 export const BrowserRecordingFrameRate = Schema.Literals(BROWSER_RECORDING_FRAME_RATES);
 export type BrowserRecordingFrameRate = typeof BrowserRecordingFrameRate.Type;

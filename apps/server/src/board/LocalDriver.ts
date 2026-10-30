@@ -75,18 +75,7 @@ const make = Effect.gen(function* () {
   )(
     function* (input) {
       if (Option.isNone(previews)) return;
-      const manager = previews.value;
-      const { sessions } = yield* manager.list({ threadId: input.from });
-      for (const session of sessions) {
-        if (session.runtime !== "server" || session.navStatus._tag === "Idle") continue;
-        yield* manager.open({
-          threadId: input.to,
-          url: session.navStatus.url,
-          runtime: "server",
-          ...(session.profileId === undefined ? {} : { profileId: session.profileId }),
-        });
-        yield* manager.close({ threadId: input.from, tabId: session.tabId });
-      }
+      yield* previews.value.moveTabs({ from: input.from, to: input.to });
     },
     Effect.mapError(error("browser")),
   );

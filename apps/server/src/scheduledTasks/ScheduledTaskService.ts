@@ -1053,35 +1053,11 @@ export const layer = Layer.effect(
 
     // Optional so tests and servers without a browser still run schedules.
     const previews = yield* Effect.serviceOption(PreviewManager.PreviewManager);
-    /** Moves the server browser tabs of `from` to `to`: same pages, same profile, so logins stay. */
+    /** Hands the server browser tabs of `from` to `to` with their live pages, so logins stay. */
     const carryBrowserTabs = (from: ThreadId, to: ThreadId) =>
       Option.match(previews, {
         onNone: () => Effect.void,
-        onSome: (manager) =>
-          manager.list({ threadId: from }).pipe(
-            Effect.flatMap(({ sessions }) =>
-              Effect.forEach(
-                sessions.filter(
-                  (session) => session.runtime === "server" && session.navStatus._tag !== "Idle",
-                ),
-                (session) =>
-                  manager
-                    .open({
-                      threadId: to,
-                      ...(session.navStatus._tag === "Idle" ? {} : { url: session.navStatus.url }),
-                      runtime: "server",
-                      ...(session.profileId === undefined ? {} : { profileId: session.profileId }),
-                    })
-                    .pipe(Effect.andThen(manager.close({ threadId: from, tabId: session.tabId }))),
-                { discard: true },
-              ),
-            ),
-            Effect.catch((cause) =>
-              Effect.logWarning("Scheduled task could not move browser tabs to the new chat", {
-                cause,
-              }),
-            ),
-          ),
+        onSome: (manager) => manager.moveTabs({ from, to }),
       });
     const held = new Set<string>();
     const projectBusy = (projectId: ProjectId) =>

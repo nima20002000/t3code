@@ -19,7 +19,7 @@ const settle = (work: Promise<unknown>) =>
 
 /** Reserves control immediately, but drains running work before the new owner can act. */
 export class SessionControl {
-  readonly agentId: string | null;
+  private ownerAgent: string | null;
   private readonly onGenerationChange: () => void;
   private tail: Promise<unknown> = Promise.resolve();
   private pending: Promise<void> = Promise.resolve();
@@ -29,8 +29,17 @@ export class SessionControl {
   private closed = false;
 
   constructor(agentId: string | null, onGenerationChange: () => void = () => {}) {
-    this.agentId = agentId;
+    this.ownerAgent = agentId;
     this.onGenerationChange = onGenerationChange;
+  }
+
+  get agentId() {
+    return this.ownerAgent;
+  }
+
+  /** A tab handed to another chat belongs to no agent until one there uses it. */
+  disown() {
+    this.ownerAgent = null;
   }
 
   get controller() {

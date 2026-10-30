@@ -584,6 +584,8 @@ const make = Effect.gen(function* () {
         ...(fresh ? { startedAt: yield* now } : {}),
       };
       const before = currentNodeThread(workflow, nodeId);
+      // A fresh chat always becomes the node's chat, so its tabs move before the board shows it.
+      if (fresh) yield* carryTabs(driver, before, chat);
       const opened = yield* store.transaction(
         Effect.gen(function* () {
           const current = yield* store.getWorkflow(workflowId);
@@ -607,7 +609,7 @@ const make = Effect.gen(function* () {
           return next;
         }),
       );
-      if (opened.chat?.threadId === threadId) yield* carryTabs(driver, before, chat);
+      if (!fresh && opened.chat?.threadId === threadId) yield* carryTabs(driver, before, chat);
       return opened;
     },
     Effect.catchTags({
@@ -680,7 +682,8 @@ const make = Effect.gen(function* () {
       threadId,
       seeded: false,
     };
-    const before = currentNodeThread(workflow, node.id);
+    // Before the board shows the new thread, so a browser window on the board never goes empty.
+    yield* carryTabs(driver, currentNodeThread(workflow, node.id), thread);
     yield* store.transaction(
       Effect.gen(function* () {
         const current = yield* store.getWorkflow(workflowId);
@@ -692,7 +695,6 @@ const make = Effect.gen(function* () {
           });
       }),
     );
-    yield* carryTabs(driver, before, thread);
     return thread;
   });
   const seedInstructions = Effect.fn("TaskEngine.seedInstructions")(function* (

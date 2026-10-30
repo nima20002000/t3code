@@ -3029,6 +3029,7 @@ export const layerWsRpc = (
         [WS_METHODS.previewResize]: (input) => previewManager.resize(input),
         [WS_METHODS.previewAdjust]: (input) => previewManager.adjust(input),
         [WS_METHODS.previewClose]: (input) => previewManager.close(input),
+        [WS_METHODS.previewMoveTabs]: (input) => previewManager.moveTabs(input),
         [WS_METHODS.previewList]: (input) => previewManager.list(input),
         [WS_METHODS.previewClearProfile]: (input) => serverBrowser.clearProfile(input.profileId),
         [WS_METHODS.previewSetupHost]: () => serverBrowser.setupHost,

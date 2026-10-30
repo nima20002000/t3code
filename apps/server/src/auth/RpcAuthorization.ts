@@ -184,6 +184,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.previewResize]: AuthPreviewOperateScope,
   [WS_METHODS.previewAdjust]: AuthPreviewOperateScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
+  [WS_METHODS.previewMoveTabs]: AuthPreviewOperateScope,
   [WS_METHODS.previewList]: AuthOrchestrationReadScope,
   [WS_METHODS.previewClearProfile]: AuthPreviewOperateScope,
   [WS_METHODS.previewSetupHost]: AuthEnvironmentMaintainScope,

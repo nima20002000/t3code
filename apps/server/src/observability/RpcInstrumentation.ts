@@ -195,6 +195,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.previewResize]: "preview",
   [WS_METHODS.previewAdjust]: "preview",
   [WS_METHODS.previewClose]: "preview",
+  [WS_METHODS.previewMoveTabs]: "preview",
   [WS_METHODS.previewList]: "preview",
   [WS_METHODS.previewClearProfile]: "preview",
   [WS_METHODS.previewSetupHost]: "preview",

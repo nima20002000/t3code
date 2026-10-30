@@ -54,6 +54,12 @@ a merge (the server route is reserved for the later server phase):
   project is running, and a run held that way is never counted as missed), stored in
   `schedule_json` so no core migration is needed. Board schedules use them (workflow schedules through the same
   `nextScheduledRunAtFrom`); a published t3 ignores all four.
+- An agent's new chat keeps its browser tabs live: `PreviewManager.moveTabs` in `apps/server/src/preview/Manager.ts`
+  (also `preview.moveTabs` in `packages/contracts/src/preview.ts`, `packages/contracts/src/rpc.ts`, `apps/server/src/ws.ts`,
+  `apps/server/src/auth/RpcAuthorization.ts` and `apps/server/src/observability/RpcInstrumentation.ts`) hands a chat's server
+  tabs to another under the same tab ids; `apps/server/src/preview/ServerBrowser.ts` moves the live page with it and drops the
+  old agent's claim (`disown` in `apps/server/src/preview/SessionControl.ts`), and `preview_open` without a tabId reuses the
+  chat's tab no agent owns (tested in `ServerBrowser.test.ts`). Board drivers and the schedule's `new_thread` use it.
 - `apps/web/src/index.css`: one `@import` of `board/styles/board.css`, so Tailwind and the lint rules know the board's classes.
 - `packages/contracts/src/project.ts`, `packages/contracts/src/rpc.ts`, `apps/server/src/ws.ts`,
   `apps/server/src/auth/RpcAuthorization.ts`, `apps/server/src/observability/RpcInstrumentation.ts`,

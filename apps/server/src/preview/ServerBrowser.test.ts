@@ -1301,6 +1301,41 @@ it.live("a session's own tab stays its default while other sessions' tabs are li
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a tab handed to another chat keeps its page, and that chat's agent reuses it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      yield* broker.invoke({
+        scope,
+        operation: "navigate",
+        input: { url: "https://example.com/signed-in" },
+      });
+      const next = ThreadId.make("browser-test-next-thread");
+      yield* manager.moveTabs({ from: scope.thread.threadId, to: next });
+      const nextAgent = {
+        ...scope,
+        thread: { ...testThread, threadId: next, providerSessionId: "agent-b" },
+      };
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: nextAgent,
+        operation: "open",
+        input: { show: false },
+      });
+      expect(opened).toMatchObject({ tabId, url: "https://example.com/signed-in" });
+      expect(contexts).toHaveLength(1);
+      expect(contexts[0]!.page.isClosed()).toBe(false);
+      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toEqual([]);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: nextAgent,
+        operation: "status",
+        input: {},
+      });
+      expect(status.tabs).toEqual([expect.objectContaining({ tabId, owner: "unclaimed" })]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live(
   "preview_open picks a reported profile by id or name and defaults to the reported one",
   () =>
