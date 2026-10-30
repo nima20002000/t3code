@@ -324,7 +324,7 @@ it.live("runs a board request and interrupts through the real server and orchest
           id: "remote-schedule",
           workflowId: "workflow",
           task: "Scheduled remote work",
-          everyMs: 60_000,
+          timing: { type: "interval", everyMs: 60_000 },
           enabled: true,
         })).status,
         200,

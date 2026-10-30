@@ -31,6 +31,13 @@ a merge (the server route is reserved for the later server phase):
   (the board's browser windows run it in the agent's terminal).
 - `apps/server/src/cli/browser.ts`, `apps/server/src/preview/PreviewBrowserHost.ts` and `apps/server/src/preview/PreviewBrowserHost.test.ts`: `t3 browser setup` finds
   sbin tools under `sudo env "PATH=$PATH"` and treats a written but unloaded AppArmor profile as not set up.
+- `packages/contracts/src/scheduledTask.ts`, `apps/server/src/scheduledTasks/ScheduledTaskService.ts`,
+  `apps/server/src/scheduledTasks/Schedule.ts` and `apps/server/src/scheduledTasks/ScheduledTaskService.interval.test.ts`:
+  a scheduled task's optional `maxRuns` (scheduled runs stop and the task pauses once `runCount` reaches it),
+  `startAt` (no run before it; with `maxRuns` 1 a one-off, via `nextScheduledRunAtFrom`) and `beforeRun`
+  (`compact` sends `/compact` first; `new_thread` launches a fresh thread and binds the task to it), stored in
+  `schedule_json` so no core migration is needed. Board schedules use them (workflow schedules through the same
+  `nextScheduledRunAtFrom`); a published t3 ignores all three.
 - `apps/web/src/index.css`: one `@import` of `board/styles/board.css`, so Tailwind and the lint rules know the board's classes.
 - `AGENTS.md`: one paragraph pointing agents at this file and the board folders.
 - `pnpm-lock.yaml`: workspace and board dependency lock entries.

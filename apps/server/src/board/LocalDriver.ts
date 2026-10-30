@@ -10,7 +10,7 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import { latestContinuation } from "./restartContinuation.ts";
-import { ProjectService, ThreadLaunch, ThreadManagement } from "./upstream.ts";
+import { ProjectService, ScheduledTasks, ThreadLaunch, ThreadManagement } from "./upstream.ts";
 
 export class LocalDriver extends Context.Service<LocalDriver, NodeDriver>()(
   "t3/board/LocalDriver",
@@ -20,6 +20,7 @@ const make = Effect.gen(function* () {
   const launchService = yield* ThreadLaunch.ThreadLaunchService;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
+  const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const error = (operation: NodeDriverError["operation"]) => (cause: unknown) =>
@@ -226,7 +227,29 @@ const make = Effect.gen(function* () {
     },
     Effect.mapError(error("deleteProject")),
   );
+  const getScheduledTask: NodeDriver["getScheduledTask"] = (input) =>
+    scheduledTasks.list().pipe(
+      Effect.map(({ tasks }) => tasks.find((task) => task.id === input.taskId) ?? null),
+      Effect.mapError(error("schedule")),
+    );
+  const upsertScheduledTask: NodeDriver["upsertScheduledTask"] = (input) =>
+    scheduledTasks.upsert({ ...input.task, createdBy: "system", creationSource: "server" }).pipe(
+      Effect.map((result) => result.task),
+      Effect.mapError(error("schedule")),
+    );
+  const setScheduledTaskEnabled: NodeDriver["setScheduledTaskEnabled"] = (input) =>
+    scheduledTasks
+      .setEnabled({ id: input.taskId, enabled: input.enabled })
+      .pipe(Effect.asVoid, Effect.mapError(error("schedule")));
+  const deleteScheduledTask: NodeDriver["deleteScheduledTask"] = (input) =>
+    scheduledTasks
+      .delete({ id: input.taskId })
+      .pipe(Effect.asVoid, Effect.mapError(error("schedule")));
   return LocalDriver.of({
+    getScheduledTask,
+    upsertScheduledTask,
+    setScheduledTaskEnabled,
+    deleteScheduledTask,
     launch,
     send,
     subscribeSettled,

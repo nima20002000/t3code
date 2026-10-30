@@ -81,7 +81,8 @@ export {
   usePrimaryEnvironmentId,
 } from "../state/environments";
 export { environmentSummaries } from "../state/presentation";
-export { EMPTY_SERVER_PROVIDERS } from "../state/server";
+export { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../state/server";
+export { useEnvironmentQuery } from "../state/query";
 export { environmentSession, readPreparedConnection, readEnvironmentScope } from "../state/session";
 export { environmentThreadDetails, threadEnvironment } from "../state/threads";
 export { useOrchestrationCommand } from "../state/use-orchestration-command";

@@ -10,7 +10,7 @@ import * as Stream from "effect/Stream";
 import * as LocalDriver from "./LocalDriver.ts";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import { ProjectService, ThreadLaunch, ThreadManagement } from "./upstream.ts";
+import { ProjectService, ScheduledTasks, ThreadLaunch, ThreadManagement } from "./upstream.ts";
 
 const thread = {
   environmentId: EnvironmentId.make("env"),
@@ -50,6 +50,7 @@ it.effect("matches a run finished by a restart continuation to the message that 
       Layer.provide(
         Layer.succeed(ProjectService.ProjectService, ProjectService.ProjectService.of({} as never)),
       ),
+      Layer.provide(Layer.mock(ScheduledTasks.ScheduledTaskService)({})),
     );
     const settled = yield* Effect.gen(function* () {
       const driver = yield* LocalDriver.LocalDriver;
@@ -93,6 +94,7 @@ const projectDriver = (projects: Partial<ProjectService.ProjectService["Service"
         ProjectService.ProjectService.of(projects as never),
       ),
     ),
+    Layer.provide(Layer.mock(ScheduledTasks.ScheduledTaskService)({})),
   );
 
 it.effect("creates a missing workspace project with its folder, and leaves an existing one", () =>

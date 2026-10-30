@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as BoardStore from "./BoardStore.ts";
 import * as TaskEngine from "./TaskEngine.ts";
+import { boardNow, missedBoardRun, nextBoardRunAt } from "./boardTiming.ts";
 import { Scheduler } from "./upstream.ts";
 
 export const layer = Layer.effectDiscard(
@@ -11,7 +12,8 @@ export const layer = Layer.effectDiscard(
     const store = yield* BoardStore.BoardStore;
     const engine = yield* TaskEngine.TaskEngine;
     const runDue = Effect.fn("BoardScheduler.runDue")(function* () {
-      const currentTime = DateTime.toEpochMillis(yield* DateTime.now);
+      const now = yield* boardNow;
+      const currentTime = DateTime.toEpochMillis(now);
       const schedules = yield* store.listSchedules();
       for (const schedule of schedules) {
         const { id } = schedule;
@@ -21,19 +23,24 @@ export const layer = Layer.effectDiscard(
           const current = (yield* store.listSchedules()).find((entry) => entry.id === id);
           if (!current?.enabled || current.nextRunAt !== dueAt || Date.parse(dueAt) > currentTime)
             return false;
-          const nextRunAt = DateTime.formatIso(
-            DateTime.makeUnsafe(
-              Math.max(Date.parse(dueAt) + current.everyMs, currentTime + current.everyMs),
-            ),
+          const workflow = yield* store.getWorkflow(current.workflowId);
+          const busy = workflow?.runs.some(
+            (run) => run.status === "running" || run.status === "stopping",
           );
-          const updated = { ...current, nextRunAt };
+          const skipped = busy || missedBoardRun(current.timing, dueAt, now);
+          // Only a run that starts uses up one of the schedule's runs.
+          const runCount = current.runCount + (skipped ? 0 : 1);
+          const counted = { ...current, runCount };
+          const nextRunAt = nextBoardRunAt(counted, now);
+          const used = current.maxRuns !== undefined && runCount >= current.maxRuns;
+          const updated = { ...counted, nextRunAt, enabled: current.enabled && !used };
           yield* store.putSchedule(updated);
           yield* store.appendEvent({ kind: "schedule.upserted", schedule: updated });
-          const workflow = yield* store.getWorkflow(current.workflowId);
-          if (workflow?.runs.some((run) => run.status === "running" || run.status === "stopping")) {
-            yield* Effect.logInfo("Board schedule skipped because a run is active", {
+          if (skipped) {
+            yield* Effect.logInfo("Board schedule skipped a run", {
               scheduleId: id,
               dueAt,
+              reason: busy ? "a run is active" : "missed while the hub was off",
             });
             return false;
           }

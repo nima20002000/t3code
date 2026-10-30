@@ -20,6 +20,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as BoardHttp from "./BoardHttp.ts";
 
@@ -53,6 +54,7 @@ const routes = Layer.merge(authRoutes, BoardHttp.layer).pipe(
   Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
   Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+  Layer.provide(Layer.mock(ScheduledTasks.ScheduledTaskService)({})),
   Layer.provideMerge(
     HttpPlatform.layer.pipe(
       Layer.provideMerge(NodeServices.layer),

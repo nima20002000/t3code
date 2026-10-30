@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   type BoardCreateNodeInput,
   type BoardNewNodeChatInput,
+  type BoardSaveNodeScheduleInput,
   type BoardUpdateNodeInput,
   type BoardPeer,
   type BoardSchedule,
@@ -487,6 +488,38 @@ export async function newNodeChat(id: string, settings: BoardNewNodeChatInput) {
     reportError("Could not start a new chat", error);
     return false;
   }
+}
+/** The agent's schedule lives on its machine; these calls go through the hub, which keeps it in step. */
+export function saveNodeSchedule(nodeId: string, input: BoardSaveNodeScheduleInput) {
+  const workflowId = getCurrentWorkflow().id;
+  return runBoardMutation((client) =>
+    client.saveNodeSchedule({ headers: {}, params: { workflowId, nodeId }, payload: input }),
+  );
+}
+export function setNodeScheduleEnabled(nodeId: string, enabled: boolean) {
+  const workflowId = getCurrentWorkflow().id;
+  return runBoardMutation((client) =>
+    client.setNodeScheduleEnabled({
+      headers: {},
+      params: { workflowId, nodeId },
+      payload: { enabled },
+    }),
+  );
+}
+export function deleteNodeSchedule(nodeId: string) {
+  const workflowId = getCurrentWorkflow().id;
+  return runBoardMutation((client) =>
+    client.deleteNodeSchedule({ headers: {}, params: { workflowId, nodeId } }),
+  );
+}
+/** Moves the node's chat to the thread a "new chat" firing started while the board was away. */
+export function syncNodeSchedule(nodeId: string) {
+  const workflowId = getCurrentWorkflow().id;
+  perform("Could not follow the scheduled chat", () =>
+    runBoardApi((client) =>
+      client.syncNodeSchedule({ headers: {}, params: { workflowId, nodeId } }),
+    ),
+  );
 }
 export function renameNode(id: string, name: string) {
   if (name.trim()) patchNode(id, { name: name.trim() });

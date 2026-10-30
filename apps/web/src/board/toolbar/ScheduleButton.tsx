@@ -4,27 +4,30 @@ import { useState } from "react";
 
 import { runBoardMutation } from "../boardApi";
 import { useBoardSchedules, useCurrentWorkflow, type BoardNode } from "../boardStore";
+import { ScheduleTimingFields } from "../ScheduleTimingFields";
+import {
+  scheduleLabel,
+  scheduleSummary,
+  timingFormOf,
+  timingLabel,
+  timingOf,
+  type TimingForm,
+} from "../scheduleTiming";
 import { ToolbarPopover } from "./ToolbarPopover";
 import { Button, randomUUID } from "../upstream";
-
-const FIELD_CLASS = "h-8 w-full rounded-md border bg-background px-2 text-sm";
 
 export function ScheduleButton(props: { readonly nodes: ReadonlyArray<BoardNode> }) {
   const workflow = useCurrentWorkflow();
   const schedules = useBoardSchedules().filter((schedule) => schedule.workflowId === workflow.id);
   const [task, setTask] = useState("");
-  const [minutes, setMinutes] = useState("60");
+  const [timingForm, setTimingForm] = useState<TimingForm>(() => timingFormOf(null, ""));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const entry = entryNodeOf(props.nodes);
-  const everyMs = Math.round(Number(minutes) * 60_000);
-  const valid =
-    entry !== undefined &&
-    task.trim().length > 0 &&
-    Number.isSafeInteger(everyMs) &&
-    everyMs >= 60_000;
+  const timing = timingOf(timingForm);
+  const valid = entry !== undefined && task.trim().length > 0 && timing !== null;
   const create = async () => {
-    if (!entry || !valid || busy) return;
+    if (!entry || !timing || !valid || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -35,7 +38,7 @@ export function ScheduleButton(props: { readonly nodes: ReadonlyArray<BoardNode>
             id: randomUUID(),
             workflowId: workflow.id,
             task: task.trim(),
-            everyMs,
+            ...timing,
             enabled: true,
           },
         }),
@@ -82,16 +85,11 @@ export function ScheduleButton(props: { readonly nodes: ReadonlyArray<BoardNode>
               onChange={(event) => setTask(event.target.value)}
             />
           </label>
-          <label className="grid gap-1 text-xs text-muted-foreground">
-            Interval (minutes, at least 1)
-            <input
-              className={FIELD_CLASS}
-              type="number"
-              min={1}
-              value={minutes}
-              onChange={(event) => setMinutes(event.target.value)}
-            />
-          </label>
+          <ScheduleTimingFields
+            form={timingForm}
+            onChange={(patch) => setTimingForm((current) => ({ ...current, ...patch }))}
+            clock="the hub's clock"
+          />
           <div>
             <Button size="sm" disabled={!valid || busy} onClick={() => void create()}>
               Schedule this workflow
@@ -100,33 +98,40 @@ export function ScheduleButton(props: { readonly nodes: ReadonlyArray<BoardNode>
         </div>
       )}
       <div className="grid gap-2 border-t pt-2">
-        {schedules.map((schedule) => (
-          <div key={schedule.id} className="flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <div className="truncate">{schedule.task}</div>
-              <div className="text-xs text-muted-foreground">
-                Every {schedule.everyMs / 60_000} min · {schedule.enabled ? "enabled" : "paused"}
+        {schedules.map((schedule) => {
+          const summary = scheduleSummary(schedule);
+          const status = scheduleLabel(summary);
+          return (
+            <div key={schedule.id} className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="truncate">{schedule.task}</div>
+                <div className="text-xs text-muted-foreground">
+                  {timingLabel(schedule.timing)}
+                  {status ? ` · ${status}` : ""}
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
+                {summary.state === "done" ? null : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => void setEnabled(schedule.id, !schedule.enabled)}
+                  >
+                    {schedule.enabled ? "Pause" : "Resume"}
+                  </Button>
+                )}
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label={`Delete schedule ${schedule.task}`}
+                  onClick={() => void remove(schedule.id)}
+                >
+                  <Trash2Icon />
+                </Button>
               </div>
             </div>
-            <div className="flex items-center gap-1">
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => void setEnabled(schedule.id, !schedule.enabled)}
-              >
-                {schedule.enabled ? "Pause" : "Resume"}
-              </Button>
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                aria-label={`Delete schedule ${schedule.task}`}
-                onClick={() => void remove(schedule.id)}
-              >
-                <Trash2Icon />
-              </Button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       {error ? (
         <p role="alert" className="text-destructive">
