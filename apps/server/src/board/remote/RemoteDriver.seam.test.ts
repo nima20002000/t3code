@@ -519,44 +519,59 @@ it.live("continues a turn the machine's restart cut off, once, in the same threa
   ),
 );
 
-it.live("a Stop sent while the machine is down keeps t3's continuation from finishing a turn", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { driver, peer, thread, threadId, held, restart } =
-        yield* heldTurnServer("board-remote-stop-seam-");
-      // A continuation that would otherwise reply stays running until something stops it.
-      yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          FakeCodex.fakeTurns.completeFirst = false;
-        }),
-        () =>
-          Effect.sync(() => {
-            FakeCodex.fakeTurns.completeFirst = true;
-          }),
-      );
-      // As the board engine does, keep retrying the Stop while the machine is away.
-      const stopping = yield* driver
-        .interrupt({ thread, runId: held.runId, commandId: CommandId.make("board-stop-away") })
-        .pipe(Effect.retry({ while: (cause) => cause.retryable === true }), Effect.forkScoped);
-      const restarted = yield* restart;
-      yield* Fiber.join(stopping);
-      const client = yield* testClient({ ...peer, url: restarted });
-      const terminal = new Set(["completed", "failed", "cancelled", "interrupted", "rolled_back"]);
-      const settled = yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({ threadId }).pipe(
-        Stream.mapEffect(() =>
-          client[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({ threadId }),
-        ),
-        Stream.filter((projection) => projection.runs.every((run) => terminal.has(run.status))),
-        Stream.runHead,
-      );
-      assert.isTrue(Option.isSome(settled));
-      if (Option.isSome(settled))
-        assert.deepEqual(
-          settled.value.runs
-            .filter((run) => run.status === "completed")
-            .map((run) => run.userMessageId),
-          [MessageId.make("board-restart-warm-message")],
+it.live.each([true, false])(
+  "a Stop sent while the machine is down keeps t3's continuation from finishing a turn (run known: %s)",
+  (known) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { driver, peer, thread, threadId, held, restart } = yield* heldTurnServer(
+          `board-remote-stop-seam-${known}-`,
         );
-    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer))),
-  ),
+        // A continuation that would otherwise reply stays running until something stops it.
+        yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            FakeCodex.fakeTurns.completeFirst = false;
+          }),
+          () =>
+            Effect.sync(() => {
+              FakeCodex.fakeTurns.completeFirst = true;
+            }),
+        );
+        // As the board engine does, keep retrying the Stop while the machine is away.
+        const stopping = yield* driver
+          .interrupt({
+            thread,
+            ...(known ? { runId: held.runId } : {}),
+            commandId: CommandId.make("board-stop-away"),
+          })
+          .pipe(Effect.retry({ while: (cause) => cause.retryable === true }), Effect.forkScoped);
+        const restarted = yield* restart;
+        yield* Fiber.join(stopping);
+        const client = yield* testClient({ ...peer, url: restarted });
+        const terminal = new Set([
+          "completed",
+          "failed",
+          "cancelled",
+          "interrupted",
+          "rolled_back",
+        ]);
+        const settled = yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
+          threadId,
+        }).pipe(
+          Stream.mapEffect(() =>
+            client[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({ threadId }),
+          ),
+          Stream.filter((projection) => projection.runs.every((run) => terminal.has(run.status))),
+          Stream.runHead,
+        );
+        assert.isTrue(Option.isSome(settled));
+        if (Option.isSome(settled))
+          assert.deepEqual(
+            settled.value.runs
+              .filter((run) => run.status === "completed")
+              .map((run) => run.userMessageId),
+            [MessageId.make("board-restart-warm-message")],
+          );
+      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer))),
+    ),
 );
