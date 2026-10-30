@@ -136,6 +136,13 @@ const handlers = HttpApiBuilder.group(
       .handle("pairPeer", ({ payload }) => operate(peers.pair(payload)))
       .handle("getTailscale", () => maintain(TailscaleJoin.status()))
       .handle("joinTailscale", ({ payload }) => maintain(TailscaleJoin.join(payload.authKey)))
+      .handle("pairPeerWindow", ({ params }) =>
+        AuthHttp.requireEnvironmentScope(AuthOrchestrationReadScope).pipe(
+          Effect.flatMap((session) =>
+            mapFailures(peers.windowPairing(params.peerId, session.scopes)),
+          ),
+        ),
+      )
       .handle("deletePeer", ({ params }) => operate(peers.remove(params.peerId)))
       .handle("listRuns", ({ params }) =>
         read(board.getWorkflow(params.workflowId).pipe(Effect.map((workflow) => workflow.runs))),

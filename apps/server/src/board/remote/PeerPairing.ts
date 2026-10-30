@@ -1,9 +1,11 @@
 import {
   AuthAccessTokenResult,
+  AuthAccessWriteScope,
   AuthAccessTokenType,
   AuthEnvironmentBootstrapTokenType,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthStandardClientScopes,
   AuthTokenExchangeGrantType,
   ExecutionEnvironmentDescriptor,
   ORCHESTRATION_PROTOCOL_VERSION,
@@ -60,12 +62,15 @@ export const request = Effect.fn("PeerPairing.request")(
       readonly method: "GET" | "POST";
       readonly headers?: Readonly<Record<string, string>>;
       readonly body?: URLSearchParams;
+      readonly json?: unknown;
     },
   ) {
     const client = yield* HttpClient.HttpClient;
     const httpRequest = HttpClientRequest.make(init.method)(url.toString()).pipe(
       HttpClientRequest.setHeaders(init.headers ?? {}),
       (request) => (init.body ? HttpClientRequest.bodyUrlParams(request, init.body) : request),
+      (request) =>
+        init.json === undefined ? request : HttpClientRequest.bodyJsonUnsafe(request, init.json),
     );
     const response = yield* client.execute(httpRequest).pipe(
       Effect.timeout("10 seconds"),
@@ -125,7 +130,8 @@ export const pair = Effect.fn("PeerPairing.pair")(function* (input: {
       subject_token: target.credential,
       subject_token_type: AuthEnvironmentBootstrapTokenType,
       requested_token_type: AuthAccessTokenType,
-      scope: `${AuthOrchestrationReadScope} ${AuthOrchestrationOperateScope}`,
+      // Everything the link grants, so the hub can also let its own windows in (BoardPeers.windowPairing).
+      scope: AuthStandardClientScopes.join(" "),
       client_label: "T3 Code Board",
       client_device_type: "bot",
     }),
@@ -155,4 +161,44 @@ export const pair = Effect.fn("PeerPairing.pair")(function* (input: {
     .put(peer)
     .pipe(Effect.mapError((cause) => new PeerPairingError({ stage: "store", cause })));
   return peer;
+});
+
+// Only the fields the board reads, so a newer or older machine's extra fields never break it.
+const decodeSession = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    scopes: Schema.optionalKey(Schema.Array(Schema.String)),
+    permissions: Schema.optionalKey(Schema.Array(Schema.String)),
+  }),
+);
+const decodePairingCredential = Schema.decodeUnknownEffect(
+  Schema.Struct({ credential: Schema.NonEmptyString }),
+);
+
+/**
+ * A one-time t3 pairing code on a paired machine for one of the hub's windows, granting only what
+ * that window may do on the hub and the hub may do there. None when the hub's grant cannot mint codes
+ * (machines added with a read/operate-only link).
+ */
+export const mintWindowPairingCode = Effect.fn("PeerPairing.mintWindowPairingCode")(function* (
+  peer: Pick<Peer, "url" | "bearer">,
+  callerScopes: ReadonlySet<string>,
+) {
+  const authorization = { authorization: `Bearer ${peer.bearer}` };
+  const session = yield* request(new URL("/api/auth/session", peer.url), {
+    method: "GET",
+    headers: authorization,
+  }).pipe(Effect.flatMap(decodeSession));
+  const granted = new Set(session.permissions ?? session.scopes ?? []);
+  const scopes = AuthStandardClientScopes.filter(
+    (scope) => granted.has(scope) && callerScopes.has(scope),
+  );
+  if (!granted.has(AuthAccessWriteScope) || !scopes.includes(AuthOrchestrationReadScope)) {
+    return null;
+  }
+  const response = yield* request(new URL("/api/auth/pairing-token", peer.url), {
+    method: "POST",
+    headers: authorization,
+    json: { scopes },
+  });
+  return (yield* decodePairingCredential(response)).credential;
 });

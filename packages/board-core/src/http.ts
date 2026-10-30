@@ -189,6 +189,18 @@ export const BoardPeerSchema = Schema.Struct({
   expiresAt: Schema.optionalKey(Schema.String),
 });
 export type BoardPeer = typeof BoardPeerSchema.Type;
+/**
+ * A one-time t3 pairing code on a paired machine, minted by the hub for the asking window so the
+ * window connects to that machine itself. Null when the hub may not hand out access there.
+ */
+export const BoardPeerWindowPairingSchema = Schema.NullOr(
+  Schema.Struct({
+    environmentId: EnvironmentId,
+    httpBaseUrl: TrimmedNonEmptyString,
+    pairingCode: TrimmedNonEmptyString,
+  }),
+);
+export type BoardPeerWindowPairing = typeof BoardPeerWindowPairingSchema.Type;
 /** Each scheduled run starts new chats, or continues the previous scheduled run's chats. */
 export const BoardScheduleChats = Schema.Literals(["new", "continue"]);
 export type BoardScheduleChats = typeof BoardScheduleChats.Type;
@@ -689,6 +701,14 @@ export class BoardHttpGroup extends HttpApiGroup.make("board")
       headers: OptionalAuthHeaders,
       payload: BoardPairPeerInput,
       success: BoardPeerSchema,
+      error: Errors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("pairPeerWindow", "/peers/:peerId/window-pairing", {
+      headers: OptionalAuthHeaders,
+      params: PeerParams,
+      success: BoardPeerWindowPairingSchema,
       error: Errors,
     }),
   )

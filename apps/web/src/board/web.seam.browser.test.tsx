@@ -120,6 +120,10 @@ async function openBoard() {
         emit({ kind: "workflow.upserted", sequence, workflow: next });
         return Response.json(next);
       }
+      if (url.pathname === "/api/board/peers/remote-peer/window-pairing") {
+        // Like a hub whose grant on that machine cannot let windows in.
+        return Response.json(null);
+      }
       if (url.pathname.endsWith("/chat/new")) {
         // Like the server: Scout's chat moves to a new thread, newer than its run's.
         const uses = posts.filter((path) => path === url.pathname).length;
@@ -217,10 +221,16 @@ it("shows Board in the chat layout, swaps the thread list for the board sidebar 
   // One test: the board's HTTP client keeps the first fetch it sees, so a second test's fake board API would never be called.
   await using board = await openBoard();
   const { screen, workflow, emit } = board;
-  const boardPosts = () => board.posts.filter((path) => path.startsWith("/api/board/"));
+  const windowPairing = "/api/board/peers/remote-peer/window-pairing";
+  const boardPosts = () =>
+    board.posts.filter((path) => path.startsWith("/api/board/") && path !== windowPairing);
   await expect.element(screen.getByRole("navigation", { name: "Threads" })).not.toBeInTheDocument();
   await expect.element(screen.getByText("Scout", { exact: true })).toBeVisible();
   await vi.waitFor(() => expect(board.following()).toBe(true));
+  // The window asks the hub, once, to let it into the paired machine it has not saved.
+  await vi.waitFor(() =>
+    expect(board.posts.filter((path) => path === windowPairing)).toHaveLength(1),
+  );
   // The kanban kept far from the agents still opens in view, with its cards.
   const kanban = screen.getByRole("region", { name: "Kanban" });
   await expect.element(kanban.getByText("Map the parser")).toBeVisible();

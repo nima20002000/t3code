@@ -1,10 +1,12 @@
 import {
   BoardInternalError,
   BoardInvalidRequestError,
+  BoardMachineUnavailableError,
   BoardNotFoundError,
   checkPairingLink,
   type BoardPairPeerInput,
   type BoardPeer,
+  type BoardPeerWindowPairing,
 } from "@t3tools/board-core";
 import { AuthWebSocketTicketResult } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -27,6 +29,13 @@ export class BoardPeers extends Context.Service<
       input: BoardPairPeerInput,
     ) => Effect.Effect<BoardPeer, BoardInvalidRequestError | BoardInternalError>;
     readonly remove: (id: string) => Effect.Effect<void, SqlError | BoardNotFoundError>;
+    readonly windowPairing: (
+      id: string,
+      callerScopes: ReadonlySet<string>,
+    ) => Effect.Effect<
+      BoardPeerWindowPairing,
+      SqlError | BoardNotFoundError | BoardMachineUnavailableError
+    >;
   }
 >()("t3/board/BoardPeers") {}
 
@@ -146,7 +155,32 @@ const make = Effect.gen(function* () {
       ),
     );
   });
-  return BoardPeers.of({ pair, remove });
+  const windowPairing = Effect.fn("BoardPeers.windowPairing")(function* (
+    id: string,
+    callerScopes: ReadonlySet<string>,
+  ) {
+    const peer = (yield* store.listPairedPeers()).find((entry) => entry.id === id);
+    if (!peer) return yield* new BoardNotFoundError({ message: "Machine not found." });
+    const minted = yield* PeerPairing.mintWindowPairingCode(peer, callerScopes).pipe(
+      Effect.catch(() =>
+        Effect.logWarning("Could not mint a window pairing code on a board machine", {
+          environmentId: peer.environmentId,
+        }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new BoardMachineUnavailableError({
+                message: `Could not reach ${peer.name} to connect this window.`,
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+    return minted === null
+      ? null
+      : { environmentId: peer.environmentId, httpBaseUrl: peer.url, pairingCode: minted };
+  });
+  return BoardPeers.of({ pair, remove, windowPairing });
 });
 
 export const layer = Layer.effect(BoardPeers, make);

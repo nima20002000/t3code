@@ -86,6 +86,8 @@ export { rendersServerTabNatively } from "../browser/previewRuntime";
 export { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 export { withDesktopTab } from "../browser/desktopTabLifetime";
 export { useAtomCommand } from "../state/use-atom-command";
+export { connectPairing } from "../connection/onboarding";
+export { environmentCatalog } from "../connection/catalog";
 export { primaryServerKeybindingsAtom } from "../state/server";
 export { readLocalApi } from "../localApi";
 export { useStableCallback } from "../hooks/useStableCallback";
