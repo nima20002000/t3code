@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vite-plus/test";
 
-import { syncNativeViews } from "./BoardWindows";
+import { loadWindows, raiseWindow, requestFullScreen, syncNativeViews } from "./BoardWindows";
 
 const fixed = (style: string, attributes: Record<string, string> = {}) => {
   const element = document.createElement("div");
@@ -121,4 +121,35 @@ it("keeps a board page under the windows and panels drawn above its window", asy
   // Selecting the browser brings it to the front.
   b.node.style.zIndex = "1010";
   await vi.waitFor(() => expect(document.elementFromPoint(200, 320)).toBe(b.view));
+});
+
+it("full-screens a window of the workflow opened while another board's change was still running", async () => {
+  const section = document.createElement("section");
+  section.dataset.windowId = "chat:b";
+  const oldLayer = document.createElement("div");
+  const newLayer = document.createElement("div");
+  document.body.append(section, oldLayer, newLayer);
+  try {
+    const applyNew = vi.fn();
+    void requestFullScreen("chat:b", oldLayer, vi.fn());
+    oldLayer.remove();
+    void requestFullScreen("chat:b", newLayer, applyNew);
+    await vi.waitFor(() => expect(applyNew).toHaveBeenCalledWith("chat:b"));
+  } finally {
+    section.remove();
+    newLayer.remove();
+  }
+});
+
+it("opening a window that is already open puts it above the window covering it", () => {
+  const key = "board-windows:raise-test";
+  const saved = [
+    { kind: "chat", nodeId: "a", x: 620, y: 50, width: 400, height: 300 },
+    { kind: "chat", nodeId: "d", x: 620, y: 50, width: 400, height: 300 },
+  ];
+  localStorage.setItem(key, JSON.stringify(saved));
+  const windows = loadWindows("raise-test");
+  localStorage.removeItem(key);
+  const raised = raiseWindow(windows, "chat:a", {});
+  expect(raised.map((window) => window.id)).toEqual(["chat:d", "chat:a"]);
 });

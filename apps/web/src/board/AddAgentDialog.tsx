@@ -137,7 +137,7 @@ export function AgentDialog(props: {
         modelSelection: selection,
         runtimeMode: access,
         ...(role.trim() ? { prompt: role } : {}),
-        ...nextNodePosition(workflow),
+        ...nextNodePosition(workflow, profile),
       });
       props.onClose();
     } catch (cause) {

@@ -167,12 +167,12 @@ export function BoardToolbar(props: {
         </div>
       </Collapsible>
       <div
-        className="flex items-center rounded-lg border border-border bg-card p-1 shadow-lg"
+        className="flex max-w-full flex-wrap items-center justify-end rounded-lg border border-border bg-card p-1 shadow-lg"
         role="toolbar"
         aria-label="Workflow controls"
       >
         <Collapsible collapsed={collapsed}>
-          <div className="flex items-center gap-0.5 pr-0.5">
+          <div className="flex flex-wrap items-center justify-end gap-0.5 pr-0.5">
             <WorkflowMenu onRename={() => window.setTimeout(props.onRename, 150)} />
             <IconButton label="Add agent" onClick={props.onAddAgent}>
               <BotIcon />

@@ -41,6 +41,7 @@ import {
   loadWindows,
   followComposerMenus,
   newWindowNode,
+  raiseWindow,
   saveWindows,
   useBoardWindows,
   windowId,
@@ -184,7 +185,7 @@ function RunViewsProvider(props: {
   );
 }
 
-function useFlights(
+export function useFlights(
   edgeViews: ReadonlyMap<string, EdgeRunView>,
   edges: ReadonlyArray<{ readonly a: string; readonly b: string }>,
 ) {
@@ -243,8 +244,9 @@ function useFlights(
   const pulses = new Map<string, EdgePulse[]>();
   const arriving = new Set<string>();
   for (const flight of [...state.flights, ...fresh]) {
-    pulses.set(flight.edgeId, [...(pulses.get(flight.edgeId) ?? []), flight.pulse].slice(-20));
+    // A landed flight is over; an edge that remounts must not fly it again.
     if (state.landed.has(flight.pulse.key)) continue;
+    pulses.set(flight.edgeId, [...(pulses.get(flight.edgeId) ?? []), flight.pulse].slice(-20));
     arriving.add(flight.to);
     // A worker's result is still on its way: it keeps showing its work until the return lands.
     if (flight.pulse.signal !== "task") arriving.add(flight.from);
@@ -618,6 +620,36 @@ function BoardCanvasPage() {
     });
     return () => cancelAnimationFrame(frame);
   }, [runningId]);
+  // An agent added off screen is brought into view; the rest of the view stays where it is.
+  const nodeIds = nodes.map((node) => node.id).join("\n");
+  const knownIds = useRef(new Set(nodeIds.split("\n")));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Pans React Flow's viewport to an agent that was just added.
+  useEffect(() => {
+    const added = nodeIds.split("\n").filter((id) => !knownIds.current.has(id));
+    knownIds.current = new Set(nodeIds.split("\n"));
+    const target = nodes.find((node) => node.id === added.at(-1));
+    if (!target) return;
+    const frame = requestAnimationFrame(() => {
+      const instance = flow.current;
+      const size = canvas.current?.getBoundingClientRect();
+      if (!instance || !size) return;
+      const { x, y, zoom } = instance.getViewport();
+      const diameter = agentNodeSize(target) * zoom;
+      const left = target.x * zoom + x;
+      const top = target.y * zoom + y;
+      const inView =
+        left >= 0 && top >= 0 && left + diameter <= size.width && top + diameter <= size.height;
+      if (!inView)
+        void instance.fitView({
+          nodes: [{ id: target.id }],
+          maxZoom: zoom,
+          minZoom: zoom,
+          duration: 300,
+        });
+    });
+    return () => cancelAnimationFrame(frame);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Reacts to the set of agents, not to each move.
+  }, [nodeIds]);
   const selectedRun = workflow.runs.find((run) => run.id === selectedRunId) ?? null;
   const [flowNodes, setFlowNodes] = useState<AgentFlowNode[]>(() =>
     nodes.map((n) => toFlowNode(n)),
@@ -747,9 +779,7 @@ function BoardCanvasPage() {
       const id = windowId(kind, nodeId);
       setWindowNodes((previous) =>
         previous.some((window) => window.id === id)
-          ? previous.map((window) =>
-              window.id === id ? { ...window, data: { ...window.data, ...options } } : window,
-            )
+          ? raiseWindow(previous, id, options)
           : [...previous, newWindowNode(kind, node, previous, options)],
       );
     },
@@ -1077,6 +1107,7 @@ function BoardCanvasPage() {
           <RunActivityCard
             workflow={workflow}
             target={activity}
+            detailsOpen={selectedRun !== null}
             onClose={() => setSelectedEdgeIds(new Set())}
           />
         ) : null}

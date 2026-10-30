@@ -43,6 +43,10 @@
   right: 1rem;
   bottom: 1rem;
   width: min(26rem, calc(100% - 2rem));
+  /* Below the toolbar once it wraps into several rows. */
+  @media (max-width: 640px) {
+    top: 12rem;
+  }
 }
 
 @utility board-kanban-column {

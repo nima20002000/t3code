@@ -85,7 +85,7 @@ export function BoardKanban({ data, selected }: NodeProps<KanbanFlowNode>) {
         ) : null
       }
     >
-      <div className="grid min-h-0 flex-1 auto-cols-fr grid-flow-col gap-2 overflow-x-auto p-2">
+      <div className="grid min-h-0 flex-1 auto-cols-[minmax(9rem,1fr)] grid-flow-col gap-2 overflow-x-auto p-2">
         {KANBAN_STATUSES.map((status) => {
           const column = cards.filter((card) => card.status === status);
           return (
