@@ -327,6 +327,33 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const retrying = new Set<string>();
+  /** Retries an interrupt every second while the machine is away; it may be continuing the turn. */
+  const keepInterrupting = (task: BoardStore.BoardTask) =>
+    lockFor(task.runId)
+      .withPermits(1)(interruptTask(task.id))
+      .pipe(
+        Effect.retry({
+          while: (error) => error._tag === "NodeDriverError" && error.retryable === true,
+          schedule: Schedule.spaced("1 second"),
+        }),
+      );
+  const retryInBackground = (task: BoardStore.BoardTask) =>
+    Effect.suspend(() => {
+      if (retrying.has(task.id)) return Effect.void;
+      retrying.add(task.id);
+      return keepInterrupting(task).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.void
+            : Effect.logError("Could not interrupt board task", { taskId: task.id, cause }),
+        ),
+        Effect.ensuring(Effect.sync(() => retrying.delete(task.id))),
+        Effect.forkIn(scope),
+        Effect.asVoid,
+      );
+    });
+
   const stopTasks = Effect.fn("TaskEngine.stopTasks")(function* (
     runId: string,
     ids: ReadonlySet<string>,
@@ -376,6 +403,24 @@ const make = Effect.gen(function* () {
               } else {
                 yield* store.putTask({ ...task, status: "stopped" });
               }
+              const node = run?.definition.nodes.find((entry) => entry.id === task.nodeId);
+              const card =
+                task.cardId === undefined
+                  ? undefined
+                  : (yield* store.listKanban(task.workflowId)).find(
+                      (entry) => entry.id === task.cardId,
+                    );
+              if (node && card?.status === "doing" && card.assigneeNodeId === task.nodeId)
+                yield* moveWorkerCard(
+                  task.workflowId,
+                  node,
+                  [["doing"]],
+                  "blocked",
+                  workflowId === undefined
+                    ? "Stopped because a sibling request failed."
+                    : "Stopped by user.",
+                  task.cardId,
+                );
             }
             if (!workflow || !run || run.status !== "running") return { targets: selected, run };
             const at = yield* now;
@@ -407,6 +452,10 @@ const make = Effect.gen(function* () {
           const result = yield* interruptTask(task.id).pipe(Effect.result);
           if (Result.isFailure(result)) {
             if (result.failure._tag === "SqlError") return yield* result.failure;
+            if (result.failure.retryable) {
+              yield* retryInBackground(task);
+              continue;
+            }
             failure ??= result.failure;
             yield* Effect.logWarning("Could not interrupt board task", {
               taskId: task.id,
@@ -604,7 +653,7 @@ const make = Effect.gen(function* () {
       const task = yield* store.getTask(taskId);
       if (!task) return;
       if (task.status === "completing") {
-        yield* lockFor(task.runId).withPermits(1)(interruptTask(task.id));
+        yield* keepInterrupting(task);
         return;
       }
       if (terminal(task.status)) return;
@@ -724,6 +773,7 @@ const make = Effect.gen(function* () {
         );
         if (Option.isNone(settled)) {
           const latest = yield* store.getTask(task.id);
+          if (latest?.status === "completing") continue;
           if (latest && !terminal(latest.status))
             yield* failTask(task.id, "The thread's settlement stream ended unexpectedly.");
           return;
@@ -1178,7 +1228,13 @@ const make = Effect.gen(function* () {
         lockFor(id).withPermits(1)(
           Effect.gen(function* () {
             for (const task of yield* store.listTasks(id))
-              if (task.status === "completing") yield* interruptTask(task.id);
+              if (task.status === "completing")
+                yield* interruptTask(task.id).pipe(
+                  Effect.catchIf(
+                    (error) => error._tag === "NodeDriverError" && error.retryable === true,
+                    () => retryInBackground(task),
+                  ),
+                );
             return yield* reload(id);
           }),
         );

@@ -1275,3 +1275,129 @@ it.effect("a hub restart keeps waiting on the turn and finishes it from the reop
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect("Stop moves the stopped work's cards out of doing", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(seed(store, setupWorkflow()));
+      yield* engine.start("workflow", { id: "run:stop-cards", task: "Delegate" });
+      yield* harness.reply(yield* Queue.take(harness.sends), request);
+      yield* Queue.take(harness.sends);
+      yield* Queue.take(harness.sends);
+      const doing = (yield* store.listKanban("workflow")).map((card) => card.status);
+      assert.deepStrictEqual(doing, ["doing", "doing"]);
+      yield* engine.stop("workflow", "run:stop-cards");
+      assert.deepStrictEqual(
+        (yield* store.listKanban("workflow")).map((card) => [card.status, card.reason]),
+        [
+          ["blocked", "Stopped by user."],
+          ["blocked", "Stopped by user."],
+        ],
+      );
+    }).pipe(Effect.provide(engineWith(harness.driver)));
+  }),
+);
+
+it.effect("finishes a Stop within seconds once the agent's machine is back", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const calls = yield* Queue.unbounded<Parameters<NodeDriver["interrupt"]>[0]>();
+    const away = yield* Ref.make(true);
+    const driver: NodeDriver = {
+      ...harness.driver,
+      interrupt: (input) =>
+        Queue.offer(calls, input).pipe(
+          Effect.andThen(Ref.get(away)),
+          Effect.flatMap((isAway) =>
+            isAway
+              ? Effect.fail(
+                  new NodeDriverError({ operation: "interrupt", message: "Away", retryable: true }),
+                )
+              : Effect.void,
+          ),
+        ),
+    };
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(seed(store, setupWorkflow()));
+      yield* engine.start("workflow", { id: "run:stop-away", task: "Go" });
+      const root = yield* Queue.take(harness.sends);
+      const stopping = yield* engine.stop("workflow", "run:stop-away");
+      assert.strictEqual(stopping.status, "stopping");
+      yield* Queue.take(calls);
+      // Stopping again while the machine is still away keeps the run stopping without an error.
+      assert.strictEqual((yield* engine.stop("workflow", "run:stop-away")).status, "stopping");
+      yield* Queue.takeAll(calls);
+      yield* Ref.set(away, false);
+      yield* TestClock.adjust("2 seconds");
+      const retried = yield* Queue.take(calls);
+      assert.strictEqual(retried.thread.threadId, root.thread.threadId);
+      yield* waitForRun(store, (run) => run.status === "stopped");
+    }).pipe(Effect.provide(engineWith(driver)));
+  }),
+);
+
+it.effect("retries a Stop within seconds even while the task waits to resend", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    const sends = yield* Queue.unbounded<BoardDriverSend>();
+    const calls = yield* Queue.unbounded<Parameters<NodeDriver["interrupt"]>[0]>();
+    const away = yield* Ref.make(true);
+    const lost = new NodeDriverError({ operation: "send", message: "Away", retryable: true });
+    const driver: NodeDriver = {
+      ...harness.driver,
+      send: (input) => Queue.offer(sends, input).pipe(Effect.andThen(Effect.fail(lost))),
+      interrupt: (input) =>
+        Queue.offer(calls, input).pipe(
+          Effect.andThen(Ref.get(away)),
+          Effect.flatMap((isAway) =>
+            isAway
+              ? Effect.fail(
+                  new NodeDriverError({ operation: "interrupt", message: "Away", retryable: true }),
+                )
+              : Effect.void,
+          ),
+        ),
+    };
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(seed(store, setupWorkflow()));
+      yield* engine.start("workflow", { id: "run:stop-resend", task: "Go" });
+      yield* Queue.take(sends);
+      assert.strictEqual((yield* engine.stop("workflow", "run:stop-resend")).status, "stopping");
+      yield* Queue.take(calls);
+      yield* Ref.set(away, false);
+      yield* TestClock.adjust("2 seconds");
+      yield* Queue.take(calls);
+      yield* waitForRun(store, (run) => run.status === "stopped");
+    }).pipe(Effect.provide(engineWith(driver)));
+  }),
+);
+
+it.effect("Stop leaves a card alone once it was handed to another agent", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const engine = yield* TaskEngine.TaskEngine;
+      const store = yield* BoardStore.BoardStore;
+      yield* store.transaction(seed(store, setupWorkflow()));
+      yield* engine.start("workflow", { id: "run:handed", task: "Delegate" });
+      yield* harness.reply(yield* Queue.take(harness.sends), request);
+      yield* Queue.take(harness.sends);
+      yield* Queue.take(harness.sends);
+      const [first, second] = yield* store.listKanban("workflow");
+      yield* store.transaction(
+        store.putCard("workflow", { ...first!, assigneeNodeId: "someone-else" }),
+      );
+      yield* engine.stop("workflow", "run:handed");
+      const cards = yield* store.listKanban("workflow");
+      assert.strictEqual(cards.find((card) => card.id === first!.id)?.status, "doing");
+      assert.strictEqual(cards.find((card) => card.id === second!.id)?.status, "blocked");
+    }).pipe(Effect.provide(engineWith(harness.driver)));
+  }),
+);

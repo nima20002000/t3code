@@ -139,6 +139,17 @@ const make = Effect.gen(function* () {
     return message === undefined ? null : { id: message.id, text: message.text };
   });
   const interrupt: NodeDriver["interrupt"] = Effect.fn("LocalDriver.interrupt")(function* (input) {
+    if (input.runId === undefined) {
+      // The send's run is unknown: stop whatever the thread runs and any continuation it owes.
+      yield* threads
+        .dispatch({
+          type: "thread.stop",
+          commandId: input.commandId,
+          threadId: input.thread.threadId,
+        })
+        .pipe(Effect.mapError(error("interrupt")));
+      return;
+    }
     let runId = input.runId;
     if (input.runId !== undefined) {
       const records = yield* threads

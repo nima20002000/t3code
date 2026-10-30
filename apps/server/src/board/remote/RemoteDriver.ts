@@ -345,14 +345,25 @@ export function make(store: PeerStore): NodeDriver {
             const client = yield* connect(peer);
             yield* projectionFor(client, input.thread);
             chain.connected(yield* Clock.currentTimeMillis);
+            const expiries = Stream.tick("5 seconds").pipe(
+              Stream.mapEffect(() => Clock.currentTimeMillis.pipe(Effect.map(chain.expire))),
+              Stream.flatMap((items) => Stream.fromIterable(items)),
+              Stream.map((settle) => ({ settle })),
+            );
+            // The grace only runs while this connection is up.
             return client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
               threadId: input.thread.threadId,
               ...(afterSequence === undefined ? {} : { afterSequence }),
-            });
+            }).pipe(
+              Stream.map((item) => ({ item })),
+              Stream.merge(expiries, { haltStrategy: "left" }),
+            );
           }),
         ).pipe(
-          Stream.mapEffect((item) =>
+          Stream.mapEffect((next) =>
             Effect.gen(function* () {
+              if ("settle" in next) return [next.settle];
+              const item = next.item;
               const now = yield* Clock.currentTimeMillis;
               const result = yield* Effect.try({
                 try: () => convert(item, now),
@@ -364,12 +375,6 @@ export function make(store: PeerStore): NodeDriver {
               }
               return result;
             }),
-          ),
-          Stream.merge(
-            Stream.tick("5 seconds").pipe(
-              Stream.mapEffect(() => Clock.currentTimeMillis.pipe(Effect.map(chain.expire))),
-            ),
-            { haltStrategy: "left" },
           ),
           Stream.flatMap((items) => Stream.fromIterable(items)),
           Stream.concat(Stream.fail(new PeerHttpError({}))),
@@ -448,25 +453,21 @@ export function make(store: PeerStore): NodeDriver {
     interrupt: Effect.fn("RemoteDriver.interrupt")(function* (input) {
       yield* useClient(store, input.thread, (client) =>
         Effect.gen(function* () {
-          const projection = yield* projectionFor(client, input.thread);
-          const runs =
-            input.runId === undefined ||
-            projection.runs.some((candidate) => candidate.id === input.runId)
-              ? projection.runs
-              : (yield* fullProjectionFor(client, input.thread)).runs;
-          const found =
-            input.runId === undefined
-              ? [...runs]
-                  .reverse()
-                  .find(
-                    (candidate) =>
-                      !settled(candidate, input.thread, 0) && candidate.status !== "queued",
-                  )
-              : runs.find((candidate) => candidate.id === input.runId);
-          if (!found) {
-            if (input.runId === undefined) return;
-            return yield* new RemoteStateError({ reason: "Remote run was not found." });
+          if (input.runId === undefined) {
+            // The send's run is unknown: stop whatever the thread runs and any continuation it owes.
+            yield* client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+              type: "thread.stop",
+              commandId: input.commandId,
+              threadId: input.thread.threadId,
+            });
+            return;
           }
+          const projection = yield* projectionFor(client, input.thread);
+          const runs = projection.runs.some((candidate) => candidate.id === input.runId)
+            ? projection.runs
+            : (yield* fullProjectionFor(client, input.thread)).runs;
+          const found = runs.find((candidate) => candidate.id === input.runId);
+          if (!found) return yield* new RemoteStateError({ reason: "Remote run was not found." });
           // A restart may have cut the run and continued it; Stop reaches the continuation.
           const run = latestContinuation(runs, found);
           if (

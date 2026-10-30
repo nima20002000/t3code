@@ -274,6 +274,12 @@ it.effect("Stop leaves nothing running after a restart cut the run, continued or
       yield* stop;
       yield* continuePending;
       assert.deepStrictEqual(yield* running, []);
+      // The board never learned the cut run's id (its send was uncertain).
+      yield* Ref.set(runs, [cut]);
+      yield* Ref.set(stopped, false);
+      yield* driver.interrupt({ thread, commandId: "stop-unknown" as never });
+      yield* continuePending;
+      assert.deepStrictEqual(yield* running, []);
     }).pipe(Effect.provide(layer));
   }),
 );
