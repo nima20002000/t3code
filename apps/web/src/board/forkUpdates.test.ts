@@ -5,7 +5,7 @@ import {
   collectServerUpdateTargets,
   type UpdateEverythingMachine,
 } from "../components/sidebar/updateEverything.logic";
-import { resolveVersionMismatch } from "../versionSkew";
+import { manualServerUpdateCommand, resolveVersionMismatch } from "../versionSkew";
 
 const vps = (serverVersion: string): UpdateEverythingMachine => ({
   environmentId: EnvironmentId.make("vps"),
@@ -34,6 +34,7 @@ const targets = (serverVersion: string, appVersion: string) =>
 describe("Update everything on fork builds", () => {
   it("moves a connected server on an older fork build of the same base to this app's build", () => {
     expect(targets("0.1.5-board.3", "0.1.5-board.4")).toEqual(["0.1.5-board.4"]);
+    expect(targets("0.1.5-board.9", "0.1.5-board.10")).toEqual(["0.1.5-board.10"]);
     expect(targets("0.1.5-board.9", "0.1.6-board.1")).toEqual(["0.1.6-board.1"]);
     expect(resolveVersionMismatch("0.1.5-board.3", "0.1.5-board.4")).not.toBeNull();
   });
@@ -42,5 +43,20 @@ describe("Update everything on fork builds", () => {
     expect(targets("0.1.5-board.4", "0.1.5-board.4")).toEqual([]);
     expect(targets("0.1.5-board.5", "0.1.5-board.4")).toEqual([]);
     expect(resolveVersionMismatch("0.1.5-board.10", "0.1.5-board.9")).toBeNull();
+    expect(targets("0.1.5-board.4", "0.1.6")).toEqual([]);
+    expect(targets("0.1.6", "0.1.5-board.4")).toEqual([]);
+    expect(targets("0.1.6-board.1", "0.1.5-board.9")).toEqual([]);
+    expect(resolveVersionMismatch("0.1.5-board.4", "0.1.6")).toBeNull();
+  });
+
+  it("a server that cannot update itself is told to run the fork's installer, never npm", () => {
+    const command = manualServerUpdateCommand("0.1.5-board.4", {
+      kind: "npm-global",
+      prefix: "/opt/node",
+    });
+    expect(command).toBe(
+      "curl -fsSL https://github.com/nima20002000/t3code/releases/download/v0.1.5-board.4/install.sh | T3CODE_VERSION=0.1.5-board.4 sh",
+    );
+    expect(manualServerUpdateCommand("0.1.5-board.4")).not.toMatch(/npx|npm|t3@/);
   });
 });

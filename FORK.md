@@ -74,8 +74,9 @@ a merge (the server route is reserved for the later server phase):
 - Only fork releases count as t3 updates: `apps/web/src/state/npmRelease.ts` answers t3's release lookups (is a
   version out, the newest on a track) from the fork's GitHub releases through `apps/web/src/board/forkReleaseLookup.ts`
   instead of npm, so Update everything moves connected servers to fork versions (which are never on npm) and a track
-  switch never offers npm's upstream `t3`. `apps/web/src/versionSkew.ts` compares two `-board.N` builds by build
-  number (as it does nightlies), so a server on an older fork build of the same base counts as behind. `apps/desktop/src/app/DesktopStartupRecovery.ts` links the fork's releases,
+  switch never offers npm's upstream `t3`. `apps/web/src/versionSkew.ts` offers only fork client builds and
+  compares two `-board.N` builds by build number, so a server on an older fork build of the same base counts
+  as behind, and its manual update command for a fork build is the fork's `install.sh`, not npm. `apps/desktop/src/app/DesktopStartupRecovery.ts` links the fork's releases,
   `apps/server/src/cloud/servicePreflight.ts` (and `apps/server/src/cloud/servicePreflight.test.ts`) names the fork's
   `install.sh`, and `apps/desktop/src/main.ts` passes `T3CODE_RELEASE_BASE_URL` to SSH installs like `t3 update` does.
 - `apps/desktop/scripts/dev-electron.mjs`: on Linux the dev app runs with `--disable-gpu` (`T3CODE_DESKTOP_GPU=1` turns

@@ -6,6 +6,8 @@ import type {
 } from "@t3tools/contracts";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
+import { isForkVersion } from "@t3tools/board-core/forkRelease";
+import { CLI_RELEASES_PAGE_URL } from "@t3tools/shared/cliRelease";
 import * as Schema from "effect/Schema";
 
 import { APP_VERSION } from "./branding";
@@ -50,22 +52,22 @@ export function resolveVersionMismatch(
 ): VersionMismatch | null {
   const normalizedClientVersion = normalizeVersion(clientVersion);
   const normalizedServerVersion = normalizeVersion(serverVersion);
-  if (!normalizedClientVersion || !normalizedServerVersion) {
+  if (
+    !normalizedClientVersion ||
+    !normalizedServerVersion ||
+    !isForkVersion(normalizedClientVersion)
+  ) {
     return null;
   }
 
   const clientCore = versionCore(normalizedClientVersion);
   const serverCore = versionCore(normalizedServerVersion);
-  // Board fork: fork builds of one upstream base differ only by their `-board.N` build number.
-  const clientTrack = parseSemver(normalizedClientVersion)?.prerelease[0];
-  const compareNightlyBuilds =
-    (clientTrack === "nightly" || clientTrack === "board") &&
-    parseSemver(normalizedServerVersion)?.prerelease[0] === clientTrack;
+  const compareForkBuilds = isForkVersion(normalizedServerVersion);
   const serverIsBehind =
     parseSemver(clientCore) && parseSemver(serverCore)
       ? compareSemverVersions(
-          compareNightlyBuilds ? normalizedServerVersion : serverCore,
-          compareNightlyBuilds ? normalizedClientVersion : clientCore,
+          compareForkBuilds ? normalizedServerVersion : serverCore,
+          compareForkBuilds ? normalizedClientVersion : clientCore,
         ) < 0
       : normalizedServerVersion !== normalizedClientVersion;
   if (!serverIsBehind) {
@@ -101,6 +103,10 @@ export function manualServerUpdateCommand(
   targetVersion: string,
   installation?: ServerInstallation,
 ): string {
+  // Board fork: fork builds are never on npm; the fork's installer sets up that exact build.
+  if (isForkVersion(targetVersion)) {
+    return `curl -fsSL ${CLI_RELEASES_PAGE_URL}/download/v${targetVersion}/install.sh | T3CODE_VERSION=${targetVersion} sh`;
+  }
   if (installation?.kind === "npm-global") {
     const prefix = `'${installation.prefix.replaceAll("'", "'\\''")}'`;
     return `npm install --global --prefix ${prefix} t3@${targetVersion}`;
