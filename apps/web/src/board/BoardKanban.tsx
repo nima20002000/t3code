@@ -57,7 +57,9 @@ export function BoardKanban({ data, selected }: NodeProps<KanbanFlowNode>) {
       if (!next.delete(id)) next.add(id);
       return next;
     });
-  const earlier = allCards.filter((card) => card.status === "done" && card.runId !== runId);
+  const earlier = allCards.filter(
+    (card) => runId !== null && card.status === "done" && card.runId !== runId,
+  );
   const cards = showEarlier ? allCards : allCards.filter((card) => !earlier.includes(card));
   const nameOf = (nodeId: string | undefined) =>
     workflow.nodes.find((node) => node.id === nodeId)?.name;
@@ -74,7 +76,9 @@ export function BoardKanban({ data, selected }: NodeProps<KanbanFlowNode>) {
         <>
           <ClipboardListIcon className="size-3.5 text-muted-foreground" />
           <span className="text-sm font-medium">Kanban</span>
-          <small className="text-xs text-muted-foreground">{runId ? "this run" : "all runs"}</small>
+          <small className="text-xs text-muted-foreground">
+            {runId && !showEarlier ? "this run" : "all runs"}
+          </small>
         </>
       }
       actions={
@@ -85,7 +89,7 @@ export function BoardKanban({ data, selected }: NodeProps<KanbanFlowNode>) {
         ) : null
       }
     >
-      <div className="grid min-h-0 flex-1 auto-cols-fr grid-flow-col gap-2 overflow-x-auto p-2">
+      <div className="grid min-h-0 flex-1 auto-cols-[minmax(9rem,1fr)] grid-flow-col gap-2 overflow-x-auto p-2">
         {KANBAN_STATUSES.map((status) => {
           const column = cards.filter((card) => card.status === status);
           return (
@@ -113,7 +117,7 @@ export function BoardKanban({ data, selected }: NodeProps<KanbanFlowNode>) {
                       <span className="min-w-0 flex-1 truncate font-medium">{card.title}</span>
                     </button>
                     {open ? (
-                      <div className="grid gap-1 border-t px-2 py-1.5">
+                      <div className="grid grid-cols-1 gap-1 border-t px-2 py-1.5">
                         {card.body ? (
                           <p className="break-words whitespace-pre-wrap text-muted-foreground">
                             {card.body}

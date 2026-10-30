@@ -595,6 +595,30 @@ function BoardCanvasPage() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const flow = useRef<ReactFlowInstance<BoardFlowNode, Edge> | null>(null);
   const canvas = useRef<HTMLDivElement>(null);
+  const [frameTarget, setFrameTarget] = useState<{ readonly id?: string } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Frame the requested object after React Flow receives the new canvas nodes.
+  useEffect(() => {
+    if (!frameTarget) return;
+    const frame = requestAnimationFrame(() => {
+      void flow.current?.fitView({
+        padding: FRAME_PADDING,
+        maxZoom: 1,
+        duration: 300,
+        ...(frameTarget.id
+          ? {
+              nodes: flow.current
+                ?.getNodes()
+                .filter(
+                  (node) =>
+                    node.id === frameTarget.id ||
+                    (frameTarget.id !== KANBAN_NODE_ID && node.type === "agent"),
+                ),
+            }
+          : {}),
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [frameTarget]);
   const [fullScreenLayer, setFullScreenLayer] = useState<HTMLDivElement | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep native browser views and the composer menu on their board windows.
   useEffect(() => {
@@ -674,15 +698,7 @@ function BoardCanvasPage() {
       if (!saved) setKanbanDraft((current) => (current === draft ? null : current));
     });
   };
-  const frameKanban = (all: boolean) =>
-    requestAnimationFrame(() => {
-      void flow.current?.fitView({
-        padding: FRAME_PADDING,
-        maxZoom: 1,
-        duration: 300,
-        ...(all ? {} : { nodes: [{ id: KANBAN_NODE_ID }] }),
-      });
-    });
+  const frameKanban = (all: boolean) => setFrameTarget(all ? {} : { id: KANBAN_NODE_ID });
   // On the board: frame it. Off it: put it under the agents (or mid-view on an empty board).
   const onKanban = () => {
     if (kanbanFlowNode) {
@@ -694,7 +710,10 @@ function BoardCanvasPage() {
     if (nodes.length > 0) {
       const left = Math.min(...nodes.map((node) => node.x));
       const right = Math.max(...nodes.map((node) => node.x + agentNodeSize(node)));
-      const bottom = Math.max(...nodes.map((node) => node.y + agentNodeSize(node)));
+      const bottom = Math.max(
+        ...nodes.map((node) => node.y + agentNodeSize(node)),
+        ...openWindows.map((window) => window.position.y + (window.height ?? 0)),
+      );
       placement = { x: (left + right) / 2 - width / 2, y: bottom + 64, width, height };
     } else {
       const box = canvas.current?.getBoundingClientRect();
@@ -748,8 +767,15 @@ function BoardCanvasPage() {
           ? previous.map((window) =>
               window.id === id ? { ...window, data: { ...window.data, ...options } } : window,
             )
-          : [...previous, newWindowNode(kind, node, previous, options)],
+          : [
+              ...previous,
+              newWindowNode(kind, node, previous, options, [
+                ...nodes.map((agent) => toFlowNode(agent)),
+                ...(kanbanFlowNode ? [kanbanFlowNode] : []),
+              ]),
+            ],
       );
+      setFrameTarget({ id });
     },
   );
   const close = useStableCallback((id: string) => {
@@ -813,6 +839,7 @@ function BoardCanvasPage() {
     );
     for (const change of changes) {
       if (change.type === "position" && change.position && change.dragging === false) {
+        if (!flowNodes.find((node) => node.id === change.id)?.dragging) recordHistoryStep();
         const drop: Drop = { x: change.position.x, y: change.position.y };
         setDropped((previous) => new Map(previous).set(change.id, drop));
         void updateNode(change.id, { x: drop.x, y: drop.y }).then((saved) => {
@@ -968,14 +995,22 @@ function BoardCanvasPage() {
       const target = event.target;
       if (
         target instanceof HTMLElement &&
-        (target.isContentEditable || target.closest("input, textarea, select, [role=dialog]"))
+        (target.isContentEditable ||
+          target.closest("input, textarea, select, [role=dialog], .nokey"))
       )
         return;
       if (!canvas.current?.contains(target as globalThis.Node | null) && target !== document.body)
         return;
       const mod = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
-      if (mod && key === "z" && !event.shiftKey) {
+      if (event.key === "Delete" || event.key === "Backspace") {
+        if (window.getSelection()?.toString()) return;
+        const selected = flow.current?.getNodes().filter((node) => node.selected) ?? [];
+        const selectedEdges = flow.current?.getEdges().filter((edge) => edge.selected) ?? [];
+        if (selected.length === 0 && selectedEdges.length === 0) return;
+        event.preventDefault();
+        void flow.current?.deleteElements({ nodes: selected, edges: selectedEdges });
+      } else if (mod && key === "z" && !event.shiftKey) {
         event.preventDefault();
         undo();
       } else if (mod && (key === "y" || (key === "z" && event.shiftKey))) {
@@ -1058,7 +1093,7 @@ function BoardCanvasPage() {
               }}
               onConnectStart={() => setConnecting(true)}
               onConnectEnd={() => setConnecting(false)}
-              deleteKeyCode={["Backspace", "Delete"]}
+              deleteKeyCode={null}
               proOptions={{ hideAttribution: true }}
               fitView
               minZoom={0.2}

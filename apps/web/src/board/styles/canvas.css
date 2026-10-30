@@ -1044,18 +1044,30 @@
 }
 
 /* Window resize grips: invisible bands along the edges and wider squares at the corners. */
-.board-canvas .react-flow__node-window .react-flow__resize-control.line {
+.board-canvas
+  :is(.react-flow__node-window, .react-flow__node-kanban)
+  .react-flow__resize-control.line {
   border-color: transparent;
 }
-.board-canvas .react-flow__node-window .react-flow__resize-control.line.left,
-.board-canvas .react-flow__node-window .react-flow__resize-control.line.right {
+.board-canvas
+  :is(.react-flow__node-window, .react-flow__node-kanban)
+  .react-flow__resize-control.line.left,
+.board-canvas
+  :is(.react-flow__node-window, .react-flow__node-kanban)
+  .react-flow__resize-control.line.right {
   width: 12px;
 }
-.board-canvas .react-flow__node-window .react-flow__resize-control.line.top,
-.board-canvas .react-flow__node-window .react-flow__resize-control.line.bottom {
+.board-canvas
+  :is(.react-flow__node-window, .react-flow__node-kanban)
+  .react-flow__resize-control.line.top,
+.board-canvas
+  :is(.react-flow__node-window, .react-flow__node-kanban)
+  .react-flow__resize-control.line.bottom {
   height: 12px;
 }
-.board-canvas .react-flow__node-window .react-flow__resize-control.handle {
+.board-canvas
+  :is(.react-flow__node-window, .react-flow__node-kanban)
+  .react-flow__resize-control.handle {
   z-index: 1;
   width: 18px;
   height: 18px;

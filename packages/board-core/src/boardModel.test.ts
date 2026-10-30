@@ -81,6 +81,32 @@ describe("history", () => {
     expect(redone?.history.past).toHaveLength(2);
   });
 
+  it("undoes kanban placement, movement, resizing and removal without losing agents", () => {
+    const workflow = { ...createWorkflow("w", "W", "ws"), nodes: one.nodes };
+    const placed = { ...workflow, kanban: { x: 40, y: 300, width: 900, height: 320 } };
+    const moved = { ...placed, kanban: { x: 90, y: 500, width: 600, height: 400 } };
+    let current = workflow;
+    let history = createHistory(snapshotOf(current));
+    for (const next of [placed, moved, workflow]) {
+      history = recordHistory(history, snapshotOf(current));
+      current = next;
+    }
+    for (const expected of [moved, placed, workflow]) {
+      const result = undoHistory(history, snapshotOf(current))!;
+      current = applySnapshot(current, result.snapshot);
+      history = result.history;
+      expect(current).toEqual(expected);
+    }
+    for (const expected of [placed, moved, workflow]) {
+      const result = redoHistory(history, snapshotOf(current))!;
+      current = applySnapshot(current, result.snapshot);
+      history = result.history;
+      expect(current).toEqual(expected);
+    }
+    expect(snapshotsEqual(snapshotOf(placed), snapshotOf(moved))).toBe(false);
+    expect(applySnapshot(moved, discardHistory(history).snapshot)).toEqual(workflow);
+  });
+
   it("returns null when there is nothing to undo or redo", () => {
     const history = createHistory(empty);
     expect(undoHistory(history, empty)).toBeNull();

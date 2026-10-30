@@ -20,6 +20,7 @@ import {
   uniqueWorkflowName,
   type BoardNode as CoreNode,
   type History,
+  type EditSnapshot,
   type KanbanPlacement,
   type WorkflowSettings,
 } from "@t3tools/board-core/boardModel";
@@ -30,6 +31,7 @@ import { useEffect } from "react";
 
 import { runBoardApi, runBoardMutation, streamBoardEvents } from "./boardApi";
 import { applyBoardEvent, workflowView, type Workflow } from "./boardState";
+import { agentNodeSize } from "./foreman/signalEdge";
 
 export type { BoardNode, Workflow } from "./boardState";
 export type {
@@ -50,7 +52,7 @@ interface BoardState {
   readonly currentId: string;
   readonly status: "loading" | "connected" | "offline";
   readonly error: string | null;
-  readonly historyVersion: number;
+  readonly histories: ReadonlyMap<string, History>;
 }
 
 // Kept across hot reloads so a reloaded module keeps the atom the mounted page reads.
@@ -62,7 +64,7 @@ const boardStateAtom: Atom.Writable<BoardState> =
     currentId: "",
     status: "loading",
     error: null,
-    historyVersion: 0,
+    histories: new Map(),
   }).pipe(Atom.withLabel("board-hub-state"));
 hotData.boardStateAtom = boardStateAtom;
 const histories = new Map<string, History>();
@@ -177,7 +179,7 @@ function perform(title: string, action: () => Promise<unknown>) {
   void action().catch((error: unknown) => reportError(title, error));
 }
 function changedHistory() {
-  setState({ historyVersion: getState().historyVersion + 1 });
+  setState({ histories: new Map(histories) });
 }
 function historyOf(workflow: Workflow) {
   const history = histories.get(workflow.id) ?? createHistory(snapshotOf(workflow));
@@ -194,15 +196,13 @@ function edit(action: (workflow: Workflow) => Promise<unknown>) {
   });
 }
 export function useBoardHistory() {
-  useBoardState();
-  const workflow = getCurrentWorkflow();
-  const history = historyOf(workflow);
+  const { histories: savedHistories } = useBoardState();
+  const workflow = useCurrentWorkflow();
+  const history = savedHistories.get(workflow.id) ?? historyOf(workflow);
   return {
     canUndo: history.past.length > 0,
     canRedo: history.future.length > 0,
-    // Restore returns to the board as it was when opened; an empty board has nothing to return to.
-    restorable:
-      history.origin.nodes.length > 0 && !snapshotsEqual(snapshotOf(workflow), history.origin),
+    restorable: !snapshotsEqual(editableSnapshot(workflow), editableSnapshot(history.origin)),
   };
 }
 
@@ -220,7 +220,19 @@ function nodeInput(node: CoreNode): BoardCreateNodeInput {
     y: node.y,
   };
 }
+function editableSnapshot(snapshot: EditSnapshot): EditSnapshot {
+  return { ...snapshotOf(snapshot), nodes: snapshot.nodes.map(nodeInput) };
+}
 async function restore(workflow: Workflow, target: ReturnType<typeof snapshotOf>) {
+  if (JSON.stringify(workflow.kanban) !== JSON.stringify(target.kanban)) {
+    await runBoardMutation((client) =>
+      client.updateWorkflow({
+        headers: {},
+        params: { workflowId: workflow.id },
+        payload: { kanban: target.kanban ?? null },
+      }),
+    );
+  }
   const targetNodes = new Map(target.nodes.map((node) => [node.id, node]));
   const currentNodes = new Map(workflow.nodes.map((node) => [node.id, node]));
   const edgeKey = (edge: { a: string; b: string }) => `${edge.a}\0${edge.b}`;
@@ -250,7 +262,9 @@ async function restore(workflow: Workflow, target: ReturnType<typeof snapshotOf>
           payload: nodeInput(node),
         }),
       );
-    } else {
+    } else if (
+      JSON.stringify(nodeInput(node)) !== JSON.stringify(nodeInput(currentNodes.get(node.id)!))
+    ) {
       const { id: _id, ...patch } = nodeInput(node);
       await runBoardMutation((client) =>
         client.updateNode({
@@ -293,10 +307,11 @@ export function recordHistoryStep() {
   changedHistory();
 }
 export function setCurrentWorkflow(id: string) {
+  if (id === getState().currentId) return;
   const workflow = getWorkflow(id);
   if (!workflow) return;
   histories.set(id, createHistory(snapshotOf(workflow)));
-  setState({ currentId: id });
+  setState({ currentId: id, histories: new Map(histories) });
 }
 export function createNewWorkflow(name?: string, settings?: WorkflowSettings) {
   const id = randomUUID();
@@ -409,11 +424,33 @@ export function renameWorkflow(id: string, name: string) {
     ),
   );
 }
-export function nextNodePosition(workflow: Pick<Workflow, "nodes">) {
+export function nextNodePosition(
+  workflow: Pick<Workflow, "nodes" | "kanban">,
+  profile: CoreNode["profile"] = "worker",
+  windows: ReadonlyArray<KanbanPlacement> = [],
+) {
+  const size = agentNodeSize({ profile });
+  const occupied = [
+    ...workflow.nodes.map((node) => ({
+      ...node,
+      width: agentNodeSize(node),
+      height: agentNodeSize(node),
+    })),
+    ...(workflow.kanban ? [workflow.kanban] : []),
+    ...windows,
+  ];
   for (let index = 0; ; index++) {
     const x = 40 + (index % 4) * 300,
       y = 40 + Math.floor(index / 4) * 230;
-    if (!workflow.nodes.some((node) => Math.abs(node.x - x) < 300 && Math.abs(node.y - y) < 230))
+    if (
+      !occupied.some(
+        (box) =>
+          x < box.x + box.width + 24 &&
+          x + size + 24 > box.x &&
+          y < box.y + box.height + 24 &&
+          y + size + 24 > box.y,
+      )
+    )
       return { x, y };
   }
 }
@@ -470,6 +507,8 @@ export async function updateNode(id: string, patch: { x?: number; y?: number; si
 /** Puts the workflow's kanban on the board, moves it, or (null) takes it off; every viewer sees it. */
 export async function placeKanban(placement: KanbanPlacement | null) {
   const workflow = getCurrentWorkflow();
+  if (JSON.stringify(workflow.kanban ?? null) === JSON.stringify(placement)) return true;
+  const history = recordHistory(historyOf(workflow), snapshotOf(workflow));
   try {
     await runBoardMutation((client) =>
       client.updateWorkflow({
@@ -478,6 +517,8 @@ export async function placeKanban(placement: KanbanPlacement | null) {
         payload: { kanban: placement },
       }),
     );
+    histories.set(workflow.id, history);
+    changedHistory();
     return true;
   } catch (error) {
     reportError("Could not update the kanban", error);
