@@ -484,15 +484,18 @@ const make = Effect.gen(function* () {
   );
   const setupCommandFor = (mode: ServerBrowserMode) =>
     mode === "headed" ? headedSetupCommand : setupCommand;
-  const browserSettings = settingsService.getSettings.pipe(
+  const storedBrowserSettings = settingsService.getSettings.pipe(
     Effect.map((settings) => ({
       mode: settings.serverBrowserMode,
       proxy: settings.serverBrowserProxy,
     })),
+  );
+  const browserSettings = storedBrowserSettings.pipe(
     Effect.orElseSucceed(() => ({ mode: DEFAULT_SERVER_BROWSER_MODE, proxy: "" })),
   );
   const launchConfig = Effect.gen(function* () {
-    const { mode, proxy } = yield* browserSettings;
+    // Launching without the stored proxy would send the browser's traffic around it.
+    const { mode, proxy } = yield* storedBrowserSettings;
     if (mode === "headless") {
       return { mode, proxy, executablePath: yield* previewBrowser.executable };
     }
@@ -2593,14 +2596,30 @@ const make = Effect.gen(function* () {
 
   /** Closes the browser so the next tab launches it with the current mode and proxy; tabs reopen by URL. */
   const relaunchBrowser = async () => {
+    const dropped: Array<{ readonly threadId: ThreadId; readonly tabId: string }> = [];
     // Dropping the current entry while iterating a Map is safe.
     for (const tab of tabs.values()) {
       if (tab.desktop) continue;
       const url = tab.page.url();
       if (/^https?:/i.test(url)) reopenUrls.set(tabKey(tab.threadId, tab.tabId), url);
+      dropped.push({ threadId: tab.threadId, tabId: tab.tabId });
       dropTab(tab, false, true);
     }
     await contexts.relaunch();
+    // Reopen at once: agents find their tabs through this map, not through a viewer.
+    for (const { threadId, tabId } of dropped) {
+      await runPromise(
+        manager.list({ threadId }).pipe(
+          Effect.map(({ sessions }) =>
+            sessions.find((session) => session.tabId === tabId && session.runtime === "server"),
+          ),
+          Effect.flatMap((snapshot) =>
+            snapshot ? Effect.promise(() => ensureTab(snapshot).catch(constVoid)) : Effect.void,
+          ),
+          Effect.ignore,
+        ),
+      );
+    }
   };
   const launchKey = ({ mode, proxy }: { readonly mode: string; readonly proxy: string }) =>
     JSON.stringify([mode, proxy]);
@@ -2619,18 +2638,14 @@ const make = Effect.gen(function* () {
   );
 
   const setupArgv = Effect.gen(function* () {
-    const cli = (yield* HostProcess.IsExecutable)
-      ? [yield* HostProcess.ExecutablePath]
-      : [yield* HostProcess.ExecutablePath, (yield* HostProcess.Arguments)[1] ?? ""];
-    return (mode: ServerBrowserMode) => [
-      ...cli,
-      "browser",
-      "setup",
-      "--mode",
-      mode,
-      "--base-dir",
-      config.baseDir,
-    ];
+    const host = {
+      baseDir: config.baseDir,
+      env: yield* HostProcess.Environment,
+      isExecutable: yield* HostProcess.IsExecutable,
+      executablePath: yield* HostProcess.ExecutablePath,
+      script: (yield* HostProcess.Arguments)[1],
+    };
+    return (mode: ServerBrowserMode) => PreviewBrowserHost.hostSetupArgv({ ...host, mode });
   });
   const argvFor = yield* setupArgv;
   const setupLock = yield* Semaphore.make(1);

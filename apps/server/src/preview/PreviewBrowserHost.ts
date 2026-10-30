@@ -226,9 +226,17 @@ const X_SOCKETS = "/tmp/.X11-unix";
  */
 export const headedDisplay = Effect.gen(function* () {
   if ((yield* HostProcess.Platform) !== "linux") return { _tag: "display", display: "" } as const;
-  const display = (yield* HostProcess.Environment).DISPLAY?.trim();
-  if (display) return { _tag: "display", display } as const;
   const fs = yield* FileSystem.FileSystem;
+  const display = (yield* HostProcess.Environment).DISPLAY?.trim();
+  // A local display whose server stopped (its socket is gone) is skipped; remote ones are trusted.
+  const localNumber = display ? /^:(\d+)(?:\.\d+)?$/.exec(display)?.[1] : undefined;
+  if (
+    display &&
+    (localNumber === undefined ||
+      (yield* fs.exists(`${X_SOCKETS}/X${localNumber}`).pipe(Effect.orElseSucceed(() => false))))
+  ) {
+    return { _tag: "display", display } as const;
+  }
   const uid = yield* HostProcess.UserId;
   const owned: Array<number> = [];
   for (const entry of yield* fs.readDirectory(X_SOCKETS).pipe(Effect.orElseSucceed(() => []))) {
@@ -268,6 +276,26 @@ export const headlessNeeds = Effect.fn("PreviewBrowserHost.headlessNeeds")(funct
   if (!(yield* fontAvailable)) needs.push("fonts");
   return needs;
 });
+
+/** The server's own CLI, as root runs it: sudo resets the environment, so Electron is told again to run as Node. */
+export const hostSetupArgv = (input: {
+  readonly mode: ServerBrowserMode;
+  readonly baseDir: string;
+  readonly env: Readonly<Record<string, string | undefined>>;
+  readonly isExecutable: boolean;
+  readonly executablePath: string;
+  readonly script: string | undefined;
+}) => [
+  ...(input.env.ELECTRON_RUN_AS_NODE ? ["env", "ELECTRON_RUN_AS_NODE=1"] : []),
+  input.executablePath,
+  ...(input.isExecutable || input.script === undefined ? [] : [input.script]),
+  "browser",
+  "setup",
+  "--mode",
+  input.mode,
+  "--base-dir",
+  input.baseDir,
+];
 
 const SUDO_REFUSED =
   /password is required|terminal is required|no tty present|not in the sudoers|may not run sudo/i;

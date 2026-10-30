@@ -10,6 +10,7 @@ import {
   type BrowserRecordingFrameRate,
   EnvironmentId,
   type ServerSettings,
+  ServerSettingsError,
   type ServerSettingsPatch,
   PreviewTabId,
   ProviderInstanceId,
@@ -43,8 +44,12 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
   presentAsChrome: async () => {},
   ServerBrowserContexts: class {
     private readonly onClose: ((context: BrowserContext) => void) | undefined;
-    constructor(options: { onContextClose?: (context: BrowserContext) => void }) {
+    constructor(options: {
+      onContextClose?: (context: BrowserContext) => void;
+      launchConfig: () => Promise<unknown>;
+    }) {
       this.onClose = options.onContextClose;
+      launchConfigs.push(options.launchConfig);
     }
     async contextFor(profileId: string, isolationKey?: string) {
       contextRequests.push({ profileId, isolated: isolationKey !== undefined });
@@ -52,6 +57,7 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       await contextGate?.promise;
       const context = makeContext(this.onClose);
       contexts.push(context);
+      contextOpened?.resolve();
       return context as unknown as BrowserContext;
     }
     async scratchPage() {
@@ -271,6 +277,9 @@ const encoderStreams: Array<{ frameRate: number | undefined; bitsPerSecond: numb
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 const relaunches: Array<number> = [];
 let relaunched: PromiseWithResolvers<void> | null = null;
+const launchConfigs: Array<() => Promise<unknown>> = [];
+let settingsUnreadable = false;
+let contextOpened: PromiseWithResolvers<void> | null = null;
 let contextGate: PromiseWithResolvers<void> | null = null;
 let pageCopy = "";
 let keyCopy = "";
@@ -360,6 +369,16 @@ const dependencies = Layer.mergeAll(
       const changes = yield* PubSub.unbounded<ServerSettings>({ replay: 1 });
       return {
         ...settings,
+        getSettings: Effect.suspend(() =>
+          settingsUnreadable
+            ? Effect.fail(
+                new ServerSettingsError({
+                  settingsPath: "settings.json",
+                  operation: "read-secret",
+                }),
+              )
+            : settings.getSettings,
+        ),
         updateSettings: (patch: ServerSettingsPatch) =>
           settings.updateSettings(patch).pipe(Effect.tap((next) => PubSub.publish(changes, next))),
         streamChanges: Stream.fromPubSub(changes),
@@ -398,6 +417,9 @@ beforeEach(() => {
   contextRequests.length = 0;
   relaunches.length = 0;
   relaunched = null;
+  launchConfigs.length = 0;
+  settingsUnreadable = false;
+  contextOpened = null;
   contextGate = null;
   contextFailure = null;
   initialNavigation = null;
@@ -1316,12 +1338,15 @@ it.live("switching the browser mode relaunches it and reopens server tabs at the
       yield* viewer.input({ type: "takeControl" });
       yield* viewer.input({ type: "navigate", url: "https://example.com/kept" });
       relaunched = Promise.withResolvers();
+      contextOpened = Promise.withResolvers();
       yield* settings.updateSettings({ serverBrowserMode: "headed" });
       yield* Effect.promise(() => relaunched!.promise);
       expect(relaunches).toEqual([1]);
       // The viewer reconnects instead of losing the tab.
       const outputs = yield* Queue.takeAll(viewer.output);
       expect(outputs.map((output) => output._tag)).toContain("reconnect");
+      // The tab comes back on its own, so an agent without a viewer still finds it.
+      yield* Effect.promise(() => contextOpened!.promise);
       yield* browser.attachViewer(viewerInput(tabId, true));
       expect(contexts).toHaveLength(2);
       expect(contexts[1]!.page.goto).toHaveBeenCalledWith(
@@ -1334,6 +1359,25 @@ it.live("switching the browser mode relaunches it and reopens server tabs at the
       yield* settings.updateSettings({ serverBrowserProxy: "http://127.0.0.1:3128" });
       yield* Effect.promise(() => relaunched!.promise);
       expect(relaunches).toEqual([1, 2]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("refuses to launch when its settings cannot be read instead of dropping the proxy", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* ServerBrowser.ServerBrowser;
+      const settings = yield* ServerSettingsService;
+      yield* settings.updateSettings({ serverBrowserProxy: "http://127.0.0.1:3128" });
+      settingsUnreadable = true;
+      const launchConfig = launchConfigs.at(-1)!;
+      const failure = yield* Effect.promise(() =>
+        launchConfig().then(
+          () => null,
+          (cause) => cause,
+        ),
+      );
+      expect(failure).toMatchObject({ _tag: "ServerSettingsError" });
     }),
   ).pipe(Effect.provide(layer)),
 );

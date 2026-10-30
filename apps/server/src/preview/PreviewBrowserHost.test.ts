@@ -274,9 +274,18 @@ describe("headedDisplay", () => {
 
   it.effect("uses the server's DISPLAY first", () =>
     Effect.gen(function* () {
-      expect(yield* display({ env: { DISPLAY: ":5" }, sockets: { X99: 1001 } })).toEqual({
+      expect(yield* display({ env: { DISPLAY: ":5" }, sockets: { X5: 1001, X99: 1001 } })).toEqual({
         _tag: "display",
         display: ":5",
+      });
+    }),
+  );
+
+  it.effect("skips a DISPLAY whose X server has stopped", () =>
+    Effect.gen(function* () {
+      expect(yield* display({ env: { DISPLAY: ":5.0" }, sockets: { X99: 1001 } })).toEqual({
+        _tag: "display",
+        display: ":99",
       });
     }),
   );
@@ -295,4 +304,50 @@ describe("headedDisplay", () => {
       expect(yield* display({ sockets: { X0: 0 } })).toEqual({ _tag: "none" });
     }),
   );
+});
+
+describe("hostSetupArgv", () => {
+  const base = { mode: "headed" as const, baseDir: "/home/me/.t3", env: {} };
+  it("runs a standalone t3 executable directly", () => {
+    expect(
+      PreviewBrowserHost.hostSetupArgv({
+        ...base,
+        isExecutable: true,
+        executablePath: "/home/me/.t3/runtime/versions/1/t3",
+        script: undefined,
+      }),
+    ).toEqual([
+      "/home/me/.t3/runtime/versions/1/t3",
+      "browser",
+      "setup",
+      "--mode",
+      "headed",
+      "--base-dir",
+      "/home/me/.t3",
+    ]);
+  });
+
+  it("keeps Electron running as Node, since sudo drops the environment", () => {
+    expect(
+      PreviewBrowserHost.hostSetupArgv({
+        ...base,
+        mode: "headless",
+        env: { ELECTRON_RUN_AS_NODE: "1" },
+        isExecutable: false,
+        executablePath: "/opt/T3 Code/t3code",
+        script: "/opt/T3 Code/resources/server/bin.mjs",
+      }),
+    ).toEqual([
+      "env",
+      "ELECTRON_RUN_AS_NODE=1",
+      "/opt/T3 Code/t3code",
+      "/opt/T3 Code/resources/server/bin.mjs",
+      "browser",
+      "setup",
+      "--mode",
+      "headless",
+      "--base-dir",
+      "/home/me/.t3",
+    ]);
+  });
 });

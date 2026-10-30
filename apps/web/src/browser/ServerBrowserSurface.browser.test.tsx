@@ -142,6 +142,41 @@ describe("ServerBrowserSurface control", () => {
   });
 });
 
+describe("ServerBrowserSurface control handoff", () => {
+  it("gives back a grant that arrives after the user already clicked elsewhere", async () => {
+    setup();
+    await using screen = await renderBrowser();
+    await serverSays(control("agent"));
+    await userEvent.click(canvas());
+    expect(mocks.sent).toContainEqual({ type: "takeControl" });
+    // The user moves on before the server answers.
+    await userEvent.click(screen.getByRole("button", { name: "Elsewhere" }));
+    await serverSays(control("you"));
+    expect(mocks.sent).toContainEqual({ type: "releaseControl" });
+    expect(document.activeElement).not.toBe(screen.getByLabelText("Browser page").element());
+  });
+
+  it("hands control back when the user clicks into an app dialog", async () => {
+    setup();
+    await using _screen = await renderBrowser();
+    await serverSays(control("agent"));
+    await userEvent.click(canvas());
+    await serverSays(control("you"));
+    const dialog = document.createElement("div");
+    dialog.dataset.slot = "command-dialog-popup";
+    const input = document.createElement("input");
+    input.setAttribute("aria-label", "Command");
+    dialog.append(input);
+    document.body.append(dialog);
+    try {
+      await userEvent.click(input);
+      expect(mocks.sent).toContainEqual({ type: "releaseControl" });
+    } finally {
+      dialog.remove();
+    }
+  });
+});
+
 describe("ServerBrowserSurface host setup", () => {
   const needsSetup = () =>
     act(() =>

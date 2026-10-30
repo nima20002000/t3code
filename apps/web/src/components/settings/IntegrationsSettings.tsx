@@ -1146,15 +1146,18 @@ function ServerBrowserModeSetting() {
         environmentId: machine.environmentId,
         input: { patch: { serverBrowserMode: pending.mode } },
       }).then((result) => {
-        if (result._tag === "Failure")
-          toastManager.add({
-            type: "error",
-            title: `Could not change the browser on ${machine.label}`,
-            description: (() => {
-              const failure = squashAtomCommandFailure(result);
-              return failure instanceof Error ? failure.message : undefined;
-            })(),
-          });
+        if (result._tag === "Success" && result.value.serverBrowserMode === pending.mode) return;
+        const failure = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
+        toastManager.add({
+          type: "error",
+          title: `Could not change the browser on ${machine.label}`,
+          description:
+            failure instanceof Error
+              ? failure.message
+              : result._tag === "Success"
+                ? "Its T3 Code is too old to choose its browser. Update it first."
+                : undefined,
+        });
       });
     }
     setPending(rest.length > 0 ? { mode: pending.mode, machines: rest } : null);
@@ -1264,7 +1267,19 @@ function ServerBrowserProxySetting() {
           disabled={!oneMachine}
           maxLength={2048}
           value={oneMachine ? settings.serverBrowserProxy : ""}
-          onCommit={(next) => updateSettings({ serverBrowserProxy: next.trim() })}
+          onCommit={(next) => {
+            // Settings reach every client; a password in here would too.
+            if (/^[^/]*\/\/[^/]*@/.test(next.trim()) || /^[^/:]*:[^/@]*@/.test(next.trim())) {
+              toastManager.add({
+                type: "warning",
+                title: "Proxy not saved",
+                description:
+                  "Leave the username and password out. Run a local forwarding proxy that signs in upstream, and enter its address.",
+              });
+              return;
+            }
+            updateSettings({ serverBrowserProxy: next.trim() });
+          }}
         />
       }
     />

@@ -52,9 +52,10 @@ export interface ServerBrowserHandle {
 }
 
 const RESIZE_THROTTLE_MS = 150;
-/** Menus and popups open from the browser's chrome render in portals outside it. */
-const FLOATING_LAYERS =
-  '[data-slot$="-popup"], [data-slot$="-positioner"], [role="menu"], [role="listbox"]';
+/** Menus and popovers open from the browser's chrome render in portals outside it; dialogs do not count. */
+const FLOATING_LAYERS = ["menu", "select", "popover", "combobox", "autocomplete"]
+  .flatMap((kind) => [`[data-slot="${kind}-popup"]`, `[data-slot="${kind}-positioner"]`])
+  .join(", ");
 // Reuse nearby probes when a slow link would return the tap's answer after it ends.
 const PROBE_REUSE_PX = 24;
 const PROBE_REUSE_MS = 10_000;
@@ -197,6 +198,8 @@ export function ServerBrowserSurface(props: {
   const [hostSetup, setHostSetup] = useState<PreviewStreamHostSetup | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const takingRef = useRef(false);
+  /** The user left while a take was in flight; its grant is handed straight back. */
+  const leftWhileTakingRef = useRef(false);
   const pendingMoveRef = useRef<MouseInput | null>(null);
   const pendingWheelRef = useRef<WheelInput | null>(null);
   const inputFrameRef = useRef<number | null>(null);
@@ -309,31 +312,37 @@ export function ServerBrowserSurface(props: {
     if (!current?.canOperate || current.controller === "you") return;
     if (current.controller === "another-viewer" || takingRef.current) return;
     takingRef.current = true;
+    leftWhileTakingRef.current = false;
     send({ type: "takeControl" });
   };
   const releaseControlOnLeave = useEffectEvent(() => {
     if (controlRef.current?.controller === "you") send({ type: "releaseControl" });
   });
   const controlling = control?.controller === "you";
+  const canOperate = control?.canOperate === true;
   // oxlint-disable-next-line t3code/react-effect-budget -- listens on the document for clicks outside this browser
   useEffect(() => {
-    if (!controlling) return;
     // The page took control from a click, so the keyboard follows it there.
-    if (takingRef.current) {
+    if (controlling && takingRef.current) {
       takingRef.current = false;
       inputRef.current?.focus({ preventScroll: true });
     }
+    if (!canOperate) return;
     const onPointerDown = (event: globalThis.PointerEvent) => {
       if (!(event.target instanceof Element)) return;
       const root = rootRef.current;
       // The browser's own chrome (address bar, its menus) counts as inside.
       const scope = root?.closest("[data-server-browser-scope]") ?? root;
       if (!scope || scope.contains(event.target) || event.target.closest(FLOATING_LAYERS)) return;
+      if (takingRef.current) {
+        takingRef.current = false;
+        leftWhileTakingRef.current = true;
+      }
       releaseControlOnLeave();
     };
     document.addEventListener("pointerdown", onPointerDown, true);
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
-  }, [controlling]);
+  }, [canOperate, controlling]);
 
   useImperativeHandle(
     ref,
@@ -445,6 +454,10 @@ export function ServerBrowserSurface(props: {
             setPromptText(next.dialog?.defaultValue ?? "");
           // A refused take (another viewer got there first) must not block the next one.
           if (next.controller !== "you") takingRef.current = false;
+          if (next.controller === "you" && leftWhileTakingRef.current) {
+            leftWhileTakingRef.current = false;
+            client.send({ type: "releaseControl" });
+          }
           if (next.controller !== "you") {
             clearInput();
           } else if (previous?.controller !== "you") {
@@ -455,6 +468,7 @@ export function ServerBrowserSurface(props: {
         onConnectedChange: (connected) => {
           if (connected) return;
           takingRef.current = false;
+          leftWhileTakingRef.current = false;
           setFileChooser(null);
           controlRef.current = null;
           setControl(null);

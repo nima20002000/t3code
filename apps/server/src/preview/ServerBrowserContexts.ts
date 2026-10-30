@@ -41,7 +41,11 @@ interface Options {
 
 const PROXY_PROTOCOLS = new Set(["http:", "https:", "socks4:", "socks5:"]);
 
-/** Playwright's proxy option for a URL such as `http://user:pass@127.0.0.1:3128`; a bare host means http. */
+/**
+ * Playwright's proxy option for a URL such as `http://127.0.0.1:3128`; a bare host means http.
+ * Settings reach every client, so credentials belong in a local forwarding proxy, not here.
+ * Errors never repeat the value, which may hold them.
+ */
 export const parseBrowserProxy = (raw: string) => {
   const trimmed = raw.trim();
   if (trimmed === "") return undefined;
@@ -49,16 +53,17 @@ export const parseBrowserProxy = (raw: string) => {
   try {
     url = new URL(trimmed.includes("://") ? trimmed : `http://${trimmed}`);
   } catch {
-    throw new Error(`The browser proxy "${trimmed}" is not a valid URL.`);
+    throw new Error("The browser proxy is not a valid URL.");
   }
   if (!PROXY_PROTOCOLS.has(url.protocol) || url.hostname === "") {
-    throw new Error(`The browser proxy "${trimmed}" must be an http, https or socks URL.`);
+    throw new Error("The browser proxy must be an http, https or socks URL.");
   }
-  return {
-    server: `${url.protocol}//${url.host}`,
-    ...(url.username ? { username: decodeURIComponent(url.username) } : {}),
-    ...(url.password ? { password: decodeURIComponent(url.password) } : {}),
-  };
+  if (url.username || url.password) {
+    throw new Error(
+      "The browser proxy cannot hold a username or password. Run a local forwarding proxy that signs in upstream, and point the browser at it.",
+    );
+  }
+  return { server: `${url.protocol}//${url.host}` };
 };
 
 /**
@@ -176,7 +181,14 @@ export class ServerBrowserContexts {
 
   private startedDisplay() {
     if (!this.display) {
-      const started = (this.options.startDisplay ?? startXvfb)();
+      const started = (this.options.startDisplay ?? startXvfb)().then(async (display) => {
+        // A shutdown that began before this display existed cannot stop it.
+        if (this.closing) {
+          display.stop();
+          throw new Error("The preview browser is closed.");
+        }
+        return display;
+      });
       this.display = started;
       void started.catch(() => {
         if (this.display === started) this.display = undefined;
@@ -295,6 +307,8 @@ export class ServerBrowserContexts {
     if (profileId === INCOGNITO_BROWSER_PROFILE_ID) return;
     const key = JSON.stringify([profileId, null]);
     const clearing = (async () => {
+      // A relaunch owns the contexts it took until they close; their Chrome still uses the profile.
+      if (this.relaunching) await this.relaunching.catch(constVoid);
       const pending = this.contexts.get(key);
       if (pending) {
         this.contexts.delete(key);
@@ -345,9 +359,10 @@ export class ServerBrowserContexts {
     await Promise.allSettled(contexts.map(async (pending) => (await pending).close()));
     const browser = this.browser;
     this.browser = undefined;
+    await (await browser?.catch(() => undefined))?.close().catch(constVoid);
+    // Taken after the browser settles, since its launch may have started the display.
     const display = this.display;
     this.display = undefined;
-    await (await browser?.catch(() => undefined))?.close().catch(constVoid);
     (await display?.catch(() => undefined))?.stop();
   }
 }

@@ -243,7 +243,7 @@ describe("ServerBrowserContexts", () => {
       launchConfig: async () => ({
         mode: "headed",
         executablePath: "/opt/google/chrome/chrome",
-        proxy: "http://agent:s%40cret@127.0.0.1:3128",
+        proxy: "http://127.0.0.1:3128",
         display: ":99",
       }),
     });
@@ -254,14 +254,14 @@ describe("ServerBrowserContexts", () => {
       executablePath: "/opt/google/chrome/chrome",
       headless: false,
       env: { PATH: "/usr/bin", DISPLAY: ":99" },
-      proxy: { server: "http://127.0.0.1:3128", username: "agent", password: "s@cret" },
+      proxy: { server: "http://127.0.0.1:3128" },
     });
     expect(shared?.args).not.toContain("--force-device-scale-factor=2");
     expect(launches.persistent).toHaveBeenCalledWith(
       "/test/profiles-headed/work",
       expect.objectContaining({
         headless: false,
-        proxy: { server: "http://127.0.0.1:3128", username: "agent", password: "s@cret" },
+        proxy: { server: "http://127.0.0.1:3128" },
       }),
     );
     await pool.close();
@@ -372,5 +372,70 @@ describe("ServerBrowserContexts", () => {
     events.emit("page", {});
     expect(blank.close).toHaveBeenCalledTimes(1);
     await pool.close();
+  });
+
+  it("refuses proxy credentials, which settings would show every client, without echoing them", async () => {
+    const pool = new ServerBrowserContexts({
+      ...options(),
+      launchConfig: async () => ({ ...HEADLESS, proxy: "http://agent:s3cret@proxy.test:3128" }),
+    });
+    const message = await pool.contextFor(INCOGNITO_BROWSER_PROFILE_ID).then(
+      () => "",
+      (cause: Error) => cause.message,
+    );
+    expect(message).toContain("local forwarding proxy");
+    expect(message).not.toContain("s3cret");
+    expect(launches.launch).not.toHaveBeenCalled();
+    await pool.close();
+  });
+
+  it("clears a profile only after a relaunch has closed the browser using it", async () => {
+    const human = makeContext();
+    const closing = Promise.withResolvers<void>();
+    human.close.mockImplementationOnce(async () => {
+      await closing.promise;
+    });
+    launches.persistent.mockResolvedValue(human as unknown as BrowserContext);
+    const pool = new ServerBrowserContexts(options());
+    await pool.contextFor("work");
+    const relaunching = pool.relaunch();
+    const clearing = pool.clearProfile("work");
+    await Promise.resolve();
+    expect(launches.rm).not.toHaveBeenCalled();
+    closing.resolve();
+    await Promise.all([relaunching, clearing]);
+    expect(launches.rm).toHaveBeenCalledWith("/test/profiles/work", {
+      recursive: true,
+      force: true,
+    });
+    await pool.close();
+  });
+
+  it("stops an Xvfb that a launch started while the pool was shutting down", async () => {
+    const browser = makeBrowser();
+    launches.launch.mockResolvedValue(browser as unknown as Browser);
+    const stop = vi.fn();
+    const configured = Promise.withResolvers<void>();
+    const asked = Promise.withResolvers<void>();
+    const pool = new ServerBrowserContexts({
+      ...options(),
+      startDisplay: async () => ({ display: ":42", stop }),
+      launchConfig: async () => {
+        asked.resolve();
+        await configured.promise;
+        return {
+          mode: "headed",
+          executablePath: "/usr/bin/chromium",
+          proxy: "",
+          display: "xvfb",
+        } satisfies BrowserLaunchConfig;
+      },
+    });
+    const scratch = pool.scratchPage().catch(() => undefined);
+    await asked.promise;
+    const closing = pool.close();
+    configured.resolve();
+    await Promise.all([scratch, closing]);
+    expect(stop).toHaveBeenCalledTimes(1);
   });
 });
