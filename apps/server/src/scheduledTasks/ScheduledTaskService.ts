@@ -845,19 +845,24 @@ export const layer = Layer.effect(
 
         // A bound thread can move to another project (No project to a project) while
         // this fires. Follow it; one move needs at most two retries. Same ids replay safely.
+        // `compact` sends the beforeRun /compact first, under its own ids.
         const sendBound = (
           threadId: ThreadId,
           projectId: ProjectId,
           retries: number,
+          compact = false,
         ): ReturnType<typeof threadManagement.sendToThread> =>
           threadManagement
             .sendToThread({
               projectId,
-              commandId,
               threadId,
-              messageId,
-              scheduledTaskId: active.id,
-              text: prompt,
+              ...(compact
+                ? {
+                    commandId: CommandId.make(`${commandId}:compact`),
+                    messageId: MessageId.make(`${messageId}:compact`),
+                    text: IDLE_COMPACTION_TEXT,
+                  }
+                : { commandId, messageId, scheduledTaskId: active.id, text: prompt }),
               attachments: [],
               mode: "queue",
               createdBy: active.createdBy,
@@ -873,7 +878,7 @@ export const layer = Layer.effect(
                         Effect.flatMap((shell) =>
                           shell === null || shell.projectId === projectId
                             ? Effect.fail(error)
-                            : sendBound(threadId, shell.projectId, retries - 1),
+                            : sendBound(threadId, shell.projectId, retries - 1, compact),
                         ),
                       ),
               }),
@@ -907,17 +912,7 @@ export const layer = Layer.effect(
                 // The stored selection only seeds fresh threads. A bound run
                 // follows the thread's current provider, so it passes none.
                 (active.beforeRun === "compact"
-                  ? threadManagement.sendToThread({
-                      projectId: active.projectId,
-                      commandId: CommandId.make(`${commandId}:compact`),
-                      threadId: ThreadId.make(active.threadId),
-                      messageId: MessageId.make(`${messageId}:compact`),
-                      text: IDLE_COMPACTION_TEXT,
-                      attachments: [],
-                      mode: "queue",
-                      createdBy: active.createdBy,
-                      creationSource: active.creationSource,
-                    })
+                  ? sendBound(ThreadId.make(active.threadId), active.projectId, 2, true)
                   : Effect.void
                 ).pipe(
                   Effect.andThen(sendBound(ThreadId.make(active.threadId), active.projectId, 2)),

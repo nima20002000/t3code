@@ -272,6 +272,53 @@ it.effect("compacts or moves to a fresh thread before a bound run", () =>
   ),
 );
 
+it.effect("compacts and runs in the project a bound thread moved to", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-09T12:00:00.000Z"));
+    const sent = yield* Ref.make<ReadonlyArray<string>>([]);
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          dependencies,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: (request) =>
+              request.projectId === "moved"
+                ? Ref.update(sent, (all) => [...all, `${request.projectId}:${request.text}`]).pipe(
+                    Effect.as({} as never),
+                  )
+                : Effect.fail(
+                    new ThreadManagementService.ThreadManagementThreadNotFoundError({
+                      projectId: request.projectId,
+                      threadId: request.threadId,
+                    }),
+                  ),
+            getThreadShell: () => Effect.succeed({ projectId: "moved" } as never),
+          }),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert(
+        yield* decodeInput({
+          ...input,
+          commandId: "compact-moved",
+          threadId: "chat",
+          beforeRun: "compact",
+          schedule: { type: "interval", everyMs: 60_000 },
+        }),
+      );
+      const result = yield* service.runNow({ id: task.id });
+      expect(result.task.lastRunStatus).toBe("succeeded");
+      expect(yield* Ref.get(sent)).toEqual(["moved:/compact", `moved:${input.prompt}`]);
+    }).pipe(Effect.provide(layer));
+  }).pipe(
+    Effect.provideService(ServerActivation, Effect.never),
+    Effect.provide(SqlitePersistence.layerMemory),
+  ),
+);
+
 it.effect("a start time makes a one-off, and keeps a time of day from firing before it", () =>
   Effect.gen(function* () {
     vi.stubEnv("TZ", "UTC");
