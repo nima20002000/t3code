@@ -242,14 +242,14 @@ export const layer = Layer.effectDiscard(
     const config = yield* ServerConfig.ServerConfig;
     const launcher = yield* Effect.serviceOption(ServiceLauncherClient.ServiceLauncherClient);
     const selfUpdate = yield* Effect.serviceOption(ServerSelfUpdate.ServerSelfUpdate);
-    if (
-      config.mode === "desktop" ||
-      Option.isNone(selfUpdate) ||
-      !Option.exists(launcher, (client) => client.managed)
-    ) {
-      yield* Effect.logDebug("Board auto-update skipped: not a service-managed headless server");
-      return;
-    }
+    const httpClient = yield* Effect.serviceOption(HttpClient.HttpClient);
+    // Every way out says why, so a server that never updates itself shows the reason in its log.
+    const skip = (reason: string) => Effect.logInfo(`Board auto-update is off: ${reason}`);
+    if (config.mode === "desktop") return yield* skip("the desktop app updates this server");
+    if (!Option.exists(launcher, (client) => client.managed))
+      return yield* skip("this server is not run by the t3 service launcher");
+    if (Option.isNone(selfUpdate)) return yield* skip("t3's self-update is not available here");
+    if (Option.isNone(httpClient)) return yield* skip("no HTTP client to list releases");
     const indexUrl = yield* Config.String("T3_BOARD_RELEASE_INDEX_URL").pipe(
       Config.withDefault(cliReleaseIndexPageUrl(1)),
     );
@@ -257,9 +257,7 @@ export const layer = Layer.effectDiscard(
       Config.orElse(() => Config.String("GITHUB_TOKEN")),
       Config.option,
     );
-    const httpClient = yield* Effect.serviceOption(HttpClient.HttpClient);
-    const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
-    if (Option.isNone(httpClient) || Option.isNone(projections)) return;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
     const store = yield* BoardStore.BoardStore;
     const lifecycle = yield* Effect.serviceOption(ServerLifecycleEvents.ServerLifecycleEvents);
     const previousUpdate = Option.match(lifecycle, {
@@ -277,7 +275,7 @@ export const layer = Layer.effectDiscard(
       Effect.provideService(HttpClient.HttpClient, httpClient.value),
     );
     const busy = serverBusyReason().pipe(
-      Effect.provideService(ProjectionStore.ProjectionStoreV2, projections.value),
+      Effect.provideService(ProjectionStore.ProjectionStoreV2, projections),
       Effect.provideService(BoardStore.BoardStore, store),
       Effect.mapError(failedAt("busy")),
     );
@@ -317,4 +315,6 @@ export const layer = Layer.effectDiscard(
       }),
     );
   }),
-);
+  // t3 provides its projection store to each of its own services rather than to the whole server,
+  // so the board brings its own (the layer is shared by reference within one server build).
+).pipe(Layer.provide(ProjectionStore.layer));
