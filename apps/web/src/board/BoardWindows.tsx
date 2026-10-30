@@ -222,6 +222,7 @@ export function BoardWindowFrame(props: {
   readonly title: ReactNode;
   readonly actions?: ReactNode;
   readonly onClose?: () => void;
+  readonly closeLabel?: string;
   readonly canFullScreen?: boolean;
   readonly children: ReactNode;
 }) {
@@ -290,7 +291,7 @@ export function BoardWindowFrame(props: {
           </IconButton>
         )}
         <IconButton
-          label={`Close ${props.label}`}
+          label={props.closeLabel ?? `Close ${props.label}`}
           onClick={props.onClose ?? (() => windows.close(props.id))}
         >
           <XIcon size={15} />

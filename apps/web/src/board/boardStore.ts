@@ -20,6 +20,7 @@ import {
   uniqueWorkflowName,
   type BoardNode as CoreNode,
   type History,
+  type KanbanPlacement,
   type WorkflowSettings,
 } from "@t3tools/board-core/boardModel";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -38,6 +39,7 @@ export type {
   RunRecord,
   RunRequest,
   RunRequestRecord,
+  KanbanPlacement,
   RunStatus,
   WorkflowSettings,
 } from "@t3tools/board-core/boardModel";
@@ -462,6 +464,23 @@ export async function updateNode(id: string, patch: { x?: number; y?: number; si
     return true;
   } catch (error) {
     reportError("Could not update agent", error);
+    return false;
+  }
+}
+/** Puts the workflow's kanban on the board, moves it, or (null) takes it off; every viewer sees it. */
+export async function placeKanban(placement: KanbanPlacement | null) {
+  const workflow = getCurrentWorkflow();
+  try {
+    await runBoardMutation((client) =>
+      client.updateWorkflow({
+        headers: {},
+        params: { workflowId: workflow.id },
+        payload: { kanban: placement },
+      }),
+    );
+    return true;
+  } catch (error) {
+    reportError("Could not update the kanban", error);
     return false;
   }
 }

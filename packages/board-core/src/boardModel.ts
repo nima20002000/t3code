@@ -158,6 +158,14 @@ export interface WorkflowDefinition {
   readonly settings: WorkflowSettings;
 }
 
+/** Where the workflow's kanban sits on the canvas, in canvas units; a workflow shows at most one. */
+export interface KanbanPlacement {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
 export interface Workflow {
   readonly id: string;
   readonly name: string;
@@ -169,6 +177,8 @@ export interface Workflow {
   readonly runQueue: ReadonlyArray<RunRequest>;
   readonly runs: ReadonlyArray<RunRecord>;
   readonly settings: WorkflowSettings;
+  /** Unset while the kanban is not on the board. */
+  readonly kanban?: KanbanPlacement;
 }
 
 export const DEFAULT_WORKFLOW_SETTINGS: WorkflowSettings = {

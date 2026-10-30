@@ -151,6 +151,12 @@ export const BoardRunSchema = Schema.Struct({
   /** Its chats carry into the schedule's next run, so they are compacted once it ends. */
   compactAfter: Schema.optionalKey(Schema.Boolean),
 });
+export const BoardKanbanPlacementSchema = Schema.Struct({
+  x: Schema.Number,
+  y: Schema.Number,
+  width: Schema.Number,
+  height: Schema.Number,
+});
 export const BoardWorkflowSchema = Schema.Struct({
   id: Id,
   name: TrimmedNonEmptyString,
@@ -162,6 +168,7 @@ export const BoardWorkflowSchema = Schema.Struct({
   runQueue: Schema.Array(BoardRunRequestSchema),
   runs: Schema.Array(BoardRunSchema),
   settings: BoardWorkflowSettingsSchema,
+  kanban: Schema.optionalKey(BoardKanbanPlacementSchema),
 });
 export const BoardPeerSchema = Schema.Struct({
   id: Id,
@@ -368,6 +375,8 @@ export const BoardCreateWorkflowInput = Schema.Struct({
 export const BoardUpdateWorkflowInput = Schema.Struct({
   name: Schema.optionalKey(TrimmedNonEmptyString),
   settings: Schema.optionalKey(BoardWorkflowSettingsSchema),
+  /** Puts the kanban on the board or moves it; null takes it off. */
+  kanban: Schema.optionalKey(Schema.NullOr(BoardKanbanPlacementSchema)),
 });
 export const BoardCreateNodeInput = Schema.Struct({
   id: Id,

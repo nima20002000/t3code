@@ -572,6 +572,56 @@ it.effect("a workspace with an active run cannot be deleted", () =>
   }),
 );
 
+it.effect("the kanban is put on the board, moved during a run and taken off again", () =>
+  Effect.gen(function* () {
+    const { layer } = yield* makeLayer;
+    yield* Effect.gen(function* () {
+      const board = yield* BoardService.BoardService;
+      const store = yield* BoardStore.BoardStore;
+      yield* board.createWorkspace({ id: "ws", name: "Workspace" });
+      const created = yield* board.createWorkflow({ id: "w", name: "W", workspaceId: "ws" });
+      assert.isUndefined(created.kanban);
+      const placed = { x: 10, y: 400, width: 900, height: 320 };
+      yield* board.updateWorkflow("w", { kanban: placed });
+      assert.deepStrictEqual((yield* board.getWorkflow("w")).kanban, placed);
+
+      const workflow = yield* board.getWorkflow("w");
+      yield* store.transaction(
+        store.putWorkflow({
+          ...workflow,
+          runs: [
+            {
+              id: "run",
+              nodeId: "a",
+              nodeName: "a",
+              task: "Busy",
+              status: "running",
+              startedAt: "2026-01-01T00:00:00.000Z",
+              requests: [],
+              threads: {},
+              definition: { nodes: [], edges: [], settings: workflow.settings },
+            },
+          ],
+        }),
+      );
+      const moved = { x: -200, y: 600, width: 700, height: 300 };
+      yield* board.updateWorkflow("w", { kanban: moved });
+      assert.deepStrictEqual((yield* board.getWorkflow("w")).kanban, moved);
+      const renamed = yield* board
+        .updateWorkflow("w", { name: "Renamed", kanban: placed })
+        .pipe(Effect.flip);
+      assert.instanceOf(renamed, BoardConflictError);
+      assert.deepStrictEqual((yield* board.getWorkflow("w")).kanban, moved);
+
+      yield* board.updateWorkflow("w", { kanban: null });
+      const removed = yield* board.getWorkflow("w");
+      assert.isUndefined(removed.kanban);
+      assert.strictEqual(removed.name, "W");
+      assert.strictEqual(removed.runs.length, 1);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 it.effect("deleting a node unassigns its kanban cards", () =>
   Effect.gen(function* () {
     const { layer } = yield* makeLayer;
