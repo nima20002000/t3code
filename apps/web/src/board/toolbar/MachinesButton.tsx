@@ -56,8 +56,7 @@ export function MachinesButton() {
     <ToolbarPopover label="Machines" icon={<MonitorIcon />}>
       <div className="grid gap-2">
         <p className="text-xs text-muted-foreground">
-          Computers the board's agents can work on. Connect them in Settings → Connections to use
-          their chats.
+          Computers the board's agents can work on. This window connects to them by itself.
         </p>
         <div>
           {primary?.label ?? "Hub"} <span className="text-muted-foreground">· hub</span>

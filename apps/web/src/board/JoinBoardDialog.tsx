@@ -1,8 +1,4 @@
-import {
-  AuthOrchestrationOperateScope,
-  AuthOrchestrationReadScope,
-  type AdvertisedEndpoint,
-} from "@t3tools/contracts";
+import { AuthStandardClientScopes, type AdvertisedEndpoint } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -130,7 +126,8 @@ export function JoinBoardDialog(props: { readonly onClose: () => void }) {
       if (!chosen) return;
       const created = await createServerPairingCredential({
         label: "Board hub",
-        scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+        // The full client grant, so the hub can also connect its own windows here.
+        scopes: AuthStandardClientScopes,
       });
       setLink({
         url: resolveDesktopPairingUrl(chosen.url, created.credential),

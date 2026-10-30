@@ -72,6 +72,7 @@ import {
   activeRunOf,
   placeKanban,
 } from "./boardStore";
+import { useConnectBoardMachines } from "./useConnectBoardMachines";
 import { AgentHandles } from "./foreman/AgentHandles";
 import {
   AgentNodeView,
@@ -550,6 +551,7 @@ export function BoardPage() {
   // Reaching the board any way counts as the startup visit, so Back to "/" stays on t3.
   claimBoardStartup();
   useBoardConnection();
+  useConnectBoardMachines();
   const { snapshot, currentId, status, error } = useBoardState();
   const workflow =
     snapshot?.workflows.find((item) => item.id === currentId) ?? snapshot?.workflows[0];

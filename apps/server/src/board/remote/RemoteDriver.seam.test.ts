@@ -8,6 +8,7 @@ import { vi } from "vite-plus/test";
 import {
   AuthAccessTokenType,
   AuthEnvironmentBootstrapTokenType,
+  AuthStandardClientScopes,
   AuthTokenExchangeGrantType,
   CommandId,
   MessageId,
@@ -153,6 +154,32 @@ it.live("pairs and drives a second real server over authenticated RPC", () =>
         pairingUrlOrCode: `${origin}/pair#token=${pairing.credential}`,
         store,
       });
+      const everything = new Set<string>(AuthStandardClientScopes);
+      assert.isNull(yield* PeerPairing.mintWindowPairingCode(peer, everything));
+      const fullLink = yield* PeerPairing.request(new URL("/api/auth/pairing-token", origin), {
+        method: "POST",
+        headers: { authorization: `Bearer ${(admin as { access_token: string }).access_token}` },
+        json: {},
+      });
+      const fullPeer = yield* PeerPairing.pair({
+        pairingUrlOrCode: `${origin}/pair#token=${(fullLink as { credential: string }).credential}`,
+        store: PeerStore.makeMemory(),
+      });
+      const windowScopes = ["orchestration:read", "orchestration:operate", "terminal:operate"];
+      const windowCode = yield* PeerPairing.mintWindowPairingCode(fullPeer, new Set(windowScopes));
+      assert.isString(windowCode);
+      const redeem = PeerPairing.request(new URL("/oauth/token", origin), {
+        method: "POST",
+        body: new URLSearchParams({
+          grant_type: AuthTokenExchangeGrantType,
+          subject_token: windowCode ?? "",
+          subject_token_type: AuthEnvironmentBootstrapTokenType,
+          requested_token_type: AuthAccessTokenType,
+        }),
+      });
+      const windowToken = (yield* redeem) as { scope: string };
+      assert.deepStrictEqual(windowToken.scope.split(" ").toSorted(), windowScopes.toSorted());
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(redeem)));
       const driver = RemoteDriver.make(store);
       const projectId = ProjectId.make("board-remote-project");
       const threadId = ThreadId.make("board-remote-thread");
