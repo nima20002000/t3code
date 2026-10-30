@@ -90,7 +90,17 @@ export function AgentNodeView({
         role="group"
         aria-label={`${name}, ${harnessLabel}${model ? `, ${model}` : ""}, ${statusLabel}`}
       >
-        {statusDetail ? (
+        <Tooltip>
+          <TooltipTrigger render={<strong className="n-agent-name">{name}</strong>} />
+          <TooltipPopup>
+            {name} · {harnessLabel}
+            {model ? ` / ${model}` : ""}
+          </TooltipPopup>
+        </Tooltip>
+        {machine === name ? null : <span className="n-agent-machine">{machine}</span>}
+        {role === "Orchestrator" ? <span className="n-agent-badge">Orchestrator</span> : null}
+        {/* Idle needs no word: the quiet rim already says it. */}
+        {state === "idle" ? null : statusDetail ? (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -108,16 +118,6 @@ export function AgentNodeView({
             {statusLabel}
           </span>
         )}
-        <Tooltip>
-          <TooltipTrigger render={<strong className="n-agent-name">{name}</strong>} />
-          <TooltipPopup>
-            {name} · {harnessLabel}
-            {model ? ` / ${model}` : ""}
-          </TooltipPopup>
-        </Tooltip>
-        <span className="n-agent-role">
-          {role} · {machine}
-        </span>
         <span className="n-agent-actions">
           {actions.map((action) => (
             <button
