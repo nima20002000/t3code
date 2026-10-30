@@ -1948,7 +1948,7 @@ const make = Effect.gen(function* () {
     const tab = await requireTab(request);
     // Closing must unblock an action waiting on a dialog, without queueing behind it.
     if (request.operation === "close") {
-      if (tab.control.agentId !== request.agentSessionId)
+      if (!tab.control.agentMayAct(request.agentSessionId ?? ""))
         throw new BrowserControlInterrupted(
           "Only the agent session that opened this tab can close it.",
           "agentMismatch",

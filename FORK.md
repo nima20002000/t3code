@@ -33,7 +33,7 @@ a merge (the server route is reserved for the later server phase):
   machine in its server settings: `packages/contracts/src/settings.ts` (`serverBrowserMode`, `serverBrowserProxy`),
   `apps/server/src/preview/ServerBrowserContexts.ts` and `apps/server/src/preview/ServerBrowserContexts.test.ts` (launch options per mode and proxy, Xvfb, relaunch),
   `apps/server/src/preview/ServerBrowser.ts` and `apps/server/src/preview/ServerBrowser.test.ts` (reads the settings, relaunches and reopens tabs on a change,
-  the `setupHost` method), `apps/server/src/preview/ServerBrowserStream.ts` and `apps/server/src/preview/ServerBrowserStream.test.ts` (headed setup reason),
+  the `setupHost` method, and an agent may close a tab nobody owns, such as one the board carried into its new chat), `apps/server/src/preview/ServerBrowserStream.ts` and `apps/server/src/preview/ServerBrowserStream.test.ts` (headed setup reason),
   `apps/web/src/components/settings/IntegrationsSettings.tsx` and `apps/web/src/components/settings/settingsSearch.ts`
   (Settings, Browser, Paired machines).
 - The browser's Set up button runs setup on the browser's own machine: `packages/contracts/src/preview.ts`,
