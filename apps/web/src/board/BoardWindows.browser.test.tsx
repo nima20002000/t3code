@@ -70,6 +70,20 @@ it("clips the desktop's native browser views to their board window and hides the
   expect(b.view.style.clipPath).toBe("");
 });
 
+it("a round agent over a board page hides only the page under its circle", async () => {
+  using b = board();
+  document.body.append(b.host);
+  const agent = fixed("left: 100px; top: 300px; width: 100px; height: 100px; z-index: 5");
+  agent.className = "react-flow__node react-flow__node-agent";
+  b.canvas.append(agent);
+  using _sync = { [Symbol.dispose]: syncNativeViews(b.canvas, b.layer) };
+
+  await vi.waitFor(() => expect(document.elementFromPoint(150, 350)).not.toBe(b.view));
+  // The agent's corner, inside its box but outside its circle, still shows the page.
+  expect(document.elementFromPoint(103, 303)).toBe(b.view);
+  expect(document.elementFromPoint(230, 310)).toBe(b.view);
+});
+
 it("moves a board page with its window as soon as the window moves", async () => {
   using b = board();
   document.body.append(b.host);

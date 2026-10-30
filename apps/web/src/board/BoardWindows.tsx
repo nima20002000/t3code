@@ -459,6 +459,24 @@ function coveredBy(box: Box, covers: ReadonlyArray<Box>): Box[] {
   return parts;
 }
 
+/** A round agent's cover, as horizontal strips around its circle (padded for its hover ring). */
+function roundCover(box: Box, step = 4, pad = 4): Box[] {
+  const radius = (box.right - box.left) / 2 + pad;
+  const centerX = (box.left + box.right) / 2;
+  const centerY = (box.top + box.bottom) / 2;
+  const strips: Box[] = [];
+  for (let top = centerY - radius; top < centerY + radius; top += step) {
+    const bottom = Math.min(top + step, centerY + radius);
+    const nearest =
+      top <= centerY && bottom >= centerY
+        ? 0
+        : Math.min(Math.abs(top - centerY), Math.abs(bottom - centerY));
+    const half = Math.sqrt(radius * radius - nearest * nearest);
+    strips.push({ left: centerX - half, top, right: centerX + half, bottom });
+  }
+  return strips;
+}
+
 /**
  * t3's composer menu is fixed on the page and placed again only on a scroll, so a pan or a moved
  * window would leave it behind; a scroll event from the board places it on its composer again.
@@ -512,7 +530,10 @@ export function syncNativeViews(canvas: HTMLElement, fullScreenLayer: HTMLElemen
         }
       }
     }
-    return covers.map((cover) => cover.getBoundingClientRect());
+    return covers.flatMap((cover) => {
+      const box = cover.getBoundingClientRect();
+      return cover.matches(".react-flow__node-agent") ? roundCover(box) : [box];
+    });
   };
   const place = (view: HTMLElement): Record<string, string> | null => {
     const id = view.dataset.previewViewport;
