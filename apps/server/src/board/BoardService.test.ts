@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   BoardConflictError,
-  BoardInternalError,
+  BoardMachineUnavailableError,
   BoardInvalidRequestError,
   NodeDriverError,
   type BoardCreateNodeInput,
@@ -538,7 +538,7 @@ it.effect("an unreachable machine fails the schedule cleanly and holds back the 
 
       yield* Ref.set(machines.offline, new Set([environmentId]));
       const failure = yield* board.saveNodeSchedule("w", "a", scheduleInput).pipe(Effect.flip);
-      assert.instanceOf(failure, BoardInternalError);
+      assert.instanceOf(failure, BoardMachineUnavailableError);
       assert.include(failure.message, "Could not save the schedule");
       yield* Ref.set(machines.offline, new Set());
       assert.isUndefined((yield* board.getWorkflow("w")).nodes[0]?.schedule);
@@ -547,7 +547,7 @@ it.effect("an unreachable machine fails the schedule cleanly and holds back the 
       yield* board.saveNodeSchedule("w", "a", scheduleInput);
       yield* Ref.set(machines.offline, new Set([environmentId]));
       const held = yield* board.deleteNode("w", "a").pipe(Effect.flip);
-      assert.instanceOf(held, BoardInternalError);
+      assert.instanceOf(held, BoardMachineUnavailableError);
       assert.lengthOf((yield* board.getWorkflow("w")).nodes, 1);
       yield* Ref.set(machines.offline, new Set());
       assert.lengthOf(yield* machines.on(environmentId), 1);
